@@ -1,49 +1,52 @@
-// Package mapping builds the unified client response envelope (DESIGN §5.1).
+// Package mapping builds the unified client response envelope (PDF §1.5 / DESIGN §5).
 package mapping
 
 import (
-	"time"
-
 	"github.com/datahub/relay/internal/common/errs"
 	"github.com/datahub/relay/internal/domain/model"
 )
 
-// Success maps a charged upstream result into the head+body envelope.
-// verify is the optional response HMAC over the body (DESIGN §8.1, may be "").
-func Success(r *model.UpstreamResult, requestID, verify string) *model.QueryResult {
-	now := time.Now().UnixMilli()
-	return &model.QueryResult{
-		Head: model.Head{
-			ErrorCode: string(errs.OK),
-			RequestID: requestID,
-			LogID:     requestID,
-			ErrorMsg:  "success",
-			Timestamp: now,
-		},
-		Body: &model.Body{
-			Code:   r.Code,
-			Msg:    r.Msg,
-			Result: &model.RangeResult{Range: r.Range},
-			UID:    r.UID,
-			Reqid:  r.Reqid,
-			Verify: verify,
+// Success builds a查得数据 response (busiCode 10) carrying the score (PDF §2.3).
+// score is透传 upstream range (可能为 "0", DESIGN §15.0).
+func Success(score, seqNo string) *model.DoCheckResponse {
+	return &model.DoCheckResponse{
+		Code:  errs.CodeOK,
+		Msg:   "请求成功",
+		SeqNo: seqNo,
+		Data: &model.DoCheckData{
+			BusiCode: int(errs.BusiSuccess),
+			BusiMsg:  "success",
+			Result:   &model.ScoreResult{Score: score},
 		},
 	}
 }
 
-// ErrorResponse builds a head-only error envelope for any gateway error code
-// (DESIGN §5.1 异常响应 / §5.3).
-func ErrorResponse(code errs.Code, msg, requestID string) *model.QueryResult {
+// Busi builds a业务态 response (global code=0) carrying a non-success busiCode
+// and message (PDF §5.3, e.g. 1000/1001/1003/1007…).
+func Busi(code errs.BusiCode, msg, seqNo string) *model.DoCheckResponse {
 	if msg == "" {
-		msg = errs.New(code, "").Msg
+		msg = errs.Msg(code)
 	}
-	return &model.QueryResult{
-		Head: model.Head{
-			ErrorCode: string(code),
-			RequestID: requestID,
-			LogID:     requestID,
-			ErrorMsg:  msg,
-			Timestamp: time.Now().UnixMilli(),
+	return &model.DoCheckResponse{
+		Code:  errs.CodeOK,
+		Msg:   "请求成功",
+		SeqNo: seqNo,
+		Data: &model.DoCheckData{
+			BusiCode: int(code),
+			BusiMsg:  msg,
 		},
+	}
+}
+
+// SystemError builds a全局异常 response (code=-1, no data) for unparseable
+// requests or system-level failures (PDF §1.6 / DESIGN §5.1).
+func SystemError(msg, seqNo string) *model.DoCheckResponse {
+	if msg == "" {
+		msg = "响应异常"
+	}
+	return &model.DoCheckResponse{
+		Code:  errs.CodeError,
+		Msg:   msg,
+		SeqNo: seqNo,
 	}
 }

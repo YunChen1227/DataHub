@@ -1,0 +1,8 @@
+# Go build artifacts
+relay.exe
+*.exe
+*.out
+
+# Admin SPA build/deps
+web/admin/node_modules/
+web/admin/dist/

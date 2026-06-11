@@ -14,9 +14,15 @@ type config struct {
 	upstreamKey     string
 	demoAppSecret   string
 	upstreamTimeout time.Duration
-	signatureSkew   time.Duration
 	requeryInterval time.Duration
 	reconInterval   time.Duration
+
+	// admin console (DESIGN §16)
+	adminUser      string
+	adminPass      string
+	adminJWTSecret string
+	adminTokenTTL  time.Duration
+	spaDir         string
 }
 
 func loadConfig() config {
@@ -27,9 +33,14 @@ func loadConfig() config {
 		upstreamKey:     env("UPSTREAM_KEY", "demo-key"),
 		demoAppSecret:   env("DEMO_APP_SECRET", "demo-app-secret"),
 		upstreamTimeout: envDuration("UPSTREAM_TIMEOUT", 3*time.Second),
-		signatureSkew:   envDuration("SIGNATURE_SKEW", 5*time.Minute),
 		requeryInterval: envDuration("REQUERY_INTERVAL", 10*time.Second),
 		reconInterval:   envDuration("RECON_INTERVAL", 5*time.Minute),
+
+		adminUser:      env("ADMIN_BOOTSTRAP_USER", "admin"),
+		adminPass:      env("ADMIN_BOOTSTRAP_PASS", "admin12345"),
+		adminJWTSecret: env("ADMIN_JWT_SECRET", "dev-admin-jwt-secret-change-me"),
+		adminTokenTTL:  envDuration("ADMIN_TOKEN_TTL", 8*time.Hour),
+		spaDir:         env("ADMIN_SPA_DIR", "web/admin/dist"),
 	}
 }
 

@@ -4,8 +4,8 @@
 -- §11.1 license：总量买断，无周期重置字段
 CREATE TABLE license (
     license_id     VARCHAR(64)  PRIMARY KEY,
-    app_key        VARCHAR(64)  NOT NULL UNIQUE,
-    app_secret_enc VARCHAR(512) NOT NULL,            -- HMAC 密钥，加密存储 (§11.4)
+    app_id         VARCHAR(64)  NOT NULL UNIQUE,     -- PDF：由商务分配的客户公开标识
+    app_secret_enc VARCHAR(512) NOT NULL,            -- 客户 MD5 加签 secret，加密存储 (§8.1/§11.4)
     client_uuid    VARCHAR(64)  NOT NULL,            -- 用于 requestId 生成与对账
     status         VARCHAR(16)  NOT NULL DEFAULT 'ACTIVE', -- ACTIVE|SUSPENDED|EXPIRED
     valid_from     TIMESTAMPTZ  NOT NULL,
@@ -32,18 +32,20 @@ CREATE TABLE quota (
 -- §11.3 billing_ledger：追加写，无 UNKNOWN 状态 (§7.3/决策4)
 CREATE TABLE billing_ledger (
     id               BIGSERIAL   PRIMARY KEY,
-    app_key          VARCHAR(64) NOT NULL,
-    reqid            VARCHAR(32) NOT NULL,           -- 客户幂等键
-    request_id       VARCHAR(64) NOT NULL,           -- 全链路追踪 ID (§9)
+    app_id           VARCHAR(64) NOT NULL,
+    trade_no         VARCHAR(64),                    -- 客户业务单号（幂等来源）
+    reqid            VARCHAR(32) NOT NULL,           -- 由 trade_no 推导的上游幂等键 (≤20)
+    request_id       VARCHAR(64) NOT NULL,           -- 全链路追踪 ID (§9, = 响应 seqNo)
     upstream_logid   VARCHAR(64),
     upstream_uid     VARCHAR(64),
     upstream_code    VARCHAR(8),
+    busi_code        INT,                            -- 返回客户的业务码 (§5.3, 便于按 10/1000 核对维度①)
     state            VARCHAR(16) NOT NULL,           -- PENDING|BILLED|UNBILLED
     counted_service  BOOLEAN     NOT NULL DEFAULT FALSE,
     counted_upstream BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     settled_at       TIMESTAMPTZ,
-    CONSTRAINT uq_ledger_appkey_reqid UNIQUE (app_key, reqid)
+    CONSTRAINT uq_ledger_appid_reqid UNIQUE (app_id, reqid)
 );
 
 CREATE INDEX idx_ledger_request_id ON billing_ledger (request_id);

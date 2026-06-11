@@ -81,9 +81,9 @@ func (w *RequeryWorker) resolve(ctx context.Context, l *model.Ledger) {
 		return
 	}
 
-	lic, err := w.licenses.FindByAppKey(ctx, l.AppKey)
+	lic, err := w.licenses.FindByAppID(ctx, l.AppID)
 	if err != nil || lic == nil {
-		log.Error("cannot resolve license for pending ledger", "appKey", l.AppKey)
+		log.Error("cannot resolve license for pending ledger", "appId", l.AppID)
 		return
 	}
 

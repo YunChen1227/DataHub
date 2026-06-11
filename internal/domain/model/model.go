@@ -3,30 +3,33 @@
 // it never participates in import cycles.
 package model
 
-// QueryCommand is the parsed client request body (DESIGN §5.1).
+// QueryCommand is the parsed client request body (PDF body / DESIGN §5.1).
 type QueryCommand struct {
-	Mobile string `json:"mobile"`
-	IDCard string `json:"idCard"`
-	Name   string `json:"name"`
-	Reqid  string `json:"reqid"`
+	Name    string `json:"name"`
+	IDCard  string `json:"idCard"`
+	Mobile  string `json:"mobile"`
+	TradeNo string `json:"tradeNo"`
 }
 
-// SignedRequest carries the raw transport材料 needed for HMAC verification
-// (DESIGN §8.1). Body is the exact bytes the client signed.
+// SignedRequest carries the request envelope material needed for MD5 signature
+// verification (PDF §1.4 / DESIGN §8.1). BodyParams are the non-empty business
+// params (string) used to recompute the signature; appId/apiKey/sign/
+// encryptionType do not participate in signing.
 type SignedRequest struct {
-	AppKey    string
-	Timestamp string
-	Nonce     string
-	Sign      string
-	Body      []byte
+	AppID          string
+	Sign           string
+	APIKey         string
+	EncryptionType int
+	BodyParams     map[string]string
 }
 
 // LicenseView is the authenticated client identity + status (DESIGN §7.1).
 type LicenseView struct {
-	LicenseID  string
-	AppKey     string
-	ClientUUID string
-	Status     string // ACTIVE / SUSPENDED / EXPIRED
+	LicenseID   string
+	AppID       string
+	ClientUUID  string
+	Status      string   // ACTIVE / SUSPENDED / EXPIRED
+	IPWhitelist []string // 每用户 IP 白名单 (DESIGN §16.4); 空表示不限制
 }
 
 // Active reports whether the license may call the service.
@@ -72,10 +75,10 @@ const (
 
 // BillingDecision is the verdict the billing engine produces.
 //   - Charged  → upstream actually charged us (维度② commit).
-//   - Returned → upstream produced a business return (维度① count).
+//   - Returned → upstream produced查得数据 (维度① count, = busiCode 10).
 //
-// With the current code dictionary the two move together, but they are kept
-// separate so the口径 can diverge by config (DESIGN §7.4 note).
+// The two are kept separate so the口径 can diverge by config (DESIGN §7.4):
+// 999 查无结果 is Charged=true, Returned=false.
 type BillingDecision struct {
 	Charged  bool
 	Returned bool
@@ -85,10 +88,12 @@ type BillingDecision struct {
 // Ledger is the append-only billing record (DESIGN §11.3).
 type Ledger struct {
 	ID              int64
-	AppKey          string
+	AppID           string
+	TradeNo         string
 	Reqid           string
 	RequestID       string
 	UpstreamCode    string
+	BusiCode        int
 	UpstreamUID     string
 	UpstreamLogID   string
 	State           BillingState
@@ -104,30 +109,25 @@ type ServiceQuotaView struct {
 	Remaining int64
 }
 
-// QueryResult is the unified client response envelope (DESIGN §5.1).
-type QueryResult struct {
-	Head Head  `json:"head"`
-	Body *Body `json:"body,omitempty"`
+// DoCheckResponse is the unified client response envelope (PDF §1.5 / DESIGN §5).
+//   - Code  : 全局返回码 0 成功 / -1 响应异常.
+//   - SeqNo : 交易流水号 (= 本服务 requestId, §9).
+//   - Data  : 业务响应体 (省略于 code=-1).
+type DoCheckResponse struct {
+	Code  int          `json:"code"`
+	Msg   string       `json:"msg"`
+	SeqNo string       `json:"seqNo"`
+	Data  *DoCheckData `json:"data,omitempty"`
 }
 
-type Head struct {
-	ErrorCode string `json:"errorCode"`
-	RequestID string `json:"requestId"`
-	LogID     string `json:"logId"`
-	Time      int64  `json:"time,omitempty"`
-	ErrorMsg  string `json:"errorMsg"`
-	Timestamp int64  `json:"timestamp"`
+// DoCheckData is the data object (PDF §1.5).
+type DoCheckData struct {
+	BusiCode int          `json:"busiCode"`
+	BusiMsg  string       `json:"busiMsg"`
+	Result   *ScoreResult `json:"result,omitempty"`
 }
 
-type Body struct {
-	Code   string       `json:"code"`
-	Msg    string       `json:"msg"`
-	Result *RangeResult `json:"result,omitempty"`
-	UID    string       `json:"uid,omitempty"`
-	Reqid  string       `json:"reqid,omitempty"`
-	Verify string       `json:"verify,omitempty"`
-}
-
-type RangeResult struct {
-	Range string `json:"range"`
+// ScoreResult is the result content (PDF §2.3): score 取值范围 1-51.
+type ScoreResult struct {
+	Score string `json:"score"`
 }

@@ -4,11 +4,13 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/datahub/relay/internal/common/appctx"
+	"github.com/datahub/relay/internal/common/ipfilter"
 	"github.com/datahub/relay/internal/common/reqid"
 )
 
@@ -26,11 +28,16 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 
 		id := r.Header.Get("X-Request-Id") // optional inbound passthrough
 		if id == "" {
-			client := r.Header.Get("X-App-Key")
-			id = reqid.Generate(time.Now().UnixMilli(), client, body)
+			// client portion of the requestId comes from the envelope appId.
+			var env struct {
+				AppID string `json:"appId"`
+			}
+			_ = json.Unmarshal(body, &env)
+			id = reqid.Generate(time.Now().UnixMilli(), env.AppID, body)
 		}
 
 		ctx := appctx.WithRequestID(r.Context(), id)
+		ctx = appctx.WithClientIP(ctx, ipfilter.ClientIP(r.Header.Get("X-Forwarded-For"), r.RemoteAddr))
 		w.Header().Set("X-Request-Id", id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

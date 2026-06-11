@@ -1,15 +1,17 @@
 // Package memory is an in-process implementation of the persistence ports for
 // local development and tests. Production MUST swap in Redis+Lua for the quota
-// counters and a relational DB for the ledger (DESIGN §7.5 / §11), using the
-// migrations under /migrations.
+// counters and a relational DB for the ledger/audit (DESIGN §7.5 / §11 / §16),
+// using the migrations under /migrations.
 //
-// All quota mutations hold a single mutex, which makes them atomic and faithful
-// to the "检查并预留" semantics — sufficient for a single-process dev server.
+// All mutations hold a single mutex, which makes them atomic and faithful to the
+// "检查并预留" semantics — sufficient for a single-process dev server.
 package memory
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"time"
 
 	"github.com/datahub/relay/internal/domain/model"
 )
@@ -22,49 +24,88 @@ type quotaRow struct {
 	upstreamReserv int64
 }
 
-// Store implements port.LicenseRepository, port.QuotaRepository,
-// port.LedgerRepository and port.NonceCache.
+// licenseRec is the store-internal aggregate for a普通用户 (DESIGN §7.1/§16.2).
+type licenseRec struct {
+	view      model.LicenseView
+	name      string
+	secret    string // 客户 MD5 加签 secret（开发期明文; 生产加密, §11.4）
+	createdAt time.Time
+}
+
+// Store implements the persistence ports for license/quota/ledger plus the
+// admin console ports (admin users / audit / global IP).
 type Store struct {
 	mu sync.Mutex
 
-	licensesByAppKey map[string]*model.LicenseView
-	quotas           map[string]*quotaRow      // keyed by licenseID
-	ledgerByReqid    map[string]*model.Ledger  // keyed by appKey|reqid
-	ledgerByID       map[int64]*model.Ledger   // keyed by ledger ID
-	nonces           map[string]struct{}       // keyed by appKey|nonce
-	seq              int64
+	licenses   map[string]*licenseRec // licenseID -> rec
+	appIDIndex map[string]string      // appID -> licenseID
+	quotas     map[string]*quotaRow   // licenseID -> quota
+
+	ledgerByReqid map[string]*model.Ledger // appID|reqid
+	ledgerByID    map[int64]*model.Ledger
+
+	audits   []*model.AuditRecord
+	admins   map[string]*model.AdminUser // username -> admin
+	globalIP []string
+
+	seq      int64
+	auditSeq int64
+	adminSeq int64
 }
 
 // New returns an empty store.
 func New() *Store {
 	return &Store{
-		licensesByAppKey: make(map[string]*model.LicenseView),
-		quotas:           make(map[string]*quotaRow),
-		ledgerByReqid:    make(map[string]*model.Ledger),
-		ledgerByID:       make(map[int64]*model.Ledger),
-		nonces:           make(map[string]struct{}),
+		licenses:      make(map[string]*licenseRec),
+		appIDIndex:    make(map[string]string),
+		quotas:        make(map[string]*quotaRow),
+		ledgerByReqid: make(map[string]*model.Ledger),
+		ledgerByID:    make(map[int64]*model.Ledger),
+		admins:        make(map[string]*model.AdminUser),
 	}
 }
 
-// SeedLicense registers a demo license with both quota dimensions (dev helper).
-func (s *Store) SeedLicense(lic *model.LicenseView, serviceTotal, upstreamTotal int64) {
+// SeedLicense registers a demo license with a bound secret + both quota
+// dimensions (dev helper).
+func (s *Store) SeedLicense(lic *model.LicenseView, secret, name string, serviceTotal, upstreamTotal int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.licensesByAppKey[lic.AppKey] = lic
+	s.licenses[lic.LicenseID] = &licenseRec{
+		view:      *lic,
+		name:      name,
+		secret:    secret,
+		createdAt: time.Now(),
+	}
+	s.appIDIndex[lic.AppID] = lic.LicenseID
 	s.quotas[lic.LicenseID] = &quotaRow{serviceTotal: serviceTotal, upstreamTotal: upstreamTotal}
 }
 
 // --- port.LicenseRepository ---
 
-func (s *Store) FindByAppKey(_ context.Context, appKey string) (*model.LicenseView, error) {
+func (s *Store) FindByAppID(_ context.Context, appID string) (*model.LicenseView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	lic, ok := s.licensesByAppKey[appKey]
+	licenseID, ok := s.appIDIndex[appID]
 	if !ok {
 		return nil, nil
 	}
-	cp := *lic
+	rec := s.licenses[licenseID]
+	if rec == nil {
+		return nil, nil
+	}
+	cp := rec.view
+	cp.IPWhitelist = append([]string(nil), rec.view.IPWhitelist...)
 	return &cp, nil
+}
+
+// GetAppSecret backs the store-backed SecretProvider (DESIGN §16.2/§11.4).
+func (s *Store) GetAppSecret(_ context.Context, licenseID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rec := s.licenses[licenseID]; rec != nil {
+		return rec.secret, nil
+	}
+	return "", nil
 }
 
 // --- port.QuotaRepository ---
@@ -125,10 +166,10 @@ func (s *Store) ReleaseUpstream(_ context.Context, licenseID string) error {
 
 // --- port.LedgerRepository ---
 
-func (s *Store) FindByReqid(_ context.Context, appKey, reqid string) (*model.Ledger, error) {
+func (s *Store) FindByReqid(_ context.Context, appID, reqid string) (*model.Ledger, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l, ok := s.ledgerByReqid[appKey+"|"+reqid]
+	l, ok := s.ledgerByReqid[appID+"|"+reqid]
 	if !ok {
 		return nil, nil
 	}
@@ -143,7 +184,7 @@ func (s *Store) Append(_ context.Context, l *model.Ledger) error {
 	l.ID = s.seq
 	stored := *l
 	s.ledgerByID[l.ID] = &stored
-	s.ledgerByReqid[l.AppKey+"|"+l.Reqid] = &stored
+	s.ledgerByReqid[l.AppID+"|"+l.Reqid] = &stored
 	return nil
 }
 
@@ -174,18 +215,4 @@ func (s *Store) ListByState(_ context.Context, state model.BillingState, limit i
 	return out, nil
 }
 
-// --- port.NonceCache ---
-
-func (s *Store) SeenWithinWindow(_ context.Context, appKey, nonce string) (bool, error) {
-	if nonce == "" {
-		return false, nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	key := appKey + "|" + nonce
-	if _, ok := s.nonces[key]; ok {
-		return true, nil
-	}
-	s.nonces[key] = struct{}{}
-	return false, nil
-}
+var errAppIDExists = errors.New("appId 已存在")

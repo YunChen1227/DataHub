@@ -16,6 +16,7 @@ import (
 
 	"github.com/datahub/relay/internal/api"
 	"github.com/datahub/relay/internal/application"
+	"github.com/datahub/relay/internal/domain/admin"
 	"github.com/datahub/relay/internal/domain/auth"
 	"github.com/datahub/relay/internal/domain/billing"
 	"github.com/datahub/relay/internal/domain/model"
@@ -36,33 +37,41 @@ func main() {
 	store := memory.New()
 	seedDemo(store)
 
-	secrets := secret.NewStatic(
-		map[string]string{"LIC-DEMO-0001": cfg.demoAppSecret},
-		cfg.upstreamAccount, cfg.upstreamKey,
-	)
+	secrets := secret.NewStore(store, cfg.upstreamAccount, cfg.upstreamKey)
 
 	httpClient := &http.Client{Timeout: cfg.upstreamTimeout}
 	upClient := upstream.New(upstream.Config{BaseURL: cfg.upstreamBaseURL}, secrets, httpClient)
 
 	// --- domain services ---
-	verifier := auth.HmacSha256Verifier{}
-	authSvc := auth.New(store, secrets, verifier, store, cfg.signatureSkew)
+	verifier := auth.Md5Verifier{}
+	authSvc := auth.New(store, secrets, verifier)
 	quotaSvc := quota.New(store, store)
 	billSvc := billing.New(billing.DefaultTable())
+	adminSvc := admin.New(store, store, store, store, admin.Config{
+		JWTSecret: cfg.adminJWTSecret,
+		TokenTTL:  cfg.adminTokenTTL,
+	})
 
-	orch := application.NewQueryOrchestrator(authSvc, quotaSvc, billSvc, upClient, logger)
+	orch := application.NewQueryOrchestrator(authSvc, quotaSvc, billSvc, upClient, store, logger)
+
+	// --- background workers (DESIGN §7.6) ---
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// bootstrap the initial admin operator (DESIGN §16.1).
+	if err := adminSvc.BootstrapAdmin(ctx, cfg.adminUser, cfg.adminPass); err != nil {
+		logger.Error("bootstrap admin failed", "err", err)
+	} else {
+		logger.Info("admin console ready", "loginUser", cfg.adminUser, "spaDir", cfg.spaDir)
+	}
 
 	// --- HTTP server ---
-	server := api.NewServer(orch)
+	server := api.NewServer(orch, adminSvc, store, cfg.spaDir)
 	httpServer := &http.Server{
 		Addr:              cfg.addr,
 		Handler:           server.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	// --- background workers (DESIGN §7.6) ---
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	requery := job.NewRequeryWorker(store, store, upClient, billSvc, quotaSvc, cfg.requeryInterval, logger)
 	recon := job.NewReconciliationJob(store, upClient, cfg.reconInterval, logger)
@@ -87,8 +96,8 @@ func main() {
 func seedDemo(store *memory.Store) {
 	store.SeedLicense(&model.LicenseView{
 		LicenseID:  "LIC-DEMO-0001",
-		AppKey:     "AC1001",
+		AppID:      "y89098io",
 		ClientUUID: "demo-client-uuid",
 		Status:     "ACTIVE",
-	}, 100000, 100000)
+	}, "demo-app-secret", "Demo 商户", 100000, 100000)
 }

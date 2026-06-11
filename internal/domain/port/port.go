@@ -11,7 +11,7 @@ import (
 
 // LicenseRepository loads license/identity rows (DESIGN §11.1).
 type LicenseRepository interface {
-	FindByAppKey(ctx context.Context, appKey string) (*model.LicenseView, error)
+	FindByAppID(ctx context.Context, appID string) (*model.LicenseView, error)
 }
 
 // QuotaRepository performs atomic两维度 counting (DESIGN §7.5). All mutating
@@ -32,8 +32,8 @@ type QuotaRepository interface {
 
 // LedgerRepository is the append-only billing台账 store (DESIGN §11.3).
 type LedgerRepository interface {
-	// FindByReqid returns the ledger for (appKey, reqid) or (nil, nil) if absent.
-	FindByReqid(ctx context.Context, appKey, reqid string) (*model.Ledger, error)
+	// FindByReqid returns the ledger for (appID, reqid) or (nil, nil) if absent.
+	FindByReqid(ctx context.Context, appID, reqid string) (*model.Ledger, error)
 	// Append inserts a new PENDING ledger and back-fills the assigned ID.
 	Append(ctx context.Context, l *model.Ledger) error
 	// UpdateState settles a ledger to BILLED/UNBILLED with the count flags.
@@ -55,14 +55,40 @@ type SecretProvider interface {
 	UpstreamCredentials(ctx context.Context) (account, key string, err error)
 }
 
-// SignatureVerifier validates the client HMAC-SHA256 signature (DESIGN §8.1).
+// SignatureVerifier validates the client MD5 signature (DESIGN §8.1 / PDF §3.1).
 type SignatureVerifier interface {
 	Verify(req *model.SignedRequest, appSecret string) bool
 }
 
-// NonceCache backs replay protection (DESIGN §8.1 step 3).
-type NonceCache interface {
-	// SeenWithinWindow reports whether the nonce was already used; if not, it
-	// records it. Returns true when the nonce is a replay.
-	SeenWithinWindow(ctx context.Context, appKey, nonce string) (replay bool, err error)
+// --- Admin console ports (DESIGN §16) ---
+
+// AdminUserRepository stores operator accounts (DESIGN §16.1).
+type AdminUserRepository interface {
+	FindAdmin(ctx context.Context, username string) (*model.AdminUser, error)
+	PutAdmin(ctx context.Context, a *model.AdminUser) error
+}
+
+// UserAdminRepository manages普通用户 (license) lifecycle + quota + per-user IP
+// whitelist + bound secret for the admin console (DESIGN §16.2).
+type UserAdminRepository interface {
+	ListUsers(ctx context.Context) ([]*model.UserDetail, error)
+	GetUser(ctx context.Context, licenseID string) (*model.UserDetail, error)
+	// CreateUser persists a new license + quota + bound secret (plaintext secret
+	// is passed in; the adapter is responsible for at-rest encryption, §11.4).
+	CreateUser(ctx context.Context, d *model.UserDetail, secret string) error
+	UpdateUser(ctx context.Context, licenseID string, status string, serviceTotal, upstreamTotal int64, ipWhitelist []string) error
+	DeleteUser(ctx context.Context, licenseID string) error
+	RotateSecret(ctx context.Context, licenseID, secret string) error
+}
+
+// AuditRepository is the append-only audit log store (DESIGN §16.3/§16.5).
+type AuditRepository interface {
+	AppendAudit(ctx context.Context, rec *model.AuditRecord) error
+	ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.AuditRecord, error)
+}
+
+// GlobalIPRepository stores the global IP whitelist (DESIGN §16.4).
+type GlobalIPRepository interface {
+	GetGlobalIP(ctx context.Context) ([]string, error)
+	SetGlobalIP(ctx context.Context, cidrs []string) error
 }

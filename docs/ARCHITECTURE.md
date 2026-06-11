@@ -24,7 +24,7 @@
 ```mermaid
 flowchart TB
     subgraph api["api 接入层 (controller/filter)"]
-        Ctl["QueryController\nQuotaController"]
+        Ctl["DoCheckController\nQuotaController"]
         Filter["RequestIdFilter\nSignatureFilter"]
     end
 
@@ -33,7 +33,7 @@ flowchart TB
     end
 
     subgraph domain["domain 领域层 (核心业务，无框架依赖)"]
-        AuthSvc["AuthService\n(License/签名校验)"]
+        AuthSvc["AuthService\n(License/appId/MD5签名校验)"]
         QuotaSvc["QuotaService\n(维度①②预留/结算)"]
         BillSvc["BillingService\n(计费判定/状态机)"]
         Parser["RequestParser\n(参数校验/规范化)"]
@@ -41,7 +41,7 @@ flowchart TB
     end
 
     subgraph infra["infrastructure 基础设施层"]
-        UpClient["UpstreamClient\n(HTTP+MD5签名+复查)"]
+        UpClient["UpstreamClient\n(HTTP GET+MD5签名+复查)"]
         QuotaRepo["QuotaRepository\n(Redis+Lua / DB)"]
         LedgerRepo["LedgerRepository\n(台账追加写)"]
         LicenseRepo["LicenseRepository"]
@@ -112,10 +112,10 @@ classDiagram
     }
     class SignatureVerifier {
         <<interface>>
-        +boolean verify(SignedRequest req, String appSecret)
+        +boolean verify(SignedRequest req, String secret)
     }
-    class HmacSha256Verifier {
-        +boolean verify(SignedRequest req, String appSecret)
+    class Md5Verifier {
+        +boolean verify(SignedRequest req, String secret)
     }
 
     class QuotaService {
@@ -148,7 +148,7 @@ classDiagram
 
     class LedgerRepository {
         <<interface>>
-        +Ledger findByReqid(appKey, reqid)
+        +Ledger findByReqid(appId, reqid)
         +void append(Ledger l)
         +void updateState(id, BillingState s)
     }
@@ -167,7 +167,7 @@ classDiagram
     QueryOrchestrator --> BillingService
     QueryOrchestrator --> ResponseMapper
     AuthService --> SignatureVerifier
-    SignatureVerifier <|.. HmacSha256Verifier
+    SignatureVerifier <|.. Md5Verifier
     BillingService --> BillingDecisionTable
     BillingService --> LedgerRepository
     QuotaService --> QuotaRepository
@@ -192,15 +192,15 @@ sequenceDiagram
     participant B as BillingService
     participant M as ResponseMapper
 
-    F->>F: 生成 requestId, 放入 MDC/Context
+    F->>F: 生成 requestId(=seqNo), 放入 MDC/Context
     F->>O: handle(cmd, ctx)
     O->>A: authenticate(signedReq)
-    Note right of A: 失败→抛 AuthException(401xxx)
+    Note right of A: 失败→抛 AuthException(busiCode 1003/1004/1005/1009)
     O->>Q: checkServiceQuota(licenseId)
-    Note right of Q: 无余额→抛 QuotaException(429001)
+    Note right of Q: 无余额→抛 QuotaException(busiCode 1001)
     O->>Q: token = reserveUpstream(licenseId, reqid)
     Note right of Q: 幂等命中BILLED→直接返回缓存结果
-    O->>P: upReq = parse(cmd)
+    O->>P: upReq = parse(cmd)  %% tradeNo→reqid
     O->>U: result = query(upReq)
     alt 收到业务响应
         U-->>O: UpstreamResult(code, range)
@@ -208,11 +208,11 @@ sequenceDiagram
         U->>U: requery(reqid)  %% 幂等复查
         U-->>O: RequeryResult / 不可达→入异步队列
     end
-    O->>B: decision = decide(result)
+    O->>B: decision = decide(result)  %% Charged + Returned(=busiCode 10)
     O->>Q: settle(token, decision)
-    Note right of Q: BILLED→committed++,serviceUsed++<br/>UNBILLED→reserved--
+    Note right of Q: BILLED→committed++<br/>仅 Returned(busiCode 10) 时 serviceUsed++<br/>UNBILLED→reserved--
     O->>M: resp = toClientResponse(result, ctx)
-    M-->>F: QueryResult(head+body)
+    M-->>F: DoCheckResponse(code/msg/seqNo/data)
 ```
 
 ---
@@ -224,7 +224,7 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> PENDING: reserveUpstream() reserved++ + append(PENDING)
-    PENDING --> BILLED: decide()=charged / requery=已扣费<br/>→ commit() committed++,reserved--,serviceUsed++
+    PENDING --> BILLED: decide()=charged / requery=已扣费<br/>→ commit() committed++,reserved--；Returned(busiCode 10) 时 serviceUsed++
     PENDING --> UNBILLED: decide()=not_charged / requery=未扣费<br/>→ release() reserved--
     PENDING --> PENDING: 超时且复查不可达 → 入 RequeryWorker 队列
     note right of PENDING
@@ -235,12 +235,15 @@ stateDiagram-v2
     UNBILLED --> [*]
 ```
 
-**判定表（`BillingDecisionTable.isCharged`，应配置化，对应 §7.4）**
+> `Charged`（维度②，是否上游扣费）与 `Returned`（维度①，是否查得数据=busiCode 10）**可分离**：999 查无结果 `Charged=true, Returned=false`。
 
-| 上游 code | isCharged | 落地常量 |
-|---|---|---|
-| 001 / 999 | `true` | `CHARGED_CODES = {001, 999}` |
-| 003/002/004/012/013/005.. | `false` | 其余一律 false + 触发告警 |
+**判定表（`BillingDecisionTable`，应配置化，对应 §7.4）**
+
+| 上游 code | isCharged(维度②) | busiCode | Returned(维度①) | 落地常量 |
+|---|---|---|---|---|
+| 001 | `true` | 10 | `true` | `CHARGED_CODES = {001, 999}` |
+| 999 | `true` | 1000 | `false` | `RETURNED_CODES = {001}` |
+| 003/002/004/012/013/005.. | `false` | 1007 | `false` | 其余一律 false + 触发告警 |
 
 ---
 
@@ -254,7 +257,7 @@ erDiagram
 
     LICENSE {
         string license_id PK
-        string app_key UK
+        string app_id UK
         string app_secret_enc
         string client_uuid
         string status "ACTIVE|SUSPENDED|EXPIRED"
@@ -275,10 +278,12 @@ erDiagram
     }
     BILLING_LEDGER {
         long id PK
-        string app_key
-        string reqid "UK(app_key,reqid)"
+        string app_id
+        string trade_no
+        string reqid "UK(app_id,reqid)"
         string request_id "idx"
         string upstream_code
+        int busi_code
         string upstream_uid
         string upstream_logid
         string state "PENDING|BILLED|UNBILLED"
@@ -325,7 +330,7 @@ flowchart LR
 | DESIGN 章节 | 组件/职责 | 落地类（建议） | 关键依赖 |
 |---|---|---|---|
 | §3.1 网关 / §9 | 接入、requestId、签名入口 | `RequestIdFilter`, `SignatureFilter`, `QueryController`, `QuotaController` | `RequestIdGenerator`, `SignatureVerifier` |
-| §8.1 | 客户侧 HMAC-SHA256 校验 | `HmacSha256Verifier`（实现 `SignatureVerifier`） | `LicenseRepository`, `SecretProvider`, nonce 去重缓存 |
+| §8.1 | 客户侧 MD5 加签校验（appId + body 排序拼接 + secret） | `Md5Verifier`（实现 `SignatureVerifier`） | `LicenseRepository`, `SecretProvider` |
 | §8.2 / §6 | 上游 MD5 签名 + 调用 | `UpstreamSigner`, `UpstreamClient` | HTTP 连接池/超时/熔断 |
 | §7 / §6.3 | 双维度配额预留/结算 | `QuotaService`, `QuotaRepository` | Redis+Lua / DB 条件更新 |
 | §7.3 / §7.4 | 计费判定与状态机 | `BillingService`, `BillingDecisionTable` | `LedgerRepository` |
@@ -337,18 +342,155 @@ flowchart LR
 
 ---
 
-## 8. 错误码 → 异常 → HTTP 映射（生成全局异常处理依据）
+## 8. 业务码 → 异常 → 响应映射（生成全局异常处理依据）
 
-| errorCode | 异常类 | 计① | 计② | 触发点 |
-|---|---|---|---|---|
-| 0 | — | 有返回即计 | 上游扣费为准 | 正常流 |
-| 401001/401002/401003 | `AuthException` | 否 | 否 | `AuthService` |
-| 429001 | `ServiceQuotaExhaustedException` | 否 | 否 | `QuotaService.checkServiceQuota` |
-| 429002 | `UpstreamQuotaExhaustedException` | 否 | 否 | `QuotaService.reserveUpstream` |
-| 400001 | `ParamValidationException` | 否 | 否 | `RequestParser` |
-| 502001 | `UpstreamNotExecutedException` | 否 | 否 | 复查确认未扣费 |
-| 502002 | `UpstreamBusinessException` | 否 | 否 | 判定表 `isCharged=false` |
+> 对齐 PDF（§5.3）：业务态一律 `code=0`，成败在 `data.busiCode` 表达；仅**请求体无法解析 / 系统级异常**返回 `code=-1`（无 `data`）。HTTP 状态统一 `200`。
 
-> 全局异常处理器把上述异常统一封装为 `{head.errorCode, head.errorMsg, head.requestId}` 结构。
+| busiCode | 含义 | 异常类（建议） | 计① | 计② | 触发点 |
+|---|---|---|---|---|---|
+| 10 | 查询成功【计费】 | —（正常流） | 是 | 是（上游扣费） | 上游 001 |
+| 1000 | 数据未查得 | —（正常流） | 否 | 是（上游扣费） | 上游 999 |
+| 1001 | 账户余额不足 | `ServiceQuotaExhaustedException` | 否 | 否 | `QuotaService.checkServiceQuota` |
+| 1002 | 账户信息不存在 | `AccountNotFoundException` | 否 | 否 | `AuthService`（appId 查无 license） |
+| 1003 | appId 异常 | `AppIdInvalidException` | 否 | 否 | `AuthService`（缺少/非法 appId） |
+| 1004 | 产品编号异常 | `ProductInvalidException` | 否 | 否 | `AuthService`（apiKey ≠ 固定值） |
+| 1005 | 账号信息异常 | `SignatureInvalidException` | 否 | 否 | `AuthService`（MD5 验签失败） |
+| 1006 | 透支余额已达上限 | `UpstreamQuotaExhaustedException` | 否 | 否 | `QuotaService.reserveUpstream` |
+| 1007 | 数据请求异常 | `ParamValidationException` / `UpstreamBusinessException` / `UpstreamNotExecutedException` | 否 | 否 | `RequestParser` / 判定表 `isCharged=false` / 复查确认未扣费 |
+| 1009 | 服务尚未开通 | `LicenseInactiveException` | 否 | 否 | `AuthService`（license 停用/过期/未开通） |
+
+| 全局 code | 含义 | 触发点 |
+|---|---|---|
+| 0 | 正常（含上述所有 busiCode 业务态） | 正常流 + 业务异常 |
+| -1 | 响应异常 | 请求体不可解析 / 系统级未捕获异常 |
+
+> 全局异常处理器把上述异常统一封装为 PDF 信封 `{code, msg, seqNo, data:{busiCode, busiMsg, result?}}`；`seqNo = requestId`（§9）。
 ```
+
+---
+
+## 9. 管理后台（Admin Console，对应 DESIGN §16）
+
+### 9.1 模块与包结构（在原六边形分层上扩展）
+
+```mermaid
+flowchart TB
+    subgraph spa["web/admin (React + Vite SPA)"]
+        Pg["Login / Users / Audits / IpWhitelist 页面"]
+        ApiCli["api.js (fetch + Bearer JWT)"]
+    end
+
+    subgraph api["api 接入层"]
+        AdminCtl["AdminHandler\n(login / users / audits / ip-whitelist)"]
+        AdminMw["AdminAuthMiddleware\n(JWT 校验)"]
+        Static["SPA 静态托管 /admin"]
+    end
+
+    subgraph domain["domain 领域层"]
+        AdminSvc["AdminService\n(登录/用户CRUD/配额/密钥轮换/IP)"]
+        Cred["Credential\n(appId/secret 生成 + 密码哈希)"]
+    end
+
+    subgraph infra["infrastructure"]
+        Store["memory.Store\n(+admin/audit/global-ip)"]
+        DynSecret["StoreSecretProvider\n(动态读取用户 secret)"]
+    end
+
+    subgraph common["common"]
+        JWT["jwt (HS256)"]
+    end
+
+    Pg --> ApiCli --> AdminCtl
+    AdminMw -.-> AdminCtl
+    AdminCtl --> AdminSvc
+    AdminSvc --> Cred
+    AdminSvc --> Store
+    Cred --> JWT
+    DynSecret --> Store
+```
+
+**包扩展**
+
+```
+internal/
+├── api/            // +admin_handler.go, +admin_middleware.go（JWT 校验 / 静态托管）
+├── domain/
+│   └── admin/      // AdminService, Credential（appId/secret 生成、密码哈希）
+├── common/
+│   └── jwt/        // 最小 HS256 实现（零外部依赖）
+└── infrastructure/
+    ├── persistence/memory  // +admin_store.go（admin/audit/global-ip）
+    └── secret              // +StoreSecretProvider（按 licenseId 读用户 secret）
+web/admin/          // React + Vite 前端工程
+```
+
+### 9.2 审计写入链路（不侵入主流程口径）
+
+```mermaid
+sequenceDiagram
+    participant F as RequestIdMiddleware (抓 clientIP)
+    participant O as QueryOrchestrator
+    participant AU as AuditRepository
+    F->>O: handle(cmd) [ctx 带 requestId + clientIP]
+    Note over O: 各分支(鉴权/配额/参数/上游/结算)结束前<br/>组装 AuditRecord（脱敏入参 + 上游code/uid + busiCode + 耗时）
+    O->>AU: AppendAudit(rec)
+    O-->>F: DoCheckResponse
+```
+
+> 审计与计费台账（§5 ER `BILLING_LEDGER`）以 `request_id` 关联；二者职责分离：台账管"钱"（计费状态），审计管"账"（可读操作记录 + 上下游日志）。
+
+### 9.3 IP 白名单校验点
+
+| 层级 | 位置 | 失败返回 |
+|---|---|---|
+| 全局白名单 | 业务入口（`doCheck`/`quota`）前置 | `code=-1`「IP 不在白名单」 |
+| 每用户白名单 | `QueryOrchestrator` 鉴权后（已知 license） | `busiCode 1005 账号信息异常` |
+
+### 9.4 新增数据模型（ER，对应 DESIGN §16.5）
+
+```mermaid
+erDiagram
+    ADMIN_USER {
+        long id PK
+        string username UK
+        string password_hash
+        string role
+        datetime created_at
+    }
+    AUDIT_LOG {
+        long id PK
+        string request_id "idx"
+        string app_id "idx"
+        string trade_no
+        string reqid
+        string client_ip
+        bool called_upstream
+        bool found_data
+        int busi_code
+        string busi_msg
+        string upstream_code
+        string upstream_uid
+        string upstream_logid
+        bool billed
+        long latency_ms
+        string name_mask
+        string id_card_mask
+        string mobile_mask
+        string err_msg
+        datetime created_at
+    }
+    LICENSE ||--o{ AUDIT_LOG : produces
+```
+
+> `LICENSE` 增加 `ip_whitelist text[]`（每用户白名单）；全局白名单存 `ip_whitelist_global`。
+
+### 9.5 admin 组件 ↔ 代码映射
+
+| DESIGN 章节 | 组件/职责 | 落地类/文件 |
+|---|---|---|
+| §16.1 | 管理员登录 / JWT | `AdminHandler.login`, `AdminAuthMiddleware`, `common/jwt` |
+| §16.2 | 用户 CRUD / 配额 / 密钥 | `AdminService`, `Credential`, `memory.Store` |
+| §16.3 | 审计查询 | `AdminService.ListAudits`, `AuditRepository`, `QueryOrchestrator`(写) |
+| §16.4 | IP 白名单 | `AdminService`(global/per-user), 业务入口校验 |
+| §16.0 | SPA | `web/admin`（Vite 构建产物托管于 `/admin`） |
 

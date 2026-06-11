@@ -1,94 +1,67 @@
-// Package auth performs client License authentication + HMAC-SHA256 signature
-// verification with replay protection (DESIGN §8.1).
+// Package auth performs client License authentication + MD5 signature
+// verification (DESIGN §8.1 / PDF §3.1). Per PDF the MD5 加签 carries no nonce
+// or timestamp, so replay defense relies on HTTPS + IP 白名单 + appId/reqid 幂等.
 package auth
 
 import (
 	"context"
-	"strconv"
-	"time"
 
 	"github.com/datahub/relay/internal/common/errs"
 	"github.com/datahub/relay/internal/domain/model"
 	"github.com/datahub/relay/internal/domain/port"
 )
 
+// APIKey is the fixed product code (PDF §1.5 / §2: apiKey 固定值).
+const APIKey = "gama_ctmz_layer_score"
+
 // Service validates incoming signed requests.
 type Service struct {
 	licenses port.LicenseRepository
 	secrets  port.SecretProvider
 	verifier port.SignatureVerifier
-	nonces   port.NonceCache
-	// skew is the allowed timestamp tolerance window (DESIGN §8.1 step 2).
-	skew time.Duration
 }
 
-func New(licenses port.LicenseRepository, secrets port.SecretProvider, verifier port.SignatureVerifier, nonces port.NonceCache, skew time.Duration) *Service {
-	if skew <= 0 {
-		skew = 5 * time.Minute
-	}
-	return &Service{licenses: licenses, secrets: secrets, verifier: verifier, nonces: nonces, skew: skew}
+func New(licenses port.LicenseRepository, secrets port.SecretProvider, verifier port.SignatureVerifier) *Service {
+	return &Service{licenses: licenses, secrets: secrets, verifier: verifier}
 }
 
 // Authenticate runs the §8.1 verification order and returns the license view.
-// It returns an *errs.AppError (401xxx) on any failure — none of which count
-// 维度①/②.
+// It returns an *errs.AppError (busiCode 1003/1002/1009/1004/1005) on any
+// failure — none of which count 维度①/②.
 func (s *Service) Authenticate(ctx context.Context, req *model.SignedRequest) (*model.LicenseView, error) {
-	if req == nil || req.AppKey == "" {
-		return nil, errs.New(errs.MissingAppKey, "")
+	// 1. appId present (otherwise 1003 appId 异常).
+	if req == nil || req.AppID == "" {
+		return nil, errs.New(errs.BusiAppIDInvalid, "")
 	}
 
-	// 1. appKey exists and license ACTIVE / in validity window.
-	lic, err := s.licenses.FindByAppKey(ctx, req.AppKey)
+	// 2. license exists for appId (otherwise 1002 账户信息不存在).
+	lic, err := s.licenses.FindByAppID(ctx, req.AppID)
 	if err != nil {
-		return nil, errs.Wrap(errs.MissingAppKey, "", err)
+		return nil, errs.Wrap(errs.BusiAccountNotExist, "", err)
 	}
 	if lic == nil {
-		return nil, errs.New(errs.MissingAppKey, "")
+		return nil, errs.New(errs.BusiAccountNotExist, "")
 	}
+
+	// 3. license ACTIVE / in validity window (otherwise 1009 服务尚未开通).
 	if !lic.Active() {
-		return nil, errs.New(errs.LicenseInactive, "")
+		return nil, errs.New(errs.BusiServiceNotOpen, "")
 	}
 
-	// 2. timestamp within tolerance window (replay defense).
-	if !s.timestampFresh(req.Timestamp) {
-		return nil, errs.New(errs.SignatureInvalid, "时间戳超出容差窗口")
+	// 4. apiKey == fixed product code (otherwise 1004 产品编号异常).
+	if req.APIKey != APIKey {
+		return nil, errs.New(errs.BusiProductInvalid, "")
 	}
 
-	// 3. nonce not seen within the window (dedupe).
-	if s.nonces != nil {
-		replay, nerr := s.nonces.SeenWithinWindow(ctx, req.AppKey, req.Nonce)
-		if nerr != nil {
-			return nil, errs.Wrap(errs.SignatureInvalid, "nonce 校验失败", nerr)
-		}
-		if replay {
-			return nil, errs.New(errs.SignatureInvalid, "重放请求(nonce 已使用)")
-		}
-	}
-
-	// 4. recompute signature with server-side appSecret and constant-time compare.
+	// 5. recompute signature with server-side secret and constant-time compare
+	//    (otherwise 1005 账号信息异常).
 	secret, err := s.secrets.AppSecret(ctx, lic.LicenseID)
 	if err != nil {
-		return nil, errs.Wrap(errs.SignatureInvalid, "无法获取密钥", err)
+		return nil, errs.Wrap(errs.BusiAccountAbnormal, "无法获取密钥", err)
 	}
 	if !s.verifier.Verify(req, secret) {
-		return nil, errs.New(errs.SignatureInvalid, "")
+		return nil, errs.New(errs.BusiAccountAbnormal, "")
 	}
 
 	return lic, nil
-}
-
-func (s *Service) timestampFresh(ts string) bool {
-	if ts == "" {
-		return false
-	}
-	ms, err := strconv.ParseInt(ts, 10, 64)
-	if err != nil {
-		return false
-	}
-	reqTime := time.UnixMilli(ms)
-	delta := time.Since(reqTime)
-	if delta < 0 {
-		delta = -delta
-	}
-	return delta <= s.skew
 }

@@ -10,24 +10,18 @@ type appSecretSource interface {
 	GetAppSecret(ctx context.Context, licenseID string) (string, error)
 }
 
-// StoreProvider implements port.SecretProvider. App secrets are looked up
-// dynamically from the user store (so admin-created/rotated users work), while
-// the upstream account/key come from process config.
+// StoreProvider implements port.SecretProvider. 客户下游 secrets 从用户存储动态
+// 读取（管理员新建/轮换的用户即时生效）。上游 provider 凭证经进程配置注入到各
+// upstream client，不走此处。
 type StoreProvider struct {
-	source          appSecretSource
-	upstreamAccount string
-	upstreamKey     string
+	source appSecretSource
 }
 
 // NewStore builds a store-backed secret provider.
-func NewStore(source appSecretSource, upstreamAccount, upstreamKey string) *StoreProvider {
-	return &StoreProvider{source: source, upstreamAccount: upstreamAccount, upstreamKey: upstreamKey}
+func NewStore(source appSecretSource) *StoreProvider {
+	return &StoreProvider{source: source}
 }
 
 func (p *StoreProvider) AppSecret(ctx context.Context, licenseID string) (string, error) {
 	return p.source.GetAppSecret(ctx, licenseID)
-}
-
-func (p *StoreProvider) UpstreamCredentials(_ context.Context) (string, string, error) {
-	return p.upstreamAccount, p.upstreamKey, nil
 }

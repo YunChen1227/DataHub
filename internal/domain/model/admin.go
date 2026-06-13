@@ -15,7 +15,7 @@ type AdminUser struct {
 // IP 白名单), used by the user management screens (DESIGN §16.2).
 type UserDetail struct {
 	LicenseID         string    `json:"licenseId"`
-	AppID             string    `json:"appId"`
+	AppKey            string    `json:"appKey"`
 	Name              string    `json:"name"`
 	Status            string    `json:"status"`
 	ClientUUID        string    `json:"clientUuid"`
@@ -34,7 +34,7 @@ type UserDetail struct {
 type AuditRecord struct {
 	ID             int64     `json:"id"`
 	RequestID      string    `json:"requestId"`
-	AppID          string    `json:"appId"`
+	AppKey         string    `json:"appKey"`
 	TradeNo        string    `json:"tradeNo"`
 	Reqid          string    `json:"reqid"`
 	ClientIP       string    `json:"clientIp"`
@@ -56,7 +56,7 @@ type AuditRecord struct {
 
 // AuditFilter narrows an audit query (DESIGN §16.3).
 type AuditFilter struct {
-	AppID    string
+	AppKey   string
 	BusiCode *int
 	Limit    int
 	Offset   int

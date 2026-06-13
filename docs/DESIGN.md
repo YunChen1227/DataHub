@@ -1,13 +1,18 @@
 # 经济能力查询转接服务 — 设计文档（DESIGN.md）
 
-> 版本：v0.3
-> 角色定位：本服务是一个**接口转接（API Relay / Gateway）网关**。对外为客户（商户）提供经济能力查询 API（对齐《伽马分层分_定制版》PDF：`apiKey=gama_ctmz_layer_score`）；对内解析请求并调用上游数据源 `income_cls.md`（经济能力 10W-v9）获取数据后回传给客户。
+> 版本：v0.4
+> 角色定位：本服务是一个**接口转接（API Relay / Gateway）网关**。对外为客户（商户）提供经济能力查询 API（对齐《接口文档 - 经济能力》：`POST /v1/openapi/zlx/querySrmxV9`）；对内调用**上游数据源**获取评分后回传。
 > 在此基础上提供 **License 鉴权** 与 **双维度配额（计费）** 能力。
 
-> v0.3 变更：对外契约改为对齐 PDF——端点 `POST /enol/api/v1/doCheck`、请求信封 `appId/sign/apiKey/encryptionType/body`、客户侧签名改为 **MD5 加签**、响应改为 `code/msg/seqNo/data{busiCode,busiMsg,result{score}}`。上游 `income_cls` 契约保持不变。
+> **v0.4 拓扑变更（重要）**：此前误把《伽马分层分_定制版》PDF 当作"对外契约"。修正为：
+> - **对外（下游，权威=《接口文档 - 经济能力》.doc）**：端点 `POST /v1/openapi/zlx/querySrmxV9`，网关信封 `appKey/sign/encryptionType/body`（**MD5 加签**），响应 `head{errorCode,logId,time,errorMsg,timestamp} / body{code,msg,uid,reqid,verify,result{range}}`。`head.errorCode` 由内部 busiCode 映射（"0"=成功含查得/查无；非0=网关级错误，无 body）；查得/查无落在 `body.code` 001/999。
+> - **对内（上游，可路由切换）**：
+>   - **伽马分层分**（《伽马分层分_定制版》PDF，**默认**）：`POST /enol/api/v1/doCheck`，信封 `appId/sign/apiKey/encryptionType/body` + MD5，返回 `data.busiCode/result.score`。
+>   - **income_cls**（备选）：`GET /yrzx/finan/net/10w/v9`，`account/key` MD5 签名，返回 `code/result.range`。
+>   - 由 `UPSTREAM_PROVIDER` 选择当前生效者；各 provider 把原生响应归一化为 `UpstreamResult`（Code `001`查得/`999`查无）。
 
-### 决策基线（v0.3 已确认）
-1. **签名**：**客户侧**采用 **appId + MD5 加签**（对 body 业务参数按键 ASCII 升序拼接后追加 `secret`，再 MD5；见 §8.1）；**上游侧**因是第三方服务无法修改，保持 **MD5** 口径（§8.2）。
+### 决策基线（v0.4 已确认）
+1. **签名**：**客户侧（下游）**采用 **appKey + MD5 加签**（对 body 业务参数按键 ASCII 升序拼接后追加 `secret`，再 MD5；见 §8.1）；**上游侧**因是第三方服务无法修改，伽马保持 MD5 信封加签、income_cls 保持 `MD5(account+idCard+mobile+reqid+key)` 口径（§8.2）。
 2. **维度①（客户用量 / 对用户计费）计数口径**：**仅查得数据（busiCode=10，上游 001）才对客户计费**。上游查无结果（999 → busiCode 1000）或任何未查得数据的情况一律**不计维度①、不向客户计费**；鉴权/参数拦截、我方内部错误、上游我方原因失败等同样不计。
 3. **维度②（我方成本）计数口径**：**以上游实际扣费为准，凡上游扣费一律计入，绝不漏计**。
 4. **无 UNKNOWN 态**：超时/无响应一律通过**幂等 re-query（按 reqid 复查）**得到确定结论，最终以**上游扣费记录**为准，因此请求计费状态只有"已计费/未计费"两种终态。
@@ -19,9 +24,9 @@
 ## 1. 背景与目标
 
 ### 1.1 业务背景
-- 客户按《伽马分层分_定制版》PDF 描述的方式调用**本服务**（`POST /enol/api/v1/doCheck`，信封 `appId/sign/apiKey/encryptionType/body` + MD5 加签）。
-- 本服务解析客户输入，按 `docs/income_cls.md` 描述的方式调用**上游数据源**（GET + `account/key` MD5 签名）。
-- 上游返回 `result.range`（收入模型评分 0~51），本服务封装为客户侧约定的 `data.result.score` 后返回。
+- 客户按《接口文档 - 经济能力》描述的方式调用**本服务**（`POST /v1/openapi/zlx/querySrmxV9`，信封 `appKey/sign/encryptionType/body` + MD5 加签，请求体 `mobile/idCard/name`）。
+- 本服务鉴权后，按 `UPSTREAM_PROVIDER` 选择上游（默认伽马 PDF；备选 income_cls）并调用之。
+- 上游返回收入模型评分（伽马 `result.score` / income_cls `result.range`，0~51），归一化后封装进下游 `body.result.range` 返回。
 
 ### 1.2 设计目标
 1. **协议转接**：屏蔽上游接口细节，对客户提供稳定、统一的 API 契约。
@@ -36,7 +41,8 @@
 
 ### 1.3 非目标（本期不做）
 - 不做客户自助开通 / 充值前台（仅提供查询路由 + 预留数据模型）。
-- 不做多上游数据源路由（当前仅对接 `income_cls.md`）。
+- 不做 V8（`/openapi/zlx/querySrmxV8`，发票明细数组）——本期仅 V9 经济能力评分。
+- 多上游：当前提供 **provider 路由（伽马/income_cls，配置切换）**，但不做同请求并发对比/合并或自动故障转移。
 
 ---
 
@@ -151,140 +157,98 @@ sequenceDiagram
 
 ## 5. 对外接口契约（客户侧）
 
-> 对齐《伽马分层分_定制版》PDF：信封 `appId/sign/apiKey/encryptionType/body` + MD5 加签，响应 `code/msg/seqNo/data`。
-> 通信：`POST` + HTTPS + JSON（UTF-8）；接口超时 4 秒。
-> 域名：测试 `testenol.cn`、生产 `api.enolfax.com`（正式访问地址接入时提供）。
+> 权威=《接口文档 - 经济能力》：信封 `appKey/sign/encryptionType/body` + MD5 加签，响应 `head/body`。
+> 通信：`POST` + HTTPS + JSON（UTF-8）。网关前缀 `/v1`。
+> 环境：测试 apiHost `http://api-jcdz-test.jcszfw.com/v1`（联调提供正式地址）。
 
 ### 5.0 请求/响应公共结构
 
 **请求信封**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| appId | String | 是 | 由商务分配 |
+| appKey | String | 是 | 网关分配的客户公开标识 |
 | sign | String | 是 | 签名（见 §8.1，对 body 业务参数 MD5 加签） |
-| apiKey | String | 是 | 固定：`gama_ctmz_layer_score`（产品编号） |
 | encryptionType | int | 否 | 参数加密类型，`1`=明文（本期仅支持明文） |
 | body | JSON | 是 | 接口请求体，见各接口定义 |
 
-**响应信封**
+**响应信封（head/body）**
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| code | Number | 响应编码 `0`=成功 / `-1`=响应异常 |
-| msg | String | 返回文字描述 |
-| seqNo | String | 交易流水号（= 本服务 requestId，§9） |
-| data | Object | 业务响应体 |
-| - busiCode | int | 业务响应码（见 §5.3） |
-| - busiMsg | String | 业务响应消息 |
-| - result | JSON | 响应内容 |
+| head.errorCode | String | `"0"`=成功（含查得/查无）；非 `"0"`=网关级错误（见 §5.3 映射） |
+| head.logId | String | = 本服务 requestId（§9） |
+| head.time | Number | 处理耗时 ms |
+| head.errorMsg | String | 返回文字描述 / 错误原因 |
+| head.timestamp | Number | 毫秒时间戳 |
+| body | Object | 业务响应体（网关级错误时省略） |
+| - code | String | `001`=查得 / `999`=查无（沿用 income_cls 口径） |
+| - msg / uid / reqid / verify | String | 业务消息 / 上游流水号 / 请求流水号 / 上游签名（伽马为空） |
+| - result.range | String | 收入模型评分 |
 
-**全局返回码 `code`**：`0` 成功 / `-1` 响应异常（不可解析请求、系统级异常时使用）。
-
-### 5.1 伽马分层分查询
-- **路径**：`POST /enol/api/v1/doCheck`
-- **鉴权**：见 §8.1（appId + MD5 签名）。
+### 5.1 经济能力查询 V9
+- **路径**：`POST /v1/openapi/zlx/querySrmxV9`
+- **鉴权**：见 §8.1（appKey + MD5 签名）。
 
 **请求示例**
 ```json
 {
   "encryptionType": 1,
-  "appId": "y89098io",
+  "appKey": "y89098io",
   "sign": "0528999dd55c025b8f36fc72dceb1f63",
-  "apiKey": "gama_ctmz_layer_score",
   "body": {
-    "name": "张XX",
-    "idCard": "330xxxxxxxx4312",
     "mobile": "138xxxx1009",
-    "tradeNo": "025b8f36fc72dce"
+    "idCard": "330xxxxxxxx4312",
+    "name": "张三"
   }
 }
 ```
 
-**body 参数**
+**body 参数**（《接口文档 - 经济能力》§3.1.3）
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| name | String | 是 | 姓名 |
 | mobile | String | 是 | 手机号 |
 | idCard | String | 是 | 身份证（末位 X 大写） |
-| tradeNo | String | 否 | 业务单号，作**幂等键**并透传为上游 reqid（≤20，超长截断/映射）；缺省时由本服务生成内部 reqid |
+| name | String | 否 | 姓名 |
+
+> 上游 reqid 由本服务内部生成（≤20），不再来自客户 tradeNo。
 
 **成功响应（查得数据）**
 ```json
 {
-  "code": 0,
-  "msg": "请求成功",
-  "data": {
-    "busiCode": 10,
-    "busiMsg": "success",
-    "result": { "score": "7" }
-  },
-  "seqNo": "10qs08398po00"
+  "head": { "errorCode": "0", "logId": "<requestId>", "time": 81, "errorMsg": "success", "timestamp": 1778059529352 },
+  "body": { "code": "001", "msg": "成功", "uid": "...", "reqid": "...", "verify": "", "result": { "range": "39" } }
 }
 ```
 
-**result 参数**
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| score | String | 收入模型评分，取值范围 1-51（直接透传上游 `range`，可能为 "0"） |
+**查无结果**：`head.errorCode="0"` + `body.code="999"`（无 `result` 节点），**不计维度①**。
 
-**业务异常响应（如余额不足）**
+**网关级错误（鉴权/配额/参数/系统，只返回 head）**
 ```json
-{
-  "code": 0,
-  "msg": "请求成功",
-  "data": { "busiCode": 1001, "busiMsg": "账户余额不足" },
-  "seqNo": "10qs08398po00"
-}
+{ "head": { "errorCode": "505062", "logId": "...", "time": 12, "errorMsg": "数据请求异常", "timestamp": 1672822394403 } }
 ```
 - 维度①无余额、维度②达上限时**不调用上游、不计维度①/②**。
 
-**系统异常响应**
-```json
-{
-  "code": -1,
-  "msg": "响应异常",
-  "seqNo": "10qs08398po00"
-}
-```
+### 5.2 配额查询路由（本服务扩展，非 .doc 定义）
+- **路径**：`GET /v1/openapi/zlx/quota`
+- **鉴权**：同主接口（appKey + MD5 签名）。
+- **用途**：供客户查询自身**维度①**（可用调用次数）余额与 license 状态；维度②为我方成本口径，**不对客户暴露**。
+- **响应**：`{errorCode, errorMsg, status, serviceTotal, serviceUsed, serviceRemaining}`（内部扩展形态）。
 
-### 5.2 配额查询路由（本服务扩展，非 PDF）
-- **路径**：`GET /openapi/zlx/quota`
-- **鉴权**：同主接口（appId + MD5 签名）。
-- **用途**：供客户查询自身**维度①**（可用调用次数）余额与 license 状态。
-- **说明**：维度②为我方成本口径，**不对客户暴露**；响应沿用 PDF 的 `code/msg/data` 风格。
+### 5.3 内部 busiCode → head.errorCode 映射
+> 查得/查无是业务结果，落在 `body.code`（001/999），`head.errorCode` 恒为 `"0"`。下表非 0 项为网关级错误（只返回 head）。
 
-**成功响应**
-```json
-{
-  "code": 0,
-  "msg": "请求成功",
-  "seqNo": "10qs08398po00",
-  "data": {
-    "busiCode": 10,
-    "status": "ACTIVE",
-    "serviceTotal": 100000,
-    "serviceUsed": 37250,
-    "serviceRemaining": 62750
-  }
-}
-```
+| 内部 busiCode | 含义 | head.errorCode | 触发条件 | 计维度① | 计维度② |
+|---|---|---|---|---|---|
+| 10 | 查得数据【计费】 | "0" (body.code 001) | 上游伽马 10 / income_cls 001 | 是 | 以上游扣费为准（是） |
+| 1000 | 数据未查得 | "0" (body.code 999) | 上游伽马 1000 / income_cls 999 | 否 | 以上游扣费为准（是） |
+| 1001 | 账户余额不足 | 505005 | 维度①无余额 | 否 | 否 |
+| 1002 | 账户信息不存在 | 505004 | appKey 查无 license | 否 | 否 |
+| 1003 | appKey 异常 | 505001 | 缺少/非法 appKey | 否 | 否 |
+| 1005 | 账号信息异常 | 505002 | 签名校验失败 / IP 不在白名单 | 否 | 否 |
+| 1006 | 透支余额已达上限 | 505006 | 维度②达成本上限 | 否 | 否 |
+| 1007 | 数据请求异常 | 505062 | 参数校验失败 / 上游我方原因失败 / 内部错误 / 超时复查未决 | 否 | 否（复查/对账裁决） |
+| 1009 | 服务尚未开通 | 505007 | license 停用/过期/未开通 | 否 | 否 |
 
-**无余额时**：`serviceRemaining = 0`，`data.busiCode = 1001`、`busiMsg = "账户余额不足"`，提示客户充值。
-
-### 5.3 业务返回码 `busiCode`（本服务，对齐 PDF）
-| busiCode | 含义 | 触发条件 | 计维度① | 计维度② |
-|---|---|---|---|---|
-| 10 | 查询成功【计费】 | 上游 001（查得数据） | 是 | 以上游扣费为准（是） |
-| 1000 | 数据未查得 | 上游 999 查无结果 | 否 | 以上游扣费为准（是） |
-| 1001 | 账户余额不足 | 维度①无余额 | 否 | 否 |
-| 1002 | 账户信息不存在 | license/账户不存在 | 否 | 否 |
-| 1003 | appId 异常 | 缺少/非法 appId | 否 | 否 |
-| 1004 | 产品编号异常 | apiKey ≠ `gama_ctmz_layer_score` | 否 | 否 |
-| 1005 | 账号信息异常 | 签名校验失败 / 账号信息异常 | 否 | 否 |
-| 1006 | 透支余额已达上限 | 维度②达成本上限 | 否 | 否 |
-| 1007 | 数据请求异常 | 参数校验失败 / 上游我方原因失败 / 内部错误 / 超时复查未决 | 否 | 否（复查/对账裁决） |
-| 1009 | 服务尚未开通 | license 停用/过期/未开通 | 否 | 否 |
-
-> 全局 `code`：业务态（含 1000/1001 等）一律 `code=0` 并在 `data.busiCode` 表达成败；仅在**请求体无法解析 / 系统级异常**时返回 `code=-1`（无 `data`）。
+> `head.errorCode` 字典中 `0` / `505062` 取自 .doc 示例，其余 `5050xx` 为内部约定（待联调对齐真实字典）。
 
 ---
 
@@ -486,15 +450,13 @@ requestId = ts(Base36) + "-" + clientShort + "-" + bodyHash + "-" + core
 - **入站透传**：若客户在 Header 携带 `X-Request-Id`，可选择信任并复用（便于客户侧串联），否则由本服务生成；最终值以返回为准。
 
 ### 9.3 返回给客户
-- `requestId` 作为响应顶层 `seqNo`（交易流水号）返回。
+- `requestId` 作为响应 `head.logId` 返回。
 - 同时通过响应头 `X-Request-Id` 返回，方便客户在不解析 body 时也能记录。
 
 ```json
 {
-  "code": 0,
-  "msg": "请求成功",
-  "seqNo": "lq8x2f-y89098io-9f3a1b2c-K7M2P9QXTV",
-  "data": { "busiCode": 10, "busiMsg": "success", "result": { "score": "39" } }
+  "head": { "errorCode": "0", "logId": "lq8x2f-y89098io-9f3a1b2c-K7M2P9QXTV", "time": 81, "errorMsg": "success", "timestamp": 1778059529352 },
+  "body": { "code": "001", "msg": "成功", "uid": "...", "reqid": "...", "verify": "", "result": { "range": "39" } }
 }
 ```
 

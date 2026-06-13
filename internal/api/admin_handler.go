@@ -148,7 +148,7 @@ func (s *Server) adminRotateSecret(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminListAudits(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := model.AuditFilter{
-		AppID:  q.Get("appId"),
+		AppKey: q.Get("appKey"),
 		Limit:  atoiDefault(q.Get("limit"), 100),
 		Offset: atoiDefault(q.Get("offset"), 0),
 	}

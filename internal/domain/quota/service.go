@@ -58,7 +58,7 @@ func (s *Service) ServiceQuotaView(ctx context.Context, lic *model.LicenseView) 
 //     nil) so the caller can replay the cached result without re-charging.
 //   - Otherwise it reserves one upstream unit and writes a PENDING ledger.
 func (s *Service) ReserveUpstream(ctx context.Context, lic *model.LicenseView, reqid, tradeNo, requestID string) (*ReserveToken, *model.Ledger, error) {
-	if existing, err := s.ledger.FindByReqid(ctx, lic.AppID, reqid); err == nil && existing != nil {
+	if existing, err := s.ledger.FindByReqid(ctx, lic.AppKey, reqid); err == nil && existing != nil {
 		if existing.State == model.StateBilled {
 			return nil, existing, nil
 		}
@@ -76,7 +76,7 @@ func (s *Service) ReserveUpstream(ctx context.Context, lic *model.LicenseView, r
 	}
 
 	l := &model.Ledger{
-		AppID:     lic.AppID,
+		AppKey:    lic.AppKey,
 		TradeNo:   tradeNo,
 		Reqid:     reqid,
 		RequestID: requestID,

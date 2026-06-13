@@ -17,8 +17,7 @@ import (
 const (
 	baseURL = "http://localhost:8080"
 	secret  = "demo-app-secret"
-	appID   = "y89098io"
-	apiKey  = "gama_ctmz_layer_score"
+	appKey  = "y89098io"
 )
 
 func sign(params map[string]string, secret string) string {
@@ -84,35 +83,30 @@ func main() {
 	st, body, err := call(http.MethodGet, "/healthz", nil)
 	check("GET /healthz", st, body, err)
 
-	// 2. POST /enol/api/v1/doCheck
-	doBody := map[string]string{
-		"name":    "张XX",
-		"idCard":  "330129199109094312",
-		"mobile":  "13809091009",
-		"tradeNo": "025b8f36fc72dce",
+	// 2. POST /v1/openapi/zlx/querySrmxV9
+	qBody := map[string]string{
+		"mobile": "13809091009",
+		"idCard": "330129199109094312",
+		"name":   "张三",
 	}
-	doSign := sign(doBody, secret)
-	doPayload := map[string]any{
+	payload := map[string]any{
 		"encryptionType": 1,
-		"appId":          appID,
-		"sign":           doSign,
-		"apiKey":         apiKey,
-		"body":           doBody,
+		"appKey":         appKey,
+		"sign":           sign(qBody, secret),
+		"body":           qBody,
 	}
-	st, body, err = call(http.MethodPost, "/enol/api/v1/doCheck", doPayload)
-	check("POST /enol/api/v1/doCheck", st, body, err)
+	st, body, err = call(http.MethodPost, "/v1/openapi/zlx/querySrmxV9", payload)
+	check("POST /v1/openapi/zlx/querySrmxV9", st, body, err)
 
-	// 3. GET /openapi/zlx/quota (empty body → sign = MD5(secret))
-	quotaSign := sign(map[string]string{}, secret)
+	// 3. GET /v1/openapi/zlx/quota (empty body → sign = MD5(secret))
 	quotaPayload := map[string]any{
 		"encryptionType": 1,
-		"appId":          appID,
-		"sign":           quotaSign,
-		"apiKey":         apiKey,
+		"appKey":         appKey,
+		"sign":           sign(map[string]string{}, secret),
 		"body":           map[string]string{},
 	}
-	st, body, err = call(http.MethodGet, "/openapi/zlx/quota", quotaPayload)
-	check("GET /openapi/zlx/quota", st, body, err)
+	st, body, err = call(http.MethodGet, "/v1/openapi/zlx/quota", quotaPayload)
+	check("GET /v1/openapi/zlx/quota", st, body, err)
 
 	if ok {
 		fmt.Println("\nAll routes responded successfully.")

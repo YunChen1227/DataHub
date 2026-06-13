@@ -1,30 +1,56 @@
-// Package errs defines the PDF business codes (busiCode, DESIGN §5.3) and a
-// transport-agnostic AppError carrying the data.busiCode / data.busiMsg pair.
+// Package errs defines the internal business codes (busiCode) and a
+// transport-agnostic AppError. Two outbound code spaces are derived from it:
+//   - 上游伽马 (PDF §2.1 busiCode) is parsed INTO these constants by the gama
+//     upstream client.
+//   - 下游对客户 (接口文档-经济能力.doc §1.5) head.errorCode is derived via
+//     ErrorCode(); the business result (查得/查无) is carried in body.code.
 package errs
 
 import "errors"
 
-// Global response code values (PDF §1.6 / DESIGN §5.0).
+// Downstream gateway head.errorCode values (接口文档-经济能力.doc §1/§3).
+//   - "0"   = 调用成功（含查得/查无，业务结果落在 body.code 001/999）。
+//   - 非"0" = 网关级错误（鉴权/配额/参数/系统），此时只返回 head、无 body。
 const (
-	CodeOK    = 0  // 业务态一律 0（成败在 busiCode 表达）
-	CodeError = -1 // 响应异常（请求体不可解析 / 系统级异常）
+	ErrorCodeOK = "0"
 )
 
-// BusiCode is the value written to data.busiCode (PDF §5.3).
+// BusiCode is the internal business code (also the 伽马上游 busiCode space).
 type BusiCode int
 
 const (
-	BusiSuccess         BusiCode = 10   // 查询成功【计费】
-	BusiNotFound        BusiCode = 1000 // 数据未查得
+	BusiSuccess         BusiCode = 10   // 查询成功【计费】(伽马 10 / income_cls 001)
+	BusiNotFound        BusiCode = 1000 // 数据未查得 (伽马 1000 / income_cls 999)
 	BusiNoBalance       BusiCode = 1001 // 账户余额不足（维度①无余额）
-	BusiAccountNotExist BusiCode = 1002 // 账户信息不存在（appId 查无 license）
-	BusiAppIDInvalid    BusiCode = 1003 // appId 异常（缺少/非法 appId）
-	BusiProductInvalid  BusiCode = 1004 // 产品编号异常（apiKey 不匹配）
-	BusiAccountAbnormal BusiCode = 1005 // 账号信息异常（签名校验失败）
+	BusiAccountNotExist BusiCode = 1002 // 账户信息不存在（appKey 查无 license）
+	BusiAppIDInvalid    BusiCode = 1003 // appKey 异常（缺少/非法 appKey）
+	BusiProductInvalid  BusiCode = 1004 // 产品编号异常（保留，下游已不使用）
+	BusiAccountAbnormal BusiCode = 1005 // 账号信息异常（签名校验失败 / IP 不在白名单）
 	BusiOverdraftLimit  BusiCode = 1006 // 透支余额已达上限（维度②达成本上限）
 	BusiDataRequestErr  BusiCode = 1007 // 数据请求异常（参数/上游我方原因/内部错误/超时未决）
 	BusiServiceNotOpen  BusiCode = 1009 // 服务尚未开通（license 停用/过期/未开通）
 )
+
+// errorCodeByBusi maps an internal busiCode to the下游 head.errorCode
+// (接口文档-经济能力.doc). 0/505062 沿用 .doc 示例，其余按 5050xx 归类。
+var errorCodeByBusi = map[BusiCode]string{
+	BusiNoBalance:       "505005",
+	BusiAccountNotExist: "505004",
+	BusiAppIDInvalid:    "505001",
+	BusiProductInvalid:  "505003",
+	BusiAccountAbnormal: "505002",
+	BusiOverdraftLimit:  "505006",
+	BusiServiceNotOpen:  "505007",
+	BusiDataRequestErr:  "505062",
+}
+
+// ErrorCode returns the下游 head.errorCode for an error busiCode (默认 505062).
+func ErrorCode(code BusiCode) string {
+	if s, ok := errorCodeByBusi[code]; ok {
+		return s
+	}
+	return "505062"
+}
 
 // defaultMsg maps each busiCode to its canonical client-facing message.
 var defaultMsg = map[BusiCode]string{

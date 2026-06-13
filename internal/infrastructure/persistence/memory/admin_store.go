@@ -55,13 +55,13 @@ func (s *Store) GetUser(_ context.Context, licenseID string) (*model.UserDetail,
 func (s *Store) CreateUser(_ context.Context, d *model.UserDetail, secret string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.appIDIndex[d.AppID]; ok {
-		return errAppIDExists
+	if _, ok := s.appKeyIndex[d.AppKey]; ok {
+		return errAppKeyExists
 	}
 	s.licenses[d.LicenseID] = &licenseRec{
 		view: model.LicenseView{
 			LicenseID:   d.LicenseID,
-			AppID:       d.AppID,
+			AppKey:      d.AppKey,
 			ClientUUID:  d.ClientUUID,
 			Status:      d.Status,
 			IPWhitelist: append([]string(nil), d.IPWhitelist...),
@@ -70,7 +70,7 @@ func (s *Store) CreateUser(_ context.Context, d *model.UserDetail, secret string
 		secret:    secret,
 		createdAt: d.CreatedAt,
 	}
-	s.appIDIndex[d.AppID] = d.LicenseID
+	s.appKeyIndex[d.AppKey] = d.LicenseID
 	s.quotas[d.LicenseID] = &quotaRow{serviceTotal: d.ServiceTotal, upstreamTotal: d.UpstreamTotal}
 	return nil
 }
@@ -95,7 +95,7 @@ func (s *Store) DeleteUser(_ context.Context, licenseID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if rec := s.licenses[licenseID]; rec != nil {
-		delete(s.appIDIndex, rec.view.AppID)
+		delete(s.appKeyIndex, rec.view.AppKey)
 	}
 	delete(s.licenses, licenseID)
 	delete(s.quotas, licenseID)
@@ -123,7 +123,7 @@ func (s *Store) userDetailLocked(licenseID string) *model.UserDetail {
 	}
 	return &model.UserDetail{
 		LicenseID:         licenseID,
-		AppID:             rec.view.AppID,
+		AppKey:            rec.view.AppKey,
 		Name:              rec.name,
 		Status:            rec.view.Status,
 		ClientUUID:        rec.view.ClientUUID,
@@ -157,7 +157,7 @@ func (s *Store) ListAudits(_ context.Context, f model.AuditFilter) ([]*model.Aud
 	// newest first.
 	for i := len(s.audits) - 1; i >= 0; i-- {
 		a := s.audits[i]
-		if f.AppID != "" && a.AppID != f.AppID {
+		if f.AppKey != "" && a.AppKey != f.AppKey {
 			continue
 		}
 		if f.BusiCode != nil && a.BusiCode != *f.BusiCode {

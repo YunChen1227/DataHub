@@ -33,11 +33,12 @@ func NewServer(orch *application.QueryOrchestrator, adminSvc *admin.Service, glo
 	return &Server{orch: orch, admin: adminSvc, globalIP: globalIP, spaDir: spaDir}
 }
 
-// Routes wires the public endpoints with edge middleware (PDF §2.1 / DESIGN §5/§16).
+// Routes wires the public endpoints with edge middleware
+// (接口文档-经济能力.doc §3 / DESIGN §5/§16). 网关前缀 /v1。
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /enol/api/v1/doCheck", s.handleDoCheck)
-	mux.HandleFunc("GET /openapi/zlx/quota", s.handleQuota)
+	mux.HandleFunc("POST /v1/openapi/zlx/querySrmxV9", s.handleQuery)
+	mux.HandleFunc("GET /v1/openapi/zlx/quota", s.handleQuota)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
@@ -58,36 +59,34 @@ func (s *Server) globalIPAllowed(ctx context.Context) bool {
 	return ipfilter.Allowed(appctx.ClientIP(ctx), cidrs)
 }
 
-// envelope is the PDF request信封 (§1.4): appId/sign/apiKey/encryptionType/body.
+// envelope is the请求信封 (网关 appKey/appSecret): appKey/sign/encryptionType/body.
 type envelope struct {
-	AppID          string          `json:"appId"`
+	AppKey         string          `json:"appKey"`
 	Sign           string          `json:"sign"`
-	APIKey         string          `json:"apiKey"`
 	EncryptionType int             `json:"encryptionType"`
 	Body           json.RawMessage `json:"body"`
 }
 
-// handleDoCheck serves POST /enol/api/v1/doCheck (PDF §2 / DESIGN §5.1).
-func (s *Server) handleDoCheck(w http.ResponseWriter, r *http.Request) {
+// handleQuery serves POST /v1/openapi/zlx/querySrmxV9 (接口文档-经济能力.doc §3.1).
+func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	seqNo := appctx.RequestID(r.Context())
 
 	if !s.globalIPAllowed(r.Context()) {
-		writeJSON(w, mapping.SystemError("IP 不在白名单", seqNo))
+		writeJSON(w, mapping.Error(errs.BusiAccountAbnormal, "IP 不在白名单", seqNo, 0))
 		return
 	}
 
 	raw, _ := io.ReadAll(r.Body)
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
-		// 请求体不可解析 → 全局 code=-1 响应异常 (PDF §1.6).
-		writeJSON(w, mapping.SystemError("请求体解析失败", seqNo))
+		writeJSON(w, mapping.Error(errs.BusiDataRequestErr, "请求体解析失败", seqNo, 0))
 		return
 	}
 
 	var cmd model.QueryCommand
 	if len(env.Body) > 0 {
 		if err := json.Unmarshal(env.Body, &cmd); err != nil {
-			writeJSON(w, mapping.SystemError("请求体解析失败", seqNo))
+			writeJSON(w, mapping.Error(errs.BusiDataRequestErr, "请求体解析失败", seqNo, 0))
 			return
 		}
 	}
@@ -95,30 +94,21 @@ func (s *Server) handleDoCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.orch.Handle(r.Context(), signedFrom(&env), &cmd))
 }
 
-// quotaData mirrors the §5.2 success body shape, embedded in the PDF data object.
-type quotaData struct {
-	BusiCode         int    `json:"busiCode"`
-	BusiMsg          string `json:"busiMsg"`
-	Status           string `json:"status"`
+// quotaResponse is本服务扩展的配额查询响应 (.doc 未定义, 内部/admin 使用).
+type quotaResponse struct {
+	ErrorCode        string `json:"errorCode"`
+	ErrorMsg         string `json:"errorMsg"`
+	Status           string `json:"status,omitempty"`
 	ServiceTotal     int64  `json:"serviceTotal"`
 	ServiceUsed      int64  `json:"serviceUsed"`
 	ServiceRemaining int64  `json:"serviceRemaining"`
 }
 
-type quotaResponse struct {
-	Code  int        `json:"code"`
-	Msg   string     `json:"msg"`
-	SeqNo string     `json:"seqNo"`
-	Data  *quotaData `json:"data,omitempty"`
-}
-
-// handleQuota serves GET /openapi/zlx/quota (DESIGN §5.2, 本服务扩展). 鉴权同主接口
-// (appId + MD5 签名)，信封从请求体读取；维度② 不对客户暴露。
+// handleQuota serves GET /v1/openapi/zlx/quota (本服务扩展). 鉴权同主接口
+// (appKey + MD5 签名)，信封从请求体读取；维度② 不对客户暴露。
 func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
-	seqNo := appctx.RequestID(r.Context())
-
 	if !s.globalIPAllowed(r.Context()) {
-		writeJSON(w, mapping.SystemError("IP 不在白名单", seqNo))
+		writeJSON(w, quotaResponse{ErrorCode: errs.ErrorCode(errs.BusiAccountAbnormal), ErrorMsg: "IP 不在白名单"})
 		return
 	}
 
@@ -129,45 +119,32 @@ func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
 	view, _, err := s.orch.QuotaQuery(r.Context(), signedFrom(&env))
 	if err != nil {
 		ae := errs.AsAppError(err)
-		writeJSON(w, mapping.Busi(ae.Busi, ae.Msg, seqNo))
+		writeJSON(w, quotaResponse{ErrorCode: errs.ErrorCode(ae.Busi), ErrorMsg: ae.Msg})
 		return
 	}
-
-	busiCode := int(errs.BusiSuccess)
-	busiMsg := "success"
-	if view.Remaining <= 0 {
-		busiCode = int(errs.BusiNoBalance)
-		busiMsg = errs.Msg(errs.BusiNoBalance)
-	}
 	writeJSON(w, quotaResponse{
-		Code:  errs.CodeOK,
-		Msg:   "请求成功",
-		SeqNo: seqNo,
-		Data: &quotaData{
-			BusiCode:         busiCode,
-			BusiMsg:          busiMsg,
-			Status:           view.Status,
-			ServiceTotal:     view.Total,
-			ServiceUsed:      view.Used,
-			ServiceRemaining: view.Remaining,
-		},
+		ErrorCode:        errs.ErrorCodeOK,
+		ErrorMsg:         "success",
+		Status:           view.Status,
+		ServiceTotal:     view.Total,
+		ServiceUsed:      view.Used,
+		ServiceRemaining: view.Remaining,
 	})
 }
 
-// signedFrom extracts the §8.1 signature material from the request envelope.
+// signedFrom extracts the signature material from the request envelope.
 // BodyParams are the non-empty string business params used to recompute the MD5.
 func signedFrom(env *envelope) *model.SignedRequest {
 	return &model.SignedRequest{
-		AppID:          env.AppID,
+		AppKey:         env.AppKey,
 		Sign:           env.Sign,
-		APIKey:         env.APIKey,
 		EncryptionType: env.EncryptionType,
 		BodyParams:     bodyParams(env.Body),
 	}
 }
 
-// bodyParams decodes the body object into its non-empty string params (DESIGN
-// §8.1: 剔除字节/文件类型与值为空的参数).
+// bodyParams decodes the body object into its non-empty string params
+// (DESIGN §8.1: 剔除字节/文件类型与值为空的参数).
 func bodyParams(rawBody json.RawMessage) map[string]string {
 	out := map[string]string{}
 	if len(rawBody) == 0 {

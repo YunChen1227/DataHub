@@ -20,6 +20,7 @@ import (
 	"github.com/datahub/relay/internal/domain/auth"
 	"github.com/datahub/relay/internal/domain/billing"
 	"github.com/datahub/relay/internal/domain/model"
+	"github.com/datahub/relay/internal/domain/port"
 	"github.com/datahub/relay/internal/domain/quota"
 	"github.com/datahub/relay/internal/job"
 	"github.com/datahub/relay/internal/infrastructure/persistence/memory"
@@ -31,16 +32,39 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	cfg := loadConfig()
+	cfg, err := loadConfig()
+	if err != nil {
+		slog.Error("load config failed", "err", err)
+		os.Exit(1)
+	}
 
 	// --- infrastructure adapters (dev: in-memory) ---
 	store := memory.New()
 	seedDemo(store)
 
-	secrets := secret.NewStore(store, cfg.upstreamAccount, cfg.upstreamKey)
+	secrets := secret.NewStore(store)
 
 	httpClient := &http.Client{Timeout: cfg.upstreamTimeout}
-	upClient := upstream.New(upstream.Config{BaseURL: cfg.upstreamBaseURL}, secrets, httpClient)
+	gamaClient := upstream.NewGama(upstream.GamaConfig{
+		BaseURL: cfg.gamaBaseURL,
+		AppID:   cfg.gamaAppID,
+		Secret:  cfg.gamaSecret,
+		APIKey:  cfg.gamaAPIKey,
+	}, httpClient)
+	incomeClient := upstream.NewIncomeCls(upstream.IncomeClsConfig{
+		BaseURL: cfg.incomeBaseURL,
+		Account: cfg.incomeAccount,
+		Key:     cfg.incomeKey,
+	}, httpClient)
+	upRouter, err := upstream.NewRouter(cfg.upstreamProvider, map[string]port.UpstreamPort{
+		upstream.ProviderGama:      gamaClient,
+		upstream.ProviderIncomeCls: incomeClient,
+	})
+	if err != nil {
+		logger.Error("upstream router init failed", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("upstream provider selected", "active", upRouter.Active())
 
 	// --- domain services ---
 	verifier := auth.Md5Verifier{}
@@ -52,7 +76,7 @@ func main() {
 		TokenTTL:  cfg.adminTokenTTL,
 	})
 
-	orch := application.NewQueryOrchestrator(authSvc, quotaSvc, billSvc, upClient, store, logger)
+	orch := application.NewQueryOrchestrator(authSvc, quotaSvc, billSvc, upRouter, store, logger)
 
 	// --- background workers (DESIGN §7.6) ---
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -73,8 +97,8 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	requery := job.NewRequeryWorker(store, store, upClient, billSvc, quotaSvc, cfg.requeryInterval, logger)
-	recon := job.NewReconciliationJob(store, upClient, cfg.reconInterval, logger)
+	requery := job.NewRequeryWorker(store, store, upRouter, billSvc, quotaSvc, cfg.requeryInterval, logger)
+	recon := job.NewReconciliationJob(store, upRouter, cfg.reconInterval, logger)
 	go requery.Run(ctx)
 	go recon.Run(ctx)
 
@@ -96,7 +120,7 @@ func main() {
 func seedDemo(store *memory.Store) {
 	store.SeedLicense(&model.LicenseView{
 		LicenseID:  "LIC-DEMO-0001",
-		AppID:      "y89098io",
+		AppKey:     "y89098io",
 		ClientUUID: "demo-client-uuid",
 		Status:     "ACTIVE",
 	}, "demo-app-secret", "Demo 商户", 100000, 100000)

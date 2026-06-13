@@ -28,12 +28,12 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 
 		id := r.Header.Get("X-Request-Id") // optional inbound passthrough
 		if id == "" {
-			// client portion of the requestId comes from the envelope appId.
+			// client portion of the requestId comes from the envelope appKey.
 			var env struct {
-				AppID string `json:"appId"`
+				AppKey string `json:"appKey"`
 			}
 			_ = json.Unmarshal(body, &env)
-			id = reqid.Generate(time.Now().UnixMilli(), env.AppID, body)
+			id = reqid.Generate(time.Now().UnixMilli(), env.AppKey, body)
 		}
 
 		ctx := appctx.WithRequestID(r.Context(), id)

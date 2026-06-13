@@ -11,7 +11,7 @@ import (
 
 // LicenseRepository loads license/identity rows (DESIGN §11.1).
 type LicenseRepository interface {
-	FindByAppID(ctx context.Context, appID string) (*model.LicenseView, error)
+	FindByAppKey(ctx context.Context, appKey string) (*model.LicenseView, error)
 }
 
 // QuotaRepository performs atomic两维度 counting (DESIGN §7.5). All mutating
@@ -42,17 +42,19 @@ type LedgerRepository interface {
 	ListByState(ctx context.Context, state model.BillingState, limit int) ([]*model.Ledger, error)
 }
 
-// UpstreamPort talks to the income_cls provider (DESIGN §6).
+// UpstreamPort talks to a data provider (DESIGN §6). The active provider is
+// selected by the upstream Router (income_cls / 伽马); each provider normalizes
+// its native response into model.UpstreamResult.
 type UpstreamPort interface {
 	Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error)
 	// Requery is the idempotent re-query by reqid (never double-charges).
 	Requery(ctx context.Context, reqid string) (*model.RequeryResult, error)
 }
 
-// SecretProvider supplies secrets from KMS/Vault (DESIGN §11.4); never logged.
+// SecretProvider supplies the客户下游 MD5 secret from KMS/Vault (DESIGN §11.4);
+// never logged. Upstream provider credentials are injected via process config.
 type SecretProvider interface {
 	AppSecret(ctx context.Context, licenseID string) (string, error)
-	UpstreamCredentials(ctx context.Context) (account, key string, err error)
 }
 
 // SignatureVerifier validates the client MD5 signature (DESIGN §8.1 / PDF §3.1).

@@ -1,0 +1,47 @@
+# DataHub 运行配置示例（敏感信息不要进代码/不要提交真实值）
+#
+# 用法：
+#   cp config.example.yaml config.yaml   # config.yaml 已被 .gitignore 忽略
+#   # 填入真实地址/凭证后启动
+#   go run ./cmd/relay
+#
+# 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
+#
+# 注：durations 支持 Go 风格字符串，如 4s / 10s / 5m / 8h。
+
+# HTTP 服务监听地址
+addr: ":8080"
+
+upstream:
+  # 当前生效的上游 provider：gama | income_cls
+  provider: "gama"
+  # 上游调用超时
+  timeout: "4s"
+
+  # 上游A：伽马分层分（伽马PDF /enol/api/v1/doCheck）。appId/appSecret 由商务分配。
+  gama:
+    baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"  # 测试: https://testenol.cn/...
+    appId: "REPLACE_WITH_GAMA_APP_ID"
+    appSecret: "REPLACE_WITH_GAMA_APP_SECRET"
+    apiKey: "gama_ctmz_layer_score"   # 固定产品编号
+
+  # 上游B：income_cls（/yrzx/finan/net/10w/v9）。account/key 由商户提供，server:port 联调提供。
+  incomeCls:
+    baseURL: "http://server:port/yrzx/finan/net/10w/v9"
+    account: "REPLACE_WITH_INCOME_CLS_ACCOUNT"
+    key: "REPLACE_WITH_INCOME_CLS_KEY"
+
+billing:
+  requeryInterval: "10s"   # PENDING 复查间隔
+  reconInterval: "5m"      # 对账兜底间隔
+
+admin:
+  bootstrapUser: "admin"
+  bootstrapPass: "REPLACE_WITH_ADMIN_PASSWORD"
+  jwtSecret: "REPLACE_WITH_ADMIN_JWT_SECRET"
+  tokenTTL: "8h"
+  spaDir: "web/admin/dist"
+
+# 开发期预置 demo license 的绑定 secret（生产由管理后台为每个用户生成）
+demo:
+  appSecret: "REPLACE_WITH_DEMO_APP_SECRET"

@@ -1,7 +1,9 @@
 # 经济能力查询转接服务 — 架构图（ARCHITECTURE.md / 指导代码生成）
 
-> 配套文档：业务/决策口径见 [`DESIGN.md`](./DESIGN.md)；上游契约见 [`income_cls.md`](./income_cls.md)。
+> 配套文档：业务/决策口径见 [`DESIGN.md`](./DESIGN.md)；下游契约见《接口文档 - 经济能力》；上游契约见 [`income_cls.md`](./income_cls.md) 与《伽马分层分_定制版》PDF。
 > 本文目标：把设计落成**可直接指导代码生成**的结构图——包/模块边界、类与接口、调用链方法签名、状态机、数据模型、组件↔代码映射。
+
+> **v0.4 拓扑**：下游对客户 = `POST /v1/openapi/zlx/querySrmxV9`（信封 `appKey/sign/encryptionType/body`，响应 `head/body`）。上游经 `upstream.Router` 路由到 **GamaClient（默认）/ IncomeClsClient**，由 `UPSTREAM_PROVIDER` 选择；两者实现同一 `UpstreamPort`，归一化为 `UpstreamResult`（`001`查得/`999`查无）。`head.errorCode` 由 `errs.ErrorCode(busiCode)` 映射。
 
 ---
 
@@ -24,7 +26,7 @@
 ```mermaid
 flowchart TB
     subgraph api["api 接入层 (controller/filter)"]
-        Ctl["DoCheckController\nQuotaController"]
+        Ctl["QuerySrmxV9Handler\nQuotaHandler"]
         Filter["RequestIdFilter\nSignatureFilter"]
     end
 
@@ -33,11 +35,11 @@ flowchart TB
     end
 
     subgraph domain["domain 领域层 (核心业务，无框架依赖)"]
-        AuthSvc["AuthService\n(License/appId/MD5签名校验)"]
+        AuthSvc["AuthService\n(License/appKey/MD5签名校验)"]
         QuotaSvc["QuotaService\n(维度①②预留/结算)"]
         BillSvc["BillingService\n(计费判定/状态机)"]
         Parser["RequestParser\n(参数校验/规范化)"]
-        Mapper["ResponseMapper\n(上游→客户响应)"]
+        Mapper["ResponseMapper\n(上游→客户 head/body)"]
     end
 
     subgraph infra["infrastructure 基础设施层"]

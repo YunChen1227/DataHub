@@ -38,36 +38,27 @@ func NewQueryOrchestrator(a *auth.Service, q *quota.Service, b *billing.Service,
 }
 
 // Handle runs the full request lifecycle and returns a ready-to-serialize
-// DoCheckResponse. All known outcomes (auth/quota/param/business) are encoded as
-// code=0 + data.busiCode (PDF §5.3). A rich audit record (DESIGN §16.3) is
+// QueryResponse (接口文档-经济能力.doc head/body). 网关级失败落在 head.errorCode;
+// 查得/查无落在 body.code (001/999). A rich audit record (DESIGN §16.3) is
 // written for every request via a deferred hook.
-func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequest, cmd *model.QueryCommand) *model.DoCheckResponse {
+func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequest, cmd *model.QueryCommand) *model.QueryResponse {
 	requestID := appctx.RequestID(ctx)
 	clientIP := appctx.ClientIP(ctx)
 	start := time.Now()
-	log := o.log.With("requestId", requestID, "tradeNo", cmd.TradeNo, "clientIp", clientIP)
+	log := o.log.With("requestId", requestID, "clientIp", clientIP)
+	lat := func() int64 { return time.Since(start).Milliseconds() }
 
 	rec := &model.AuditRecord{
 		RequestID:  requestID,
-		AppID:      signed.AppID,
-		TradeNo:    cmd.TradeNo,
+		AppKey:     signed.AppKey,
 		ClientIP:   clientIP,
 		NameMask:   mask.Name(cmd.Name),
 		IDCardMask: mask.IDCard(cmd.IDCard),
 		MobileMask: mask.Mobile(cmd.Mobile),
 	}
-	var resp *model.DoCheckResponse
 	defer func() {
-		if resp != nil {
-			if resp.Data != nil {
-				rec.BusiCode = resp.Data.BusiCode
-				rec.BusiMsg = resp.Data.BusiMsg
-			} else {
-				rec.BusiMsg = resp.Msg
-			}
-		}
 		rec.FoundData = rec.BusiCode == int(errs.BusiSuccess)
-		rec.LatencyMs = time.Since(start).Milliseconds()
+		rec.LatencyMs = lat()
 		rec.CreatedAt = time.Now()
 		if o.audit != nil {
 			if err := o.audit.AppendAudit(ctx, rec); err != nil {
@@ -76,23 +67,27 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 		}
 	}()
 
-	// 1. License + appId/apiKey + signature.
+	fail := func(busi errs.BusiCode, msg string) *model.QueryResponse {
+		rec.BusiCode = int(busi)
+		rec.BusiMsg = msg
+		return mapping.Error(busi, msg, requestID, lat())
+	}
+
+	// 1. License + appKey + signature.
 	lic, err := o.auth.Authenticate(ctx, signed)
 	if err != nil {
 		ae := errs.AsAppError(err)
 		rec.ErrMsg = ae.Error()
 		log.Warn("auth failed", "busiCode", ae.Busi, "err", err)
-		resp = mapping.Busi(ae.Busi, ae.Msg, requestID)
-		return resp
+		return fail(ae.Busi, ae.Msg)
 	}
-	log = log.With("appId", lic.AppID)
+	log = log.With("appKey", lic.AppKey)
 
 	// 1b. Per-user IP whitelist (DESIGN §16.4): reject when source IP not allowed.
 	if !ipfilter.Allowed(clientIP, lic.IPWhitelist) {
 		rec.ErrMsg = "IP 不在白名单"
 		log.Warn("per-user ip rejected", "clientIp", clientIP)
-		resp = mapping.Busi(errs.BusiAccountAbnormal, "IP 不在白名单", requestID)
-		return resp
+		return fail(errs.BusiAccountAbnormal, "IP 不在白名单")
 	}
 
 	// 2. 维度① balance pre-check (no balance → 1001, no upstream call).
@@ -100,8 +95,7 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 		ae := errs.AsAppError(err)
 		rec.ErrMsg = ae.Error()
 		log.Info("service quota rejected", "busiCode", ae.Busi)
-		resp = mapping.Busi(ae.Busi, ae.Msg, requestID)
-		return resp
+		return fail(ae.Busi, ae.Msg)
 	}
 
 	// 3. Param validation + build upstream request (我方拦截, before reserve).
@@ -110,27 +104,24 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 		ae := errs.AsAppError(err)
 		rec.ErrMsg = ae.Error()
 		log.Info("param invalid", "err", err)
-		resp = mapping.Busi(ae.Busi, ae.Msg, requestID)
-		return resp
+		return fail(ae.Busi, ae.Msg)
 	}
 	rec.Reqid = upReq.Reqid
 	log = log.With("reqid", upReq.Reqid)
 
 	// 4. Idempotency + 维度② reservation.
-	token, existing, err := o.quota.ReserveUpstream(ctx, lic, upReq.Reqid, cmd.TradeNo, requestID)
+	token, existing, err := o.quota.ReserveUpstream(ctx, lic, upReq.Reqid, "", requestID)
 	if err != nil {
 		ae := errs.AsAppError(err)
 		rec.ErrMsg = ae.Error()
 		log.Info("reserve rejected", "busiCode", ae.Busi)
-		resp = mapping.Busi(ae.Busi, ae.Msg, requestID)
-		return resp
+		return fail(ae.Busi, ae.Msg)
 	}
 	if existing != nil {
 		log.Info("idempotent hit, replaying cached billed result")
 		rec.CalledUpstream = true
 		rec.Billed = existing.CountedService
-		resp = o.replay(existing, requestID)
-		return resp
+		return o.replay(existing, requestID, rec, lat())
 	}
 
 	// 5. Call upstream; on timeout/no-response → idempotent re-query by reqid.
@@ -141,23 +132,21 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 		if rqErr != nil || rr == nil || !rr.Reachable {
 			rec.ErrMsg = "上游超时/复查未决，PENDING 待对账"
 			log.Warn("re-query unresolved, leaving PENDING for reconciliation", "err", rqErr)
-			resp = mapping.Busi(errs.BusiDataRequestErr, "", requestID)
-			return resp
+			return fail(errs.BusiDataRequestErr, "")
 		}
 		decision := o.billing.FromRequery(rr)
-		resp = o.settleAndRespond(ctx, token, decision, requestID, rec, log)
-		return resp
+		return o.settleAndRespond(ctx, token, decision, requestID, rec, log, lat)
 	}
 
 	// 6. Decide + settle on the确定结论.
 	decision := o.billing.Decide(result)
-	resp = o.settleAndRespond(ctx, token, decision, requestID, rec, log)
-	return resp
+	return o.settleAndRespond(ctx, token, decision, requestID, rec, log, lat)
 }
 
 // settleAndRespond applies the billing verdict and maps the client response
-// (DESIGN §6.2/§7.4): 001→10(查得数据), 999→1000(数据未查得), 其余→1007.
-func (o *QueryOrchestrator) settleAndRespond(ctx context.Context, token *quota.ReserveToken, d *model.BillingDecision, requestID string, rec *model.AuditRecord, log *slog.Logger) *model.DoCheckResponse {
+// (DESIGN §6.2/§7.4): 查得→body.code 001(计维度①), 查无→body.code 999(计维度②不
+// 计维度①), 其余→head.errorCode 505062.
+func (o *QueryOrchestrator) settleAndRespond(ctx context.Context, token *quota.ReserveToken, d *model.BillingDecision, requestID string, rec *model.AuditRecord, log *slog.Logger, lat func() int64) *model.QueryResponse {
 	if err := o.quota.Settle(ctx, token, d); err != nil {
 		log.Error("settle failed", "err", err)
 	}
@@ -170,25 +159,35 @@ func (o *QueryOrchestrator) settleAndRespond(ctx context.Context, token *quota.R
 	rec.Billed = d.Returned
 	switch {
 	case d.Charged && d.Returned && d.Result != nil:
+		rec.BusiCode = int(errs.BusiSuccess)
+		rec.BusiMsg = "success"
 		log.Info("billed (查得数据)", "range", d.Result.Range, "upstreamCode", d.Result.Code)
-		return mapping.Success(d.Result.Range, requestID)
+		return mapping.Found(d.Result, requestID, lat())
 	case d.Charged && !d.Returned:
+		rec.BusiCode = int(errs.BusiNotFound)
+		rec.BusiMsg = "查无结果"
 		log.Info("billed (查无结果, 计维度②不计维度①)")
-		return mapping.Busi(errs.BusiNotFound, "", requestID)
+		return mapping.NotFound(d.Result, requestID, lat())
 	default:
+		rec.BusiCode = int(errs.BusiDataRequestErr)
+		rec.ErrMsg = "上游未扣费/我方原因"
 		log.Info("unbilled (our-side / not charged)")
-		return mapping.Busi(errs.BusiDataRequestErr, "", requestID)
+		return mapping.Error(errs.BusiDataRequestErr, "", requestID, lat())
 	}
 }
 
 // replay reconstructs a response from an already-BILLED ledger. The full result
-// body is not cached yet, so a查得数据 replay echoes busiCode 10 with an empty
-// score (TODO: cache the full result keyed by reqid for byte-identical replays).
-func (o *QueryOrchestrator) replay(l *model.Ledger, requestID string) *model.DoCheckResponse {
+// body is not cached yet, so a查得数据 replay echoes body.code 001 with an empty
+// range (TODO: cache the full result keyed by reqid for byte-identical replays).
+func (o *QueryOrchestrator) replay(l *model.Ledger, requestID string, rec *model.AuditRecord, latencyMs int64) *model.QueryResponse {
 	if l.CountedService {
-		return mapping.Success("", requestID)
+		rec.BusiCode = int(errs.BusiSuccess)
+		rec.BusiMsg = "success"
+		return mapping.Found(&model.UpstreamResult{Code: "001", Reqid: l.Reqid, UID: l.UpstreamUID}, requestID, latencyMs)
 	}
-	return mapping.Busi(errs.BusiNotFound, "", requestID)
+	rec.BusiCode = int(errs.BusiNotFound)
+	rec.BusiMsg = "查无结果"
+	return mapping.NotFound(&model.UpstreamResult{Code: "999", Reqid: l.Reqid}, requestID, latencyMs)
 }
 
 // QuotaQuery serves the客户配额查询 route (DESIGN §5.2).

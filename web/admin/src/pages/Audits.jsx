@@ -4,7 +4,7 @@ import { api } from '../api.js'
 export default function Audits() {
   const [rows, setRows] = useState([])
   const [err, setErr] = useState('')
-  const [appId, setAppId] = useState('')
+  const [appKey, setAppKey] = useState('')
   const [busiCode, setBusiCode] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -13,7 +13,7 @@ export default function Audits() {
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      if (appId) params.set('appId', appId)
+      if (appKey) params.set('appKey', appKey)
       if (busiCode) params.set('busiCode', busiCode)
       params.set('limit', '200')
       const q = params.toString()
@@ -35,8 +35,8 @@ export default function Audits() {
       <h2>操作记录 / 审计日志</h2>
       <div className="toolbar">
         <div>
-          <label>appId 筛选</label>
-          <input value={appId} onChange={(e) => setAppId(e.target.value)} placeholder="全部" />
+          <label>appKey 筛选</label>
+          <input value={appKey} onChange={(e) => setAppKey(e.target.value)} placeholder="全部" />
         </div>
         <div>
           <label>busiCode 筛选</label>
@@ -53,7 +53,7 @@ export default function Audits() {
         <table>
           <thead>
             <tr>
-              <th>时间</th><th>requestId(seqNo)</th><th>appId</th><th>来源IP</th>
+              <th>时间</th><th>requestId(seqNo)</th><th>appKey</th><th>来源IP</th>
               <th>调用上游</th><th>查得数据</th><th>计费</th>
               <th>busiCode</th><th>上游code</th><th>上游uid</th>
               <th>耗时(ms)</th><th>入参(脱敏)</th><th>tradeNo/reqid</th><th>错误</th>
@@ -64,7 +64,7 @@ export default function Audits() {
               <tr key={a.id}>
                 <td className="muted">{new Date(a.createdAt).toLocaleString()}</td>
                 <td><code>{a.requestId}</code></td>
-                <td>{a.appId || '-'}</td>
+                <td>{a.appKey || '-'}</td>
                 <td>{a.clientIp || '-'}</td>
                 <td className={a.calledUpstream ? 'tag-ok' : 'tag-no'}>{a.calledUpstream ? '是' : '否'}</td>
                 <td className={a.foundData ? 'tag-ok' : 'tag-no'}>{a.foundData ? '是' : '否'}</td>

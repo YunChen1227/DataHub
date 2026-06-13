@@ -37,11 +37,11 @@ type licenseRec struct {
 type Store struct {
 	mu sync.Mutex
 
-	licenses   map[string]*licenseRec // licenseID -> rec
-	appIDIndex map[string]string      // appID -> licenseID
-	quotas     map[string]*quotaRow   // licenseID -> quota
+	licenses    map[string]*licenseRec // licenseID -> rec
+	appKeyIndex map[string]string      // appKey -> licenseID
+	quotas      map[string]*quotaRow   // licenseID -> quota
 
-	ledgerByReqid map[string]*model.Ledger // appID|reqid
+	ledgerByReqid map[string]*model.Ledger // appKey|reqid
 	ledgerByID    map[int64]*model.Ledger
 
 	audits   []*model.AuditRecord
@@ -57,7 +57,7 @@ type Store struct {
 func New() *Store {
 	return &Store{
 		licenses:      make(map[string]*licenseRec),
-		appIDIndex:    make(map[string]string),
+		appKeyIndex:   make(map[string]string),
 		quotas:        make(map[string]*quotaRow),
 		ledgerByReqid: make(map[string]*model.Ledger),
 		ledgerByID:    make(map[int64]*model.Ledger),
@@ -76,16 +76,16 @@ func (s *Store) SeedLicense(lic *model.LicenseView, secret, name string, service
 		secret:    secret,
 		createdAt: time.Now(),
 	}
-	s.appIDIndex[lic.AppID] = lic.LicenseID
+	s.appKeyIndex[lic.AppKey] = lic.LicenseID
 	s.quotas[lic.LicenseID] = &quotaRow{serviceTotal: serviceTotal, upstreamTotal: upstreamTotal}
 }
 
 // --- port.LicenseRepository ---
 
-func (s *Store) FindByAppID(_ context.Context, appID string) (*model.LicenseView, error) {
+func (s *Store) FindByAppKey(_ context.Context, appKey string) (*model.LicenseView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	licenseID, ok := s.appIDIndex[appID]
+	licenseID, ok := s.appKeyIndex[appKey]
 	if !ok {
 		return nil, nil
 	}
@@ -166,10 +166,10 @@ func (s *Store) ReleaseUpstream(_ context.Context, licenseID string) error {
 
 // --- port.LedgerRepository ---
 
-func (s *Store) FindByReqid(_ context.Context, appID, reqid string) (*model.Ledger, error) {
+func (s *Store) FindByReqid(_ context.Context, appKey, reqid string) (*model.Ledger, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l, ok := s.ledgerByReqid[appID+"|"+reqid]
+	l, ok := s.ledgerByReqid[appKey+"|"+reqid]
 	if !ok {
 		return nil, nil
 	}
@@ -184,7 +184,7 @@ func (s *Store) Append(_ context.Context, l *model.Ledger) error {
 	l.ID = s.seq
 	stored := *l
 	s.ledgerByID[l.ID] = &stored
-	s.ledgerByReqid[l.AppID+"|"+l.Reqid] = &stored
+	s.ledgerByReqid[l.AppKey+"|"+l.Reqid] = &stored
 	return nil
 }
 
@@ -215,4 +215,4 @@ func (s *Store) ListByState(_ context.Context, state model.BillingState, limit i
 	return out, nil
 }
 
-var errAppIDExists = errors.New("appId 已存在")
+var errAppKeyExists = errors.New("appKey 已存在")

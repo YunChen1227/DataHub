@@ -1,6 +1,6 @@
-// Package upstream is the HTTP adapter for the income_cls provider (DESIGN §6),
-// implementing port.UpstreamPort with MD5 signing, explicit timeouts and an
-// idempotent re-query by reqid.
+// Package upstream hosts the data-provider adapters and a Router that selects
+// the active provider (DESIGN §6). Providers implement port.UpstreamPort and
+// normalize their native response into model.UpstreamResult ("001"查得/"999"查无).
 package upstream
 
 import (
@@ -12,51 +12,47 @@ import (
 	"net/url"
 
 	"github.com/datahub/relay/internal/domain/model"
-	"github.com/datahub/relay/internal/domain/port"
 )
 
-// Config holds the upstream endpoint + connection knobs.
-type Config struct {
+// IncomeClsConfig holds the income_cls endpoint + merchant credentials
+// (income_cls.md: account/key 由商户提供).
+type IncomeClsConfig struct {
 	BaseURL string // e.g. http://{server}:{port}/yrzx/finan/net/10w/v9
+	Account string
+	Key     string
 }
 
-// Client implements port.UpstreamPort.
-type Client struct {
-	cfg     Config
-	secrets port.SecretProvider
-	http    *http.Client
+// IncomeClsClient implements port.UpstreamPort for the income_cls provider.
+type IncomeClsClient struct {
+	cfg  IncomeClsConfig
+	http *http.Client
 }
 
-// New builds an upstream client. The *http.Client SHOULD be configured with a
-// connection pool + explicit connect/read timeouts + circuit breaker (DESIGN §12).
-func New(cfg Config, secrets port.SecretProvider, httpClient *http.Client) *Client {
+// NewIncomeCls builds an income_cls client. The *http.Client SHOULD carry a
+// connection pool + explicit timeouts + circuit breaker (DESIGN §12).
+func NewIncomeCls(cfg IncomeClsConfig, httpClient *http.Client) *IncomeClsClient {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &Client{cfg: cfg, secrets: secrets, http: httpClient}
+	return &IncomeClsClient{cfg: cfg, http: httpClient}
 }
 
-// upstreamResponse mirrors the income_cls JSON body.
-type upstreamResponse struct {
+// incomeClsResponse mirrors the income_cls JSON body (income_cls.md §返回参数).
+type incomeClsResponse struct {
 	Code   string `json:"code"`
 	Msg    string `json:"msg"`
 	UID    string `json:"uid"`
 	Reqid  string `json:"reqid"`
 	Verify string `json:"verify"`
-	LogID  string `json:"logId"`
 	Result struct {
 		Range string `json:"range"`
 	} `json:"result"`
 }
 
-// Query performs the signed GET to the upstream (DESIGN §6).
-func (c *Client) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
-	account, key, err := c.secrets.UpstreamCredentials(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load upstream credentials: %w", err)
-	}
-	req.Account = account
-	req.Verify = Sign(req, account, key)
+// Query performs the signed GET to income_cls (income_cls.md §对接方式).
+func (c *IncomeClsClient) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
+	req.Account = c.cfg.Account
+	req.Verify = SignIncomeCls(req, c.cfg.Account, c.cfg.Key)
 
 	q := url.Values{}
 	q.Set("account", req.Account)
@@ -69,41 +65,37 @@ func (c *Client) Query(ctx context.Context, req *model.UpstreamRequest) (*model.
 	endpoint := c.cfg.BaseURL + "?" + q.Encode()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build upstream request: %w", err)
+		return nil, fmt.Errorf("build income_cls request: %w", err)
 	}
-
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		// network/timeout error → caller triggers Requery (DESIGN §7.3).
-		return nil, fmt.Errorf("upstream call: %w", err)
+		return nil, fmt.Errorf("income_cls call: %w", err)
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read upstream body: %w", err)
+		return nil, fmt.Errorf("read income_cls body: %w", err)
 	}
-	var ur upstreamResponse
+	var ur incomeClsResponse
 	if err := json.Unmarshal(raw, &ur); err != nil {
-		return nil, fmt.Errorf("decode upstream body: %w", err)
+		return nil, fmt.Errorf("decode income_cls body: %w", err)
 	}
+	// income_cls Code 已是 "001"/"999" 口径，直接采用 (DESIGN §6.1).
 	return &model.UpstreamResult{
-		Code:  ur.Code,
-		Msg:   ur.Msg,
-		UID:   ur.UID,
-		Reqid: ur.Reqid,
-		Range: ur.Result.Range,
-		LogID: ur.LogID,
+		Code:   ur.Code,
+		Msg:    ur.Msg,
+		UID:    ur.UID,
+		Reqid:  ur.Reqid,
+		Range:  ur.Result.Range,
+		Verify: ur.Verify,
 	}, nil
 }
 
-// Requery is the idempotent re-query by reqid (DESIGN §7.3). It MUST hit the
-// upstream's single-record/对账查询 interface (待联调确认 §15.3) which never
-// double-charges. Until that interface is confirmed, this returns Reachable=false
-// so the record stays PENDING for the reconciliation job to settle.
-func (c *Client) Requery(ctx context.Context, reqid string) (*model.RequeryResult, error) {
+// Requery is the idempotent re-query by reqid (DESIGN §7.3). 待联调确认 §15.3 的
+// 单记录/对账查询接口前，返回 Reachable=false，记录保持 PENDING 由对账兜底。
+func (c *IncomeClsClient) Requery(ctx context.Context, reqid string) (*model.RequeryResult, error) {
 	_ = ctx
 	_ = reqid
-	// TODO(§15.3): call upstream single-query-by-reqid once the contract is fixed.
 	return &model.RequeryResult{Reachable: false}, nil
 }

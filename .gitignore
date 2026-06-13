@@ -3,6 +3,16 @@ relay.exe
 *.exe
 *.out
 
+# Runtime logs
+relay.log
+relay.err
+*.log
+
 # Admin SPA build/deps
 web/admin/node_modules/
 web/admin/dist/
+
+# Local runtime config with secrets (use config.example.yaml as template)
+config.yaml
+config.local.yaml
+config.e2e.yaml

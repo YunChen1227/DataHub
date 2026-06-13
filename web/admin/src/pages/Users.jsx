@@ -14,7 +14,7 @@ export default function Users() {
   const [users, setUsers] = useState([])
   const [err, setErr] = useState('')
   const [form, setForm] = useState(emptyForm)
-  const [secret, setSecret] = useState(null) // {appId, secret, title}
+  const [secret, setSecret] = useState(null) // {appKey, secret, title}
   const [editing, setEditing] = useState(null)
 
   const load = async () => {
@@ -42,7 +42,7 @@ export default function Users() {
         ipWhitelist: parseIPs(form.ipWhitelist),
       })
       setForm(emptyForm)
-      setSecret({ appId: res.user.appId, secret: res.secret, title: '新用户已创建' })
+      setSecret({ appKey: res.user.appKey, secret: res.secret, title: '新用户已创建' })
       load()
     } catch (e) {
       setErr(e.message)
@@ -66,7 +66,7 @@ export default function Users() {
   }
 
   const remove = async (u) => {
-    if (!confirm(`确认删除用户 ${u.appId}（${u.name || '-'}）？`)) return
+    if (!confirm(`确认删除用户 ${u.appKey}（${u.name || '-'}）？`)) return
     setErr('')
     try {
       await api.deleteUser(u.licenseId)
@@ -77,11 +77,11 @@ export default function Users() {
   }
 
   const rotate = async (u) => {
-    if (!confirm(`确认为 ${u.appId} 轮换 secret？旧 secret 立即失效。`)) return
+    if (!confirm(`确认为 ${u.appKey} 轮换 secret？旧 secret 立即失效。`)) return
     setErr('')
     try {
       const { secret } = await api.rotateSecret(u.licenseId)
-      setSecret({ appId: u.appId, secret, title: 'secret 已轮换' })
+      setSecret({ appKey: u.appKey, secret, title: 'secret 已轮换' })
     } catch (e) {
       setErr(e.message)
     }
@@ -122,7 +122,7 @@ export default function Users() {
           <table>
             <thead>
               <tr>
-                <th>appId</th><th>名称</th><th>状态</th>
+                <th>appKey</th><th>名称</th><th>状态</th>
                 <th>维度①(用/总)</th><th>维度②(已计/预留/总)</th>
                 <th>IP 白名单</th><th>创建时间</th><th>操作</th>
               </tr>
@@ -130,7 +130,7 @@ export default function Users() {
             <tbody>
               {users.map((u) => (
                 <tr key={u.licenseId}>
-                  <td><code>{u.appId}</code></td>
+                  <td><code>{u.appKey}</code></td>
                   <td>{u.name || '-'}</td>
                   <td><span className={'badge ' + u.status}>{u.status}</span></td>
                   <td>{u.serviceUsed} / {u.serviceTotal}</td>
@@ -158,7 +158,7 @@ export default function Users() {
       {editing && (
         <div className="modal-backdrop" onClick={() => setEditing(null)}>
           <div className="card modal" onClick={(e) => e.stopPropagation()}>
-            <h2>编辑用户 — {editing.appId}</h2>
+            <h2>编辑用户 — {editing.appKey}</h2>
             <div className="field">
               <label>状态</label>
               <select value={editing.status} onChange={(e) => setEditing({ ...editing, status: e.target.value })}>
@@ -191,7 +191,7 @@ export default function Users() {
         <div className="modal-backdrop" onClick={() => setSecret(null)}>
           <div className="card modal" onClick={(e) => e.stopPropagation()}>
             <h2>{secret.title}</h2>
-            <p className="muted">appId：<code>{secret.appId}</code></p>
+            <p className="muted">appKey：<code>{secret.appKey}</code></p>
             <p className="muted">secret（仅此一次展示，请立即保存）：</p>
             <div className="secret-box">{secret.secret}</div>
             <button className="btn" onClick={() => setSecret(null)}>我已保存</button>

@@ -13,8 +13,8 @@ CREATE TABLE admin_user (
 -- §16.3/§16.5 审计日志（追加写）
 CREATE TABLE audit_log (
     id               BIGSERIAL   PRIMARY KEY,
-    request_id       VARCHAR(64) NOT NULL,         -- 全链路追踪 ID (= seqNo)
-    app_id           VARCHAR(64) NOT NULL,
+    request_id       VARCHAR(64) NOT NULL,         -- 全链路追踪 ID (= head.logId)
+    app_key          VARCHAR(64) NOT NULL,
     trade_no         VARCHAR(64),
     reqid            VARCHAR(32),
     client_ip        VARCHAR(64),
@@ -35,7 +35,7 @@ CREATE TABLE audit_log (
 );
 
 CREATE INDEX idx_audit_request_id ON audit_log (request_id);
-CREATE INDEX idx_audit_app_id     ON audit_log (app_id);
+CREATE INDEX idx_audit_app_key    ON audit_log (app_key);
 CREATE INDEX idx_audit_busi_code  ON audit_log (busi_code);
 
 -- §16.4 全局 IP 白名单（单行配置；为空表示不限制）

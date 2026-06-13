@@ -123,7 +123,7 @@ func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (*CreateUs
 	secret := GenerateSecret()
 	detail := &model.UserDetail{
 		LicenseID:     "LIC-" + strings.ToUpper(randAlpha(10)),
-		AppID:         GenerateAppID(),
+		AppKey:        GenerateAppKey(),
 		Name:          strings.TrimSpace(in.Name),
 		Status:        "ACTIVE",
 		ClientUUID:    randAlpha(24),

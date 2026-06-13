@@ -8,15 +8,15 @@ import (
 )
 
 const (
-	appIDLen  = 12
+	appKeyLen = 12
 	secretLen = 32
 	saltLen   = 16
-	// alphabet excludes ambiguous chars for human-readable appId.
+	// alphabet excludes ambiguous chars for human-readable appKey.
 	alphabet = "abcdefghijkmnpqrstuvwxyz23456789"
 )
 
-// GenerateAppID returns a random, readable client appId (DESIGN §16.2).
-func GenerateAppID() string { return randAlpha(appIDLen) }
+// GenerateAppKey returns a random, readable client appKey (DESIGN §16.2).
+func GenerateAppKey() string { return randAlpha(appKeyLen) }
 
 // GenerateSecret returns a random hex secret for MD5 加签 (DESIGN §16.4).
 func GenerateSecret() string {

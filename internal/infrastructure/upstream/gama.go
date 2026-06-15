@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -74,11 +75,17 @@ type gamaResponse struct {
 // response: busiCode 10 → "001"查得, 1000 → "999"查无, 其余 → error (上游侧异常,
 // 触发我方 re-query/对账, 不计费).
 func (c *GamaClient) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
-	body := map[string]string{
-		"name":    req.Name,
-		"mobile":  req.Mobile,
-		"idCard":  req.IDCard,
-		"tradeNo": req.Reqid, // 用我方 reqid 作为伽马 tradeNo（幂等键）
+	// 与官方 Demo.java 对齐：body 只放产品文档定义的业务参数（非空才放），
+	// 不注入 tradeNo 等额外字段；sign 严格对 body 实际参数加签。
+	body := map[string]string{}
+	if req.Name != "" {
+		body["name"] = req.Name
+	}
+	if req.IDCard != "" {
+		body["idCard"] = req.IDCard
+	}
+	if req.Mobile != "" {
+		body["mobile"] = req.Mobile
 	}
 	env := gamaEnvelope{
 		EncryptionType: 1,
@@ -97,6 +104,15 @@ func (c *GamaClient) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 	}
 	httpReq.Header.Set("Content-Type", "application/json; charset=utf-8")
 
+	// 出站请求日志（不含 secret），便于与上游逐字段核对。
+	slog.Debug("gama request",
+		"url", c.cfg.BaseURL,
+		"appId", c.cfg.AppID,
+		"apiKey", c.cfg.APIKey,
+		"sign", env.Sign,
+		"body", body,
+	)
+
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("gama call: %w", err)
@@ -107,6 +123,7 @@ func (c *GamaClient) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 	if err != nil {
 		return nil, fmt.Errorf("read gama body: %w", err)
 	}
+	slog.Debug("gama response", "status", resp.StatusCode, "raw", string(raw))
 	var gr gamaResponse
 	if err := json.Unmarshal(raw, &gr); err != nil {
 		return nil, fmt.Errorf("decode gama body: %w", err)

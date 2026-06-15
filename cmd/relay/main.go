@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,14 +23,20 @@ import (
 	"github.com/datahub/relay/internal/domain/model"
 	"github.com/datahub/relay/internal/domain/port"
 	"github.com/datahub/relay/internal/domain/quota"
-	"github.com/datahub/relay/internal/job"
 	"github.com/datahub/relay/internal/infrastructure/persistence/memory"
+	"github.com/datahub/relay/internal/infrastructure/persistence/postgres"
+	redisq "github.com/datahub/relay/internal/infrastructure/persistence/redis"
 	"github.com/datahub/relay/internal/infrastructure/secret"
 	"github.com/datahub/relay/internal/infrastructure/upstream"
+	"github.com/datahub/relay/internal/job"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	level := slog.LevelInfo
+	if lv := os.Getenv("LOG_LEVEL"); strings.EqualFold(lv, "debug") {
+		level = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
 
 	cfg, err := loadConfig()
@@ -38,11 +45,66 @@ func main() {
 		os.Exit(1)
 	}
 
-	// --- infrastructure adapters (dev: in-memory) ---
-	store := memory.New()
-	seedDemo(store)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	secrets := secret.NewStore(store)
+	// --- persistence backend selection (DESIGN §11) ---
+	// memory  : in-memory adapters (dev/default, fast e2e).
+	// postgres: durable PG (license/ledger/audit/admin/IP) + Redis+Lua quota.
+	var (
+		licenseRepo port.LicenseRepository
+		ledgerRepo  port.LedgerRepository
+		quotaRepo   port.QuotaRepository
+		auditRepo   port.AuditRepository
+		adminRepo   port.AdminUserRepository
+		userRepo    port.UserAdminRepository
+		ipRepo      port.GlobalIPRepository
+		secrets     port.SecretProvider
+		cleanup     = func() {}
+	)
+
+	switch cfg.storageDriver {
+	case "postgres":
+		pg, err := postgres.New(ctx, cfg.pgDSN())
+		if err != nil {
+			logger.Error("postgres connect failed", "err", err)
+			os.Exit(1)
+		}
+		if err := postgres.ApplyMigrations(ctx, pg.Pool(), cfg.migrationsDir); err != nil {
+			logger.Error("apply migrations failed", "err", err)
+			os.Exit(1)
+		}
+		if err := postgres.SeedDemo(ctx, pg); err != nil {
+			logger.Error("seed demo failed", "err", err)
+			os.Exit(1)
+		}
+		rq, err := redisq.New(ctx, redisq.Options{
+			Addr:     cfg.redisAddr,
+			Username: cfg.redisUsername,
+			Password: cfg.redisPassword,
+			DB:       cfg.redisDB,
+			PoolSize: cfg.redisPoolSize,
+		}, pg)
+		if err != nil {
+			logger.Error("redis connect failed", "err", err)
+			os.Exit(1)
+		}
+		licenseRepo, ledgerRepo, auditRepo = pg, pg, pg
+		adminRepo, userRepo, ipRepo = pg, pg, pg
+		quotaRepo = rq
+		secrets = secret.NewStore(pg)
+		cleanup = func() { rq.Close(); pg.Close() }
+		logger.Info("storage backend ready", "driver", "postgres", "redis", cfg.redisAddr)
+	default:
+		store := memory.New()
+		seedDemo(store)
+		licenseRepo, ledgerRepo, auditRepo = store, store, store
+		adminRepo, userRepo, ipRepo = store, store, store
+		quotaRepo = store
+		secrets = secret.NewStore(store)
+		logger.Info("storage backend ready", "driver", "memory")
+	}
+	defer cleanup()
 
 	httpClient := &http.Client{Timeout: cfg.upstreamTimeout}
 	gamaClient := upstream.NewGama(upstream.GamaConfig{
@@ -68,20 +130,17 @@ func main() {
 
 	// --- domain services ---
 	verifier := auth.Md5Verifier{}
-	authSvc := auth.New(store, secrets, verifier)
-	quotaSvc := quota.New(store, store)
+	authSvc := auth.New(licenseRepo, secrets, verifier)
+	quotaSvc := quota.New(quotaRepo, ledgerRepo)
 	billSvc := billing.New(billing.DefaultTable())
-	adminSvc := admin.New(store, store, store, store, admin.Config{
+	adminSvc := admin.New(adminRepo, userRepo, auditRepo, ipRepo, admin.Config{
 		JWTSecret: cfg.adminJWTSecret,
 		TokenTTL:  cfg.adminTokenTTL,
 	})
 
-	orch := application.NewQueryOrchestrator(authSvc, quotaSvc, billSvc, upRouter, store, logger)
+	orch := application.NewQueryOrchestrator(authSvc, quotaSvc, billSvc, upRouter, auditRepo, logger)
 
 	// --- background workers (DESIGN §7.6) ---
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	// bootstrap the initial admin operator (DESIGN §16.1).
 	if err := adminSvc.BootstrapAdmin(ctx, cfg.adminUser, cfg.adminPass); err != nil {
 		logger.Error("bootstrap admin failed", "err", err)
@@ -90,15 +149,15 @@ func main() {
 	}
 
 	// --- HTTP server ---
-	server := api.NewServer(orch, adminSvc, store, cfg.spaDir)
+	server := api.NewServer(orch, adminSvc, ipRepo, cfg.spaDir)
 	httpServer := &http.Server{
 		Addr:              cfg.addr,
 		Handler:           server.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	requery := job.NewRequeryWorker(store, store, upRouter, billSvc, quotaSvc, cfg.requeryInterval, logger)
-	recon := job.NewReconciliationJob(store, upRouter, cfg.reconInterval, logger)
+	requery := job.NewRequeryWorker(ledgerRepo, licenseRepo, upRouter, billSvc, quotaSvc, cfg.requeryInterval, logger)
+	recon := job.NewReconciliationJob(ledgerRepo, upRouter, cfg.reconInterval, logger)
 	go requery.Run(ctx)
 	go recon.Run(ctx)
 

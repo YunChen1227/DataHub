@@ -39,6 +39,26 @@ type config struct {
 	adminJWTSecret string
 	adminTokenTTL  time.Duration
 	spaDir         string
+
+	// 存储后端选择 (DESIGN §11): memory | postgres。
+	storageDriver string
+	migrationsDir string
+
+	// PostgreSQL (durable: license/ledger/audit/admin/IP)。
+	dbHost     string
+	dbPort     int
+	dbName     string
+	dbUser     string
+	dbPassword string
+	dbSSLMode  string
+	dbMaxConns int
+
+	// Redis (atomic dual-dimension quota counters)。
+	redisAddr     string
+	redisUsername string
+	redisPassword string
+	redisDB       int
+	redisPoolSize int
 }
 
 // duration parses Go-style duration strings (e.g. "4s", "5m", "8h") from YAML.
@@ -93,6 +113,26 @@ type fileConfig struct {
 	Demo struct {
 		AppSecret string `yaml:"appSecret"`
 	} `yaml:"demo"`
+	Storage struct {
+		Driver        string `yaml:"driver"`
+		MigrationsDir string `yaml:"migrationsDir"`
+	} `yaml:"storage"`
+	Database struct {
+		Host     string `yaml:"host"`
+		Port     int    `yaml:"port"`
+		Name     string `yaml:"name"`
+		User     string `yaml:"user"`
+		Password string `yaml:"password"`
+		SSLMode  string `yaml:"sslmode"`
+		MaxConns int    `yaml:"maxConns"`
+	} `yaml:"database"`
+	Redis struct {
+		Addr     string `yaml:"addr"`
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+		DB       int    `yaml:"db"`
+		PoolSize int    `yaml:"poolSize"`
+	} `yaml:"redis"`
 }
 
 // loadConfig reads the YAML config file and applies non-sensitive structural
@@ -142,6 +182,23 @@ func loadConfig() (config, error) {
 		adminJWTSecret: fc.Admin.JWTSecret,
 		adminTokenTTL:  durOr(fc.Admin.TokenTTL, 8*time.Hour),
 		spaDir:         def(fc.Admin.SPADir, "web/admin/dist"),
+
+		storageDriver: def(fc.Storage.Driver, "memory"),
+		migrationsDir: def(fc.Storage.MigrationsDir, "migrations"),
+
+		dbHost:     fc.Database.Host,
+		dbPort:     intOr(fc.Database.Port, 5432),
+		dbName:     fc.Database.Name,
+		dbUser:     fc.Database.User,
+		dbPassword: fc.Database.Password,
+		dbSSLMode:  def(fc.Database.SSLMode, "disable"),
+		dbMaxConns: intOr(fc.Database.MaxConns, 10),
+
+		redisAddr:     fc.Redis.Addr,
+		redisUsername: fc.Redis.Username,
+		redisPassword: fc.Redis.Password,
+		redisDB:       fc.Redis.DB,
+		redisPoolSize: intOr(fc.Redis.PoolSize, 10),
 	}
 	return cfg, nil
 }
@@ -151,6 +208,21 @@ func def(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+func intOr(v, fallback int) int {
+	if v == 0 {
+		return fallback
+	}
+	return v
+}
+
+// pgDSN builds a libpq key/value DSN (safe for passwords with special chars).
+func (c config) pgDSN() string {
+	return fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s pool_max_conns=%d",
+		c.dbHost, c.dbPort, c.dbUser, c.dbPassword, c.dbName, c.dbSSLMode, c.dbMaxConns,
+	)
 }
 
 func durOr(d duration, fallback time.Duration) time.Duration {

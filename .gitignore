@@ -16,3 +16,4 @@ web/admin/dist/
 config.yaml
 config.local.yaml
 config.e2e.yaml
+config.aliyun*.yaml

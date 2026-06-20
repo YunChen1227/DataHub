@@ -6,16 +6,16 @@ import (
 	"github.com/datahub/relay/internal/domain/model"
 )
 
-// TestDecide_BillingScope verifies the v0.3 口径: 维度①（对用户计费）only counts
-// 查得数据 (001); 999 查无结果 counts 维度②（上游扣费）but NOT 维度①.
+// TestDecide_BillingScope verifies the口径: 成功查得数 only counts 查得数据 (001);
+// 999 查无结果 is Resolved (确定结论 → BILLED) but NOT Returned (不累计查得数).
 func TestDecide_BillingScope(t *testing.T) {
 	svc := New(DefaultTable())
 
 	cases := []struct {
 		name         string
 		code         string
-		wantCharged  bool // 维度② 上游扣费
-		wantReturned bool // 维度① 对用户计费（查得数据）
+		wantResolved bool // 上游确定结论 → 台账 BILLED
+		wantReturned bool // 查得数据 → 累计成功查得数
 	}{
 		{"001 查得数据", "001", true, true},
 		{"999 查无结果", "999", true, false},
@@ -26,11 +26,11 @@ func TestDecide_BillingScope(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			d := svc.Decide(&model.UpstreamResult{Code: c.code})
-			if d.Charged != c.wantCharged {
-				t.Errorf("code=%s Charged(维度②)=%v, want %v", c.code, d.Charged, c.wantCharged)
+			if d.Resolved != c.wantResolved {
+				t.Errorf("code=%s Resolved(确定结论)=%v, want %v", c.code, d.Resolved, c.wantResolved)
 			}
 			if d.Returned != c.wantReturned {
-				t.Errorf("code=%s Returned(维度①对用户计费)=%v, want %v", c.code, d.Returned, c.wantReturned)
+				t.Errorf("code=%s Returned(成功查得数)=%v, want %v", c.code, d.Returned, c.wantReturned)
 			}
 		})
 	}

@@ -1,9 +1,9 @@
 # 经济能力查询转接服务 — 架构图（ARCHITECTURE.md / 指导代码生成）
 
-> 配套文档：业务/决策口径见 [`DESIGN.md`](./DESIGN.md)；下游契约见《接口文档 - 经济能力》；上游契约见 [`income_cls.md`](./income_cls.md) 与《伽马分层分_定制版》PDF。
+> 配套文档：业务/决策口径见 [`DESIGN.md`](./DESIGN.md)；下游契约见本服务 x1 契约（主）+ 旧版 v9 兼容契约 [`income_cls.md`](./income_cls.md)（`GET /yrzx/finan/net/10w/v9`，account/key 验签，老客户兼容）；上游契约见《伽马分层分_定制版》PDF。
 > 本文目标：把设计落成**可直接指导代码生成**的结构图——包/模块边界、类与接口、调用链方法签名、状态机、数据模型、组件↔代码映射。
 
-> **v0.4 拓扑**：下游对客户 = `POST /v1/openapi/zlx/querySrmxV9`（信封 `appKey/sign/encryptionType/body`，响应 `head/body`）。上游经 `upstream.Router` 路由到 **GamaClient（默认）/ IncomeClsClient**，由 `UPSTREAM_PROVIDER` 选择；两者实现同一 `UpstreamPort`，归一化为 `UpstreamResult`（`001`查得/`999`查无）。`head.errorCode` 由 `errs.ErrorCode(busiCode)` 映射。
+> **v0.5 拓扑（服务版本 x1）**：下游对客户 = `POST /v1/openapi/zlx/querySrmxX1`（信封 `appKey/sign/encryptionType/body`，响应 `head/body`）。上游经 `upstream.Router` 路由到唯一 **GamaClient**（`POST /enol/api/v1/doCheck`，MD5 加签信封），实现 `UpstreamPort`，归一化为 `UpstreamResult`（`001`查得/`999`查无）。`head.errorCode` 由 `errs.ErrorCode(busiCode)` 映射。保留 Router 抽象便于未来扩展。
 
 ---
 
@@ -16,7 +16,7 @@
 | 一次查询的代码调用链 | §3 调用链（带方法名） |
 | 计费状态机 → BillingService 实现 | §4 计费状态机 |
 | 建表 / ORM 实体 | §5 数据模型（ER） |
-| 异步复查 + 对账兜底 | §6 异步与对账 |
+| 异步复查 | §6 异步复查 |
 | 组件落到哪个类/文件 | §7 组件↔代码映射表 |
 
 ---
@@ -26,7 +26,7 @@
 ```mermaid
 flowchart TB
     subgraph api["api 接入层 (controller/filter)"]
-        Ctl["QuerySrmxV9Handler\nQuotaHandler"]
+        Ctl["QuerySrmxX1Handler\nQuotaHandler"]
         Filter["RequestIdFilter\nSignatureFilter"]
     end
 
@@ -36,14 +36,14 @@ flowchart TB
 
     subgraph domain["domain 领域层 (核心业务，无框架依赖)"]
         AuthSvc["AuthService\n(License/appKey/MD5签名校验)"]
-        QuotaSvc["QuotaService\n(维度①②预留/结算)"]
+        QuotaSvc["QuotaService\n(成功查得数统计/台账结算)"]
         BillSvc["BillingService\n(计费判定/状态机)"]
         Parser["RequestParser\n(参数校验/规范化)"]
         Mapper["ResponseMapper\n(上游→客户 head/body)"]
     end
 
     subgraph infra["infrastructure 基础设施层"]
-        UpClient["UpstreamClient\n(HTTP GET+MD5签名+复查)"]
+        UpClient["GamaClient\n(HTTP POST+MD5加签+复查)"]
         QuotaRepo["QuotaRepository\n(Redis+Lua / DB)"]
         LedgerRepo["LedgerRepository\n(台账追加写)"]
         LicenseRepo["LicenseRepository"]
@@ -52,7 +52,6 @@ flowchart TB
 
     subgraph job["job 异步/定时层"]
         RequeryWorker["RequeryWorker\n(异步幂等复查)"]
-        ReconJob["ReconciliationJob\n(对账兜底)"]
     end
 
     Ctl --> Orch
@@ -74,9 +73,6 @@ flowchart TB
     RequeryWorker --> UpClient
     RequeryWorker --> BillSvc
     RequeryWorker --> QuotaSvc
-    ReconJob --> UpClient
-    ReconJob --> LedgerRepo
-    ReconJob --> QuotaSvc
 ```
 
 **包命名建议（语言无关，Java 示例）**
@@ -95,7 +91,7 @@ com.datahub.relay
 │   ├── upstream   // UpstreamClient, UpstreamSigner(MD5)
 │   ├── persistence// *Repository 实现 (Redis/MyBatis/JPA)
 │   └── secret     // SecretProvider
-├── job            // RequeryWorker, ReconciliationJob
+├── job            // RequeryWorker
 └── common         // RequestId 生成, 错误码枚举, 日志/MDC, 异常
 ```
 
@@ -121,16 +117,17 @@ classDiagram
     }
 
     class QuotaService {
-        +void checkServiceQuota(licenseId) ServiceQuotaError
-        +ReserveToken reserveUpstream(licenseId, reqid)
+        +ReserveToken begin(licenseId, reqid)
         +void settle(ReserveToken t, BillingDecision d)
+        +ServiceQuotaView serviceUsedView(licenseId)
     }
     class BillingService {
         +BillingDecision decide(UpstreamResult r)
         +BillingState onRequeryResult(reqid, RequeryResult rr)
     }
     class BillingDecisionTable {
-        +boolean isCharged(String upstreamCode)
+        +boolean isResolved(String upstreamCode)
+        +boolean isReturned(String upstreamCode)
     }
 
     class UpstreamClient {
@@ -156,9 +153,7 @@ classDiagram
     }
     class QuotaRepository {
         <<interface>>
-        +boolean tryReserve(licenseId)
-        +void commit(licenseId)
-        +void release(licenseId)
+        +long serviceUsed(licenseId)
         +void incServiceUsed(licenseId)
     }
 
@@ -198,10 +193,8 @@ sequenceDiagram
     F->>O: handle(cmd, ctx)
     O->>A: authenticate(signedReq)
     Note right of A: 失败→抛 AuthException(busiCode 1003/1004/1005/1009)
-    O->>Q: checkServiceQuota(licenseId)
-    Note right of Q: 无余额→抛 QuotaException(busiCode 1001)
-    O->>Q: token = reserveUpstream(licenseId, reqid)
-    Note right of Q: 幂等命中BILLED→直接返回缓存结果
+    O->>Q: token = begin(licenseId, reqid)
+    Note right of Q: 无额度限制；幂等命中BILLED→直接返回缓存结果
     O->>P: upReq = parse(cmd)  %% tradeNo→reqid
     O->>U: result = query(upReq)
     alt 收到业务响应
@@ -210,9 +203,9 @@ sequenceDiagram
         U->>U: requery(reqid)  %% 幂等复查
         U-->>O: RequeryResult / 不可达→入异步队列
     end
-    O->>B: decision = decide(result)  %% Charged + Returned(=busiCode 10)
+    O->>B: decision = decide(result)  %% Resolved + Returned(=busiCode 10)
     O->>Q: settle(token, decision)
-    Note right of Q: BILLED→committed++<br/>仅 Returned(busiCode 10) 时 serviceUsed++<br/>UNBILLED→reserved--
+    Note right of Q: BILLED→仅 Returned(busiCode 10) 时 serviceUsed++<br/>UNBILLED→不计数
     O->>M: resp = toClientResponse(result, ctx)
     M-->>F: DoCheckResponse(code/msg/seqNo/data)
 ```
@@ -225,25 +218,21 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING: reserveUpstream() reserved++ + append(PENDING)
-    PENDING --> BILLED: decide()=charged / requery=已扣费<br/>→ commit() committed++,reserved--；Returned(busiCode 10) 时 serviceUsed++
-    PENDING --> UNBILLED: decide()=not_charged / requery=未扣费<br/>→ release() reserved--
+    [*] --> PENDING: begin() append(PENDING)
+    PENDING --> BILLED: decide()=resolved / requery=有确定结论<br/>→ Returned(busiCode 10) 时 serviceUsed++
+    PENDING --> UNBILLED: decide()=unresolved / requery=未决<br/>→ 不计数
     PENDING --> PENDING: 超时且复查不可达 → 入 RequeryWorker 队列
-    note right of PENDING
-      超期未结算 → ReconciliationJob
-      以上游扣费记录强制裁决
-    end note
     BILLED --> [*]
     UNBILLED --> [*]
 ```
 
-> `Charged`（维度②，是否上游扣费）与 `Returned`（维度①，是否查得数据=busiCode 10）**可分离**：999 查无结果 `Charged=true, Returned=false`。
+> `Resolved`（上游是否给出确定结论）与 `Returned`（是否查得数据=busiCode 10）**可分离**：999 查无结果 `Resolved=true, Returned=false`。v0.6 起取消额度限制与维度②上游计数，仅统计成功查得数。
 
 **判定表（`BillingDecisionTable`，应配置化，对应 §7.4）**
 
-| 上游 code | isCharged(维度②) | busiCode | Returned(维度①) | 落地常量 |
+| 上游 code | isResolved | busiCode | isReturned(成功查得数) | 落地常量 |
 |---|---|---|---|---|
-| 001 | `true` | 10 | `true` | `CHARGED_CODES = {001, 999}` |
+| 001 | `true` | 10 | `true` | `RESOLVED_CODES = {001, 999}` |
 | 999 | `true` | 1000 | `false` | `RETURNED_CODES = {001}` |
 | 003/002/004/012/013/005.. | `false` | 1007 | `false` | 其余一律 false + 触发告警 |
 
@@ -269,14 +258,7 @@ erDiagram
     }
     QUOTA_SERVICE {
         string license_id FK
-        long total
-        long used
-    }
-    QUOTA_UPSTREAM {
-        string license_id FK
-        long total
-        long committed
-        long reserved
+        long used_or_committed "累计成功查得数"
     }
     BILLING_LEDGER {
         long id PK
@@ -290,19 +272,17 @@ erDiagram
         string upstream_logid
         string state "PENDING|BILLED|UNBILLED"
         bool counted_service
-        bool counted_upstream
         datetime created_at
         datetime settled_at
     }
 ```
 
-- 维度①剩余 `= quota_service.total - used`
-- 维度②剩余 `= quota_upstream.total - committed - reserved`
-- 计数与预留必须**原子**（Redis+Lua 或 DB 条件更新），见 §7.5。
+- v0.6 起取消额度限制与维度②上游计数：`quota` 仅保留 `dim='SERVICE'` 行，`used_or_committed` = 累计成功查得数。
+- 成功查得数计数必须**原子**（Redis INCR + DB 写穿），见 §7.5。
 
 ---
 
-## 6. 异步复查与对账兜底（job 层）
+## 6. 异步复查（job 层）
 
 ```mermaid
 flowchart LR
@@ -310,18 +290,9 @@ flowchart LR
         direction TB
         R1["取 PENDING 记录"] --> R2["UpstreamClient.requery(reqid)"]
         R2 --> R3{复查结论?}
-        R3 -->|已扣费| RB["BillingService→BILLED<br/>QuotaService.commit()"]
-        R3 -->|未扣费| RU["→UNBILLED, release()"]
-        R3 -->|仍不可达| R4["重试/留待对账"]
-    end
-
-    subgraph ReconJob["ReconciliationJob (定时)"]
-        direction TB
-        C1["拉上游对账单"] --> C2["逐条比对 LedgerRepository"]
-        C2 --> C3{差异?}
-        C3 -->|上游扣费,本地未计| CB["强制 committed++ + 告警(漏计)"]
-        C3 -->|本地计,上游无| CR["冲正 committed-- + 告警(空计)"]
-        C3 -->|超期PENDING| CP["按上游记录裁决 + 清 reserved"]
+        R3 -->|有确定结论(查得)| RB["BillingService→BILLED<br/>serviceUsed++"]
+        R3 -->|有确定结论(查无)| RU["→BILLED, 不计数"]
+        R3 -->|仍不可达| R4["重试/保持 PENDING"]
     end
 ```
 
@@ -334,10 +305,10 @@ flowchart LR
 | §3.1 网关 / §9 | 接入、requestId、签名入口 | `RequestIdFilter`, `SignatureFilter`, `QueryController`, `QuotaController` | `RequestIdGenerator`, `SignatureVerifier` |
 | §8.1 | 客户侧 MD5 加签校验（appId + body 排序拼接 + secret） | `Md5Verifier`（实现 `SignatureVerifier`） | `LicenseRepository`, `SecretProvider` |
 | §8.2 / §6 | 上游 MD5 签名 + 调用 | `UpstreamSigner`, `UpstreamClient` | HTTP 连接池/超时/熔断 |
-| §7 / §6.3 | 双维度配额预留/结算 | `QuotaService`, `QuotaRepository` | Redis+Lua / DB 条件更新 |
+| §7 / §6.3 | 成功查得数统计/台账结算 | `QuotaService`, `QuotaRepository` | Redis INCR / DB 写穿 |
 | §7.3 / §7.4 | 计费判定与状态机 | `BillingService`, `BillingDecisionTable` | `LedgerRepository` |
 | §5 / §6.1 | 参数校验、响应映射 | `RequestParser`, `ResponseMapper` | 错误码枚举 |
-| §7.6 | 复查/对账兜底 | `RequeryWorker`, `ReconciliationJob` | `UpstreamClient`, `LedgerRepository` |
+| §7.6 | 异步复查 | `RequeryWorker` | `UpstreamClient`, `LedgerRepository` |
 | §9 | 全链路追踪 | `RequestIdGenerator`, MDC/Context 注入 | 日志 pattern `[%X{requestId}]` |
 | §5.3 | 网关错误码 | `GatewayErrorCode` 枚举 + 全局异常处理 | `@ControllerAdvice` / middleware |
 | §11.4 | 密钥管理 | `SecretProvider`(KMS/Vault) | 加密列兜底 |
@@ -350,15 +321,13 @@ flowchart LR
 
 | busiCode | 含义 | 异常类（建议） | 计① | 计② | 触发点 |
 |---|---|---|---|---|---|
-| 10 | 查询成功【计费】 | —（正常流） | 是 | 是（上游扣费） | 上游 001 |
-| 1000 | 数据未查得 | —（正常流） | 否 | 是（上游扣费） | 上游 999 |
-| 1001 | 账户余额不足 | `ServiceQuotaExhaustedException` | 否 | 否 | `QuotaService.checkServiceQuota` |
+| 10 | 查询成功【计成功查得数】 | —（正常流） | 是 | — | 上游 001 |
+| 1000 | 数据未查得 | —（正常流） | 否 | — | 上游 999 |
 | 1002 | 账户信息不存在 | `AccountNotFoundException` | 否 | 否 | `AuthService`（appId 查无 license） |
 | 1003 | appId 异常 | `AppIdInvalidException` | 否 | 否 | `AuthService`（缺少/非法 appId） |
 | 1004 | 产品编号异常 | `ProductInvalidException` | 否 | 否 | `AuthService`（apiKey ≠ 固定值） |
 | 1005 | 账号信息异常 | `SignatureInvalidException` | 否 | 否 | `AuthService`（MD5 验签失败） |
-| 1006 | 透支余额已达上限 | `UpstreamQuotaExhaustedException` | 否 | 否 | `QuotaService.reserveUpstream` |
-| 1007 | 数据请求异常 | `ParamValidationException` / `UpstreamBusinessException` / `UpstreamNotExecutedException` | 否 | 否 | `RequestParser` / 判定表 `isCharged=false` / 复查确认未扣费 |
+| 1007 | 数据请求异常 | `ParamValidationException` / `UpstreamBusinessException` / `UpstreamNotExecutedException` | 否 | 否 | `RequestParser` / 判定表 `isResolved=false` / 复查未决 |
 | 1009 | 服务尚未开通 | `LicenseInactiveException` | 否 | 否 | `AuthService`（license 停用/过期/未开通） |
 
 | 全局 code | 含义 | 触发点 |

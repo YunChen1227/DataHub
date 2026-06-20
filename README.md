@@ -1,10 +1,12 @@
 # DataHub — 经济能力查询转接服务（Go）
 
-接口转接网关：
-- **对外（下游，对齐《接口文档 - 经济能力》）**：`POST /v1/openapi/zlx/querySrmxV9`，网关信封 `appKey/sign/encryptionType/body` + **MD5 加签**，
-  响应 `head{errorCode,logId,time,errorMsg,timestamp} / body{code,msg,uid,reqid,verify,result{range}}`；在此基础上提供 **License 鉴权** 与 **双维度配额（计费）**。
-- **对内（上游，可路由切换）**：默认 **伽马分层分**（《伽马分层分_定制版》PDF：`POST /enol/api/v1/doCheck`，MD5 加签信封），
-  备选 **income_cls**（`GET /yrzx/finan/net/10w/v9`，MD5 签名）。两者均产出"经济能力评分"，由 `UPSTREAM_PROVIDER` 选择当前生效者。
+接口转接网关（当前服务版本 **x1**）：
+- **对外（下游，x1）**：`POST /v1/openapi/zlx/querySrmxX1`，网关信封 `appKey/sign/encryptionType/body` + **MD5 加签**，
+  响应 `head{errorCode,logId,time,errorMsg,timestamp} / body{code,msg,uid,reqid,verify,result{range}}`；在此基础上提供 **License 鉴权** 与 **成功查得数统计**（无额度限制）。
+- **对外（下游，旧版 v9 兼容）**：`GET /yrzx/finan/net/10w/v9`（`docs/income_cls.md`：`account/key` 验签，响应 `code/msg/uid/result.range/verify`），供老客户使用；与 x1 **共用同一上游/鉴权(account=appKey、key=appSecret)/统计口径**，仅对外协议不同。
+
+> **额度策略（v0.6）**：已**取消额度限制**——不限制客户调用次数、也不限制我方上游成本；系统仅**统计每个用户累计成功查得数据的次数**（上游 001）。
+- **对内（上游，唯一）**：**伽马分层分**（《伽马分层分_定制版》PDF：`POST /enol/api/v1/doCheck`，MD5 加签信封），产出"经济能力评分"。保留 `upstream.Router` 抽象以便未来扩展，当前仅注册伽马。
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，架构图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
@@ -19,13 +21,13 @@ internal/
 │   ├── model/             #   核心类型（共享，零依赖；含 admin/审计/用户视图）
 │   ├── port/              #   出站接口（仓储/上游/密钥/admin/审计/IP 等"端口"）
 │   ├── auth/              #   License 鉴权 + appKey 校验 + MD5 加签验签
-│   ├── quota/             #   双维度配额：预留→结算
+│   ├── quota/             #   成功查得数统计 + 台账预留→结算（无额度限制）
 │   ├── billing/           #   计费判定表 + 状态机
 │   ├── parse/             #   参数校验/规范化
 │   ├── mapping/           #   上游结果→客户 head/body 响应 + errorCode
 │   └── admin/             #   管理后台：登录/用户CRUD/配额/密钥轮换/IP 白名单
 ├── infrastructure/        # 适配器
-│   ├── upstream/          #   上游路由 + 伽马/income_cls 客户端 + MD5 签名 + 幂等复查
+│   ├── upstream/          #   上游路由 + 伽马客户端 + MD5 签名 + 幂等复查
 │   ├── persistence/memory #   开发用内存实现（含 admin/审计/全局IP；生产换 Redis+Lua / 关系库）
 │   └── secret/            #   密钥提供者（按 licenseId 动态读取；生产换 KMS/Vault）
 ├── job/                   # 异步复查 worker + 对账兜底任务
@@ -46,14 +48,13 @@ go run ./cmd/relay
 curl http://localhost:8080/healthz
 ```
 
-开发态使用内存适配器并预置一个 demo license：`appKey=y89098io`，`secret=demo-app-secret`，两个维度各 100000 额度。
-上游默认走 **伽马**（`UPSTREAM_PROVIDER=gama`），需用 `GAMA_BASE_URL`/`GAMA_APP_ID`/`GAMA_APP_SECRET` 注入我方在伽马侧的凭证；
-切到 income_cls 设 `UPSTREAM_PROVIDER=income_cls` 并配 `INCOME_CLS_BASE_URL`/`INCOME_CLS_ACCOUNT`/`INCOME_CLS_KEY`。可用环境变量覆盖配置（见 `cmd/relay/config.go`）。
+开发态使用内存适配器并预置一个 demo license：`appKey=y89098io`，`secret=demo-app-secret`（无额度限制，仅统计成功查得数）。
+上游唯一为 **伽马**（`upstream.provider: gama`），需在 `config.yaml` 配置 `upstream.gama.baseURL`/`appId`/`appSecret`/`apiKey` 注入我方在伽马侧的凭证（见 `config.example.yaml` 与 `cmd/relay/config.go`）。
 
 请求示例（下游 MD5 加签见 DESIGN §8.1：对 `body` 非空业务参数按 ASCII 升序拼接后追加 `secret` 再 MD5）：
 
 ```bash
-curl -X POST http://localhost:8080/v1/openapi/zlx/querySrmxV9 \
+curl -X POST http://localhost:8080/v1/openapi/zlx/querySrmxX1 \
   -H 'Content-Type: application/json' \
   -d '{
     "encryptionType": 1,
@@ -72,7 +73,7 @@ curl -X POST http://localhost:8080/v1/openapi/zlx/querySrmxV9 \
 
 ## 管理后台（Admin Console，DESIGN §16）
 
-面向我方运营的内部控制台：① 查看用户操作记录与上下游日志；② 增删用户、配置配额；③ 生成/轮换鉴权 `appKey+secret`；④ 配置全局/每用户 IP 白名单。
+面向我方运营的内部控制台：① 查看用户操作记录与上下游日志、累计成功查得数；② 增删用户（无额度配置）；③ 生成/轮换鉴权 `appKey+secret`；④ 配置全局/每用户 IP 白名单。
 
 - **后端 API**：`/admin/api/**`（除 `/admin/api/login` 外均需 `Authorization: Bearer <JWT>`）。
 - **初始管理员**：环境变量 `ADMIN_BOOTSTRAP_USER`/`ADMIN_BOOTSTRAP_PASS` 引导（开发默认 `admin` / `admin12345`）。
@@ -93,13 +94,14 @@ npm run build        # 产物输出到 web/admin/dist；访问 http://localhost:
 
 ## 实现现状（骨架）
 
-- ✅ 下游契约（`.doc`：`/v1/openapi/zlx/querySrmxV9`、`appKey/sign/encryptionType/body` + MD5 加签、`head/body` 信封、`errorCode` 映射）。
-- ✅ 上游路由：伽马（默认）+ income_cls，二者均归一化为 `UpstreamResult`（`001`查得/`999`查无），`UPSTREAM_PROVIDER` 切换。
-- ✅ 双维度配额/计费（**仅查得数据计维度①**）、状态机、requestId 追踪（`head.logId`）、建表 DDL。
-- ✅ 管理后台：管理员登录（JWT）、用户 CRUD + 配额、`appKey/secret` 生成与轮换、审计日志（成功调用/查得数据/上下游 code/uid + 脱敏入参）、全局 + 每用户 IP 白名单、React+Vite SPA。
+- ✅ 下游契约（x1：`/v1/openapi/zlx/querySrmxX1`、`appKey/sign/encryptionType/body` + MD5 加签、`head/body` 信封、`errorCode` 映射）。
+- ✅ 旧版 v9 兼容（`GET /yrzx/finan/net/10w/v9`：`account/key` 验签、`code/result.range` 响应；复用同一上游/鉴权/配额）。
+- ✅ 上游：唯一伽马，归一化为 `UpstreamResult`（`001`查得/`999`查无）；保留 `upstream.Router` 抽象便于扩展。
+- ✅ 成功查得数统计（**仅查得数据 busiCode=10 计数**，无额度拦截）、台账状态机、requestId 追踪（`head.logId`）、建表 DDL。
+- ✅ 管理后台：管理员登录（JWT）、用户 CRUD（无额度配置，展示成功查得数）、`appKey/secret` 生成与轮换、审计日志（成功调用/查得数据/上下游 code/uid + 脱敏入参）、全局 + 每用户 IP 白名单、React+Vite SPA。
 - ✅ 全链路 e2e（`scripts/`：`mock_gama.go` + `e2e.go`，15/15 通过）。
 - 🚧 待联调确认：
-  - 伽马 / income_cls 的单笔复查/对账接口（`Requery` 当前返回 `Reachable=false`，记录留待对账）。
+  - 伽马的单笔复查/对账接口（`Requery` 当前返回 `Reachable=false`，记录留待对账）。
   - 下游网关签名传输细节（当前为 envelope 内 `appKey/sign`，TtkOpenAPI 若用 header 需微调）；`head.errorCode` 字典为内部映射（0/505062 取自 .doc，其余 5050xx）。
   - 生产持久化：将 `persistence/memory` 换成 Redis+Lua（配额原子）+ 关系库（台账）。
 ```

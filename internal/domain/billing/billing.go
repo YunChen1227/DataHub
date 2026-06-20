@@ -6,34 +6,34 @@ package billing
 import "github.com/datahub/relay/internal/domain/model"
 
 // DecisionTable separates two independent verdicts per upstream code (DESIGN §7.4):
-//   - chargedCodes  → 上游对我方扣费（维度②，我方成本）。
-//   - returnedCodes → 查得数据（维度①，对用户计费，= busiCode 10）。
+//   - resolvedCodes → 上游给出了确定结论（查得或查无）→ 台账 BILLED。
+//   - returnedCodes → 查得数据（成功查得数 +1，= busiCode 10）。
 //
-// 两者解耦：999 查无结果 上游已扣费(charged) 但非查得数据(not returned)，故计维度②、不计维度①。
+// 两者解耦：999 查无结果 是确定结论(resolved) 但非查得数据(not returned)。
 type DecisionTable struct {
-	chargedCodes  map[string]bool
+	resolvedCodes map[string]bool
 	returnedCodes map[string]bool
 }
 
 // DefaultTable reflects DESIGN §7.4:
-//   - CHARGED_CODES  = {001, 999}（上游扣费）
-//   - RETURNED_CODES = {001}（仅查得数据才对用户计费）
+//   - RESOLVED_CODES = {001, 999}（上游确定结论）
+//   - RETURNED_CODES = {001}（仅查得数据才累计成功查得数）
 func DefaultTable() *DecisionTable {
 	return &DecisionTable{
-		chargedCodes: map[string]bool{
+		resolvedCodes: map[string]bool{
 			"001": true, // 成功
-			"999": true, // 查无结果（上游已执行查询并扣费）
+			"999": true, // 查无结果（上游已给出确定结论）
 		},
 		returnedCodes: map[string]bool{
-			"001": true, // 仅查得数据才计维度①（对用户计费）
+			"001": true, // 仅查得数据才累计成功查得数
 		},
 	}
 }
 
-// NewTable builds a table from explicit charged/returned code sets (config).
-func NewTable(chargedCodes, returnedCodes map[string]bool) *DecisionTable {
+// NewTable builds a table from explicit resolved/returned code sets (config).
+func NewTable(resolvedCodes, returnedCodes map[string]bool) *DecisionTable {
 	return &DecisionTable{
-		chargedCodes:  copySet(chargedCodes),
+		resolvedCodes: copySet(resolvedCodes),
 		returnedCodes: copySet(returnedCodes),
 	}
 }
@@ -46,10 +46,10 @@ func copySet(src map[string]bool) map[string]bool {
 	return cp
 }
 
-// IsCharged reports whether the upstream code implies a real扣费 (维度②).
-func (t *DecisionTable) IsCharged(code string) bool { return t.chargedCodes[code] }
+// IsResolved reports whether the upstream code is a确定结论 (查得/查无).
+func (t *DecisionTable) IsResolved(code string) bool { return t.resolvedCodes[code] }
 
-// IsReturned reports whether the upstream code means查得数据 (维度①, busiCode 10).
+// IsReturned reports whether the upstream code means查得数据 (busiCode 10).
 func (t *DecisionTable) IsReturned(code string) bool { return t.returnedCodes[code] }
 
 // Service produces BillingDecisions.
@@ -64,28 +64,28 @@ func New(table *DecisionTable) *Service {
 	return &Service{table: table}
 }
 
-// Decide evaluates a direct upstream response. Charged (维度②, 上游扣费) and
-// Returned (维度①, 查得数据→对用户计费) are decided independently: 999 查无结果
-// is Charged=true, Returned=false (DESIGN §7.4).
+// Decide evaluates a direct upstream response. Resolved (确定结论) and Returned
+// (查得数据→累计成功查得数) are decided independently: 999 查无结果 is
+// Resolved=true, Returned=false (DESIGN §7.4).
 func (s *Service) Decide(r *model.UpstreamResult) *model.BillingDecision {
 	if r == nil {
-		return &model.BillingDecision{Charged: false, Returned: false}
+		return &model.BillingDecision{Resolved: false, Returned: false}
 	}
 	return &model.BillingDecision{
-		Charged:  s.table.IsCharged(r.Code),
+		Resolved: s.table.IsResolved(r.Code),
 		Returned: s.table.IsReturned(r.Code),
 		Result:   r,
 	}
 }
 
 // FromRequery evaluates an idempotent re-query outcome (DESIGN §7.3).
-//   - Reachable + charged code → BILLED (维度② 不漏计).
-//   - Reachable + non-charged   → UNBILLED.
+//   - Reachable + resolved code → BILLED.
+//   - Reachable + non-resolved  → UNBILLED.
 //   - Unreachable               → no decision yet (caller keeps PENDING for
-//     reconciliation); represented as not-charged/not-returned.
+//     reconciliation); represented as not-resolved/not-returned.
 func (s *Service) FromRequery(rr *model.RequeryResult) *model.BillingDecision {
 	if rr == nil || !rr.Reachable || rr.Result == nil {
-		return &model.BillingDecision{Charged: false, Returned: false}
+		return &model.BillingDecision{Resolved: false, Returned: false}
 	}
 	return s.Decide(rr.Result)
 }

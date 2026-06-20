@@ -15,5 +15,10 @@ web/admin/dist/
 # Local runtime config with secrets (use config.example.yaml as template)
 config.yaml
 config.local.yaml
+config.local*.yaml
 config.e2e.yaml
 config.aliyun*.yaml
+config.gama.real.yaml
+
+# Test suite result output (dated subdirs: test_res/YYYY-MM-DD/)
+test_res/

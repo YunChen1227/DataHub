@@ -80,15 +80,11 @@ func (s *Store) GetUser(ctx context.Context, licenseID string) (*model.UserDetai
 	}
 	// name is stored separately; fetch alongside (kept nullable-safe).
 	_ = s.pool.QueryRow(ctx, `SELECT COALESCE(name,'') FROM license WHERE license_id=$1`, licenseID).Scan(&d.Name)
-	snap, err := s.QuotaSnapshot(ctx, licenseID)
+	used, err := s.ServiceUsedCount(ctx, licenseID)
 	if err != nil {
 		return nil, err
 	}
-	d.ServiceTotal = snap.ServiceTotal
-	d.ServiceUsed = snap.ServiceUsed
-	d.UpstreamTotal = snap.UpstreamTotal
-	d.UpstreamCommitted = snap.UpstreamCommitted
-	d.UpstreamReserved = snap.UpstreamReserved
+	d.ServiceUsed = used
 	return d, nil
 }
 
@@ -107,39 +103,18 @@ func (s *Store) CreateUser(ctx context.Context, d *model.UserDetail, secret stri
 		d.LicenseID, d.AppKey, secret, d.ClientUUID, d.Name, d.Status, d.IPWhitelist); err != nil {
 		return err
 	}
-	const insQuota = `INSERT INTO quota (license_id, dim, total) VALUES ($1,$2,$3)`
-	if _, err := tx.Exec(ctx, insQuota, d.LicenseID, "SERVICE", d.ServiceTotal); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, insQuota, d.LicenseID, "UPSTREAM", d.UpstreamTotal); err != nil {
+	// 成功查得数计数行（dim='SERVICE'）；v0.6 起无额度上限。
+	if _, err := tx.Exec(ctx, `INSERT INTO quota (license_id, dim) VALUES ($1,'SERVICE')`, d.LicenseID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-func (s *Store) UpdateUser(ctx context.Context, licenseID, status string, serviceTotal, upstreamTotal int64, ipWhitelist []string) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx,
+func (s *Store) UpdateUser(ctx context.Context, licenseID, status string, ipWhitelist []string) error {
+	_, err := s.pool.Exec(ctx,
 		`UPDATE license SET status=$2, ip_whitelist=$3, updated_at=now() WHERE license_id=$1`,
-		licenseID, status, ipWhitelist); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE quota SET total=$2, updated_at=now() WHERE license_id=$1 AND dim='SERVICE'`,
-		licenseID, serviceTotal); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE quota SET total=$2, updated_at=now() WHERE license_id=$1 AND dim='UPSTREAM'`,
-		licenseID, upstreamTotal); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+		licenseID, status, ipWhitelist)
+	return err
 }
 
 func (s *Store) DeleteUser(ctx context.Context, licenseID string) error {

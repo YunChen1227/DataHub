@@ -34,26 +34,24 @@ type LicenseView struct {
 // Active reports whether the license may call the service.
 func (l *LicenseView) Active() bool { return l != nil && l.Status == "ACTIVE" }
 
-// UpstreamRequest is the GET request sent to income_cls (DESIGN §6).
+// UpstreamRequest carries the参数 the upstream client needs to build its signed
+// request (DESIGN §6). 唯一上游伽马使用 IDCard/Name/Mobile, Reqid 为内部幂等流水号。
 type UpstreamRequest struct {
-	Account string
-	IDCard  string
-	Name    string
-	Mobile  string
-	Reqid   string
-	Verify  string // MD5 signature, filled by the upstream client
+	IDCard string
+	Name   string
+	Mobile string
+	Reqid  string
 }
 
-// UpstreamResult is the normalized upstream response (DESIGN §6). Every provider
-// (income_cls / 伽马) maps its native response into this shape; Code is in the
-// income_cls 口径 ("001" 查得 / "999" 查无) so billing + downstream body 统一。
+// UpstreamResult is the normalized upstream response (DESIGN §6). 唯一上游伽马把原生
+// 响应归一化为此形态; Code 统一为 ("001" 查得 / "999" 查无) so billing + downstream body 统一。
 type UpstreamResult struct {
 	Code   string // "001" 查得 / "999" 查无
 	Msg    string
-	UID    string // 上游流水号 (income_cls uid / 伽马 seqNo)
+	UID    string // 上游流水号 (伽马 seqNo)
 	Reqid  string
 	Range  string // 收入模型评分
-	Verify string // 上游签名 (income_cls 透传; 伽马为空)
+	Verify string // 上游签名 (伽马为空)
 	LogID  string
 }
 
@@ -76,39 +74,37 @@ const (
 )
 
 // BillingDecision is the verdict the billing engine produces.
-//   - Charged  → upstream actually charged us (维度② commit).
-//   - Returned → upstream produced查得数据 (维度① count, = busiCode 10).
+//   - Resolved → 上游给出了确定结论（查得或查无）→ 台账 BILLED；否则 UNBILLED。
+//   - Returned → upstream produced查得数据 (成功查得数 +1, = busiCode 10).
 //
 // The two are kept separate so the口径 can diverge by config (DESIGN §7.4):
-// 999 查无结果 is Charged=true, Returned=false.
+// 999 查无结果 is Resolved=true, Returned=false.
 type BillingDecision struct {
-	Charged  bool
+	Resolved bool
 	Returned bool
 	Result   *UpstreamResult
 }
 
 // Ledger is the append-only billing record (DESIGN §11.3).
 type Ledger struct {
-	ID              int64
-	AppKey          string
-	TradeNo         string
-	Reqid           string
-	RequestID       string
-	UpstreamCode    string
-	BusiCode        int
-	UpstreamUID     string
-	UpstreamLogID   string
-	State           BillingState
-	CountedService  bool
-	CountedUpstream bool
+	ID             int64
+	AppKey         string
+	TradeNo        string
+	Reqid          string
+	RequestID      string
+	UpstreamCode   string
+	BusiCode       int
+	UpstreamUID    string
+	UpstreamLogID  string
+	State          BillingState
+	CountedService bool
 }
 
-// ServiceQuotaView is the client-facing 维度① snapshot (DESIGN §5.2).
+// ServiceQuotaView is the client-facing snapshot (DESIGN §5.2). 无额度限制，
+// Used = 累计成功查得数据的次数。
 type ServiceQuotaView struct {
-	Status    string
-	Total     int64
-	Used      int64
-	Remaining int64
+	Status string
+	Used   int64 // 成功查得数据次数（累计）
 }
 
 // QueryResponse is the unified client response envelope
@@ -129,8 +125,8 @@ type ResponseHead struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// QueryBody is the V9 业务响应体 (接口文档-经济能力.doc §3.1.4). 字段口径沿用
-// income_cls：code 001 查得 / 999 查无；result.range 为收入模型评分。
+// QueryBody is the x1 业务响应体 (本服务 x1 契约). 字段口径沿用旧版 v9：
+// code 001 查得 / 999 查无；result.range 为收入模型评分。
 type QueryBody struct {
 	Code   string       `json:"code"`
 	Msg    string       `json:"msg"`
@@ -142,5 +138,33 @@ type QueryBody struct {
 
 // RangeResult is the result content (接口文档-经济能力.doc §3.1.4): range 评分.
 type RangeResult struct {
+	Range string `json:"range"`
+}
+
+// V9Request is the旧版 v9 下游入参 (income_cls.md §输入参数, HTTP GET). account 定位
+// 客户 license(=appKey), key=appSecret; verify=MD5(account+idCard+mobile+reqid+key).toUpperCase()。
+type V9Request struct {
+	Account string
+	IDCard  string
+	Name    string
+	Mobile  string
+	Reqid   string
+	Verify  string
+}
+
+// V9Response is the旧版 v9 下游响应 (income_cls.md §返回参数).
+//   - code: 001 查得 / 999 查无 / 其余为错误码字典 (002/003/004/005/008/009/011/012/013/020)。
+//   - result 仅在查得时返回; verify 为响应签名 (是签名字段 code+uid)。
+type V9Response struct {
+	Code   string    `json:"code"`
+	Msg    string    `json:"msg"`
+	UID    string    `json:"uid"`
+	Reqid  string    `json:"reqid"`
+	Result *V9Result `json:"result,omitempty"`
+	Verify string    `json:"verify"`
+}
+
+// V9Result is the旧版 v9 二级节点 (income_cls.md §result二级节点): range 收入模型评分。
+type V9Result struct {
 	Range string `json:"range"`
 }

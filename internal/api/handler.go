@@ -34,11 +34,13 @@ func NewServer(orch *application.QueryOrchestrator, adminSvc *admin.Service, glo
 }
 
 // Routes wires the public endpoints with edge middleware
-// (接口文档-经济能力.doc §3 / DESIGN §5/§16). 网关前缀 /v1。
+// (当前 x1 契约 + 旧版 v9 兼容 / DESIGN §5/§16). 网关前缀 /v1。
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/openapi/zlx/querySrmxV9", s.handleQuery)
+	mux.HandleFunc("POST /v1/openapi/zlx/querySrmxX1", s.handleQuery)
 	mux.HandleFunc("GET /v1/openapi/zlx/quota", s.handleQuota)
+	// 旧版 v9 下游契约 (income_cls.md): HTTP GET, account/key 验签。兼容老客户。
+	mux.HandleFunc("GET /yrzx/finan/net/10w/v9", s.handleQueryV9)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
@@ -67,7 +69,7 @@ type envelope struct {
 	Body           json.RawMessage `json:"body"`
 }
 
-// handleQuery serves POST /v1/openapi/zlx/querySrmxV9 (接口文档-经济能力.doc §3.1).
+// handleQuery serves POST /v1/openapi/zlx/querySrmxX1 (本服务 x1 契约, DESIGN §5.1).
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	seqNo := appctx.RequestID(r.Context())
 
@@ -94,18 +96,17 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.orch.Handle(r.Context(), signedFrom(&env), &cmd))
 }
 
-// quotaResponse is本服务扩展的配额查询响应 (.doc 未定义, 内部/admin 使用).
+// quotaResponse is本服务扩展的查询响应 (.doc 未定义, 内部/admin 使用). 无额度限制，
+// serviceUsed = 累计成功查得数据的次数。
 type quotaResponse struct {
-	ErrorCode        string `json:"errorCode"`
-	ErrorMsg         string `json:"errorMsg"`
-	Status           string `json:"status,omitempty"`
-	ServiceTotal     int64  `json:"serviceTotal"`
-	ServiceUsed      int64  `json:"serviceUsed"`
-	ServiceRemaining int64  `json:"serviceRemaining"`
+	ErrorCode   string `json:"errorCode"`
+	ErrorMsg    string `json:"errorMsg"`
+	Status      string `json:"status,omitempty"`
+	ServiceUsed int64  `json:"serviceUsed"` // 成功查得数据次数（累计）
 }
 
 // handleQuota serves GET /v1/openapi/zlx/quota (本服务扩展). 鉴权同主接口
-// (appKey + MD5 签名)，信封从请求体读取；维度② 不对客户暴露。
+// (appKey + MD5 签名)，信封从请求体读取；返回累计成功查得数。
 func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
 	if !s.globalIPAllowed(r.Context()) {
 		writeJSON(w, quotaResponse{ErrorCode: errs.ErrorCode(errs.BusiAccountAbnormal), ErrorMsg: "IP 不在白名单"})
@@ -123,12 +124,10 @@ func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, quotaResponse{
-		ErrorCode:        errs.ErrorCodeOK,
-		ErrorMsg:         "success",
-		Status:           view.Status,
-		ServiceTotal:     view.Total,
-		ServiceUsed:      view.Used,
-		ServiceRemaining: view.Remaining,
+		ErrorCode:   errs.ErrorCodeOK,
+		ErrorMsg:    "success",
+		Status:      view.Status,
+		ServiceUsed: view.Used,
 	})
 }
 

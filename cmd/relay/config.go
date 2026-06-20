@@ -14,24 +14,18 @@ import (
 type config struct {
 	addr string
 
-	// 上游 provider 路由 (DESIGN §6): gama | income_cls。
+	// 上游 provider 路由 (DESIGN §6): 当前唯一 gama。保留字段便于未来扩展。
 	upstreamProvider string
 	upstreamTimeout  time.Duration
 
-	// 上游A: 伽马分层分 (伽马PDF)。
+	// 上游: 伽马分层分 (伽马PDF)，本服务唯一上游。
 	gamaBaseURL string
 	gamaAppID   string
 	gamaSecret  string
 	gamaAPIKey  string
 
-	// 上游B: income_cls。
-	incomeBaseURL string
-	incomeAccount string
-	incomeKey     string
-
 	demoAppSecret   string
 	requeryInterval time.Duration
-	reconInterval   time.Duration
 
 	// admin console (DESIGN §16)
 	adminUser      string
@@ -93,15 +87,9 @@ type fileConfig struct {
 			AppSecret string `yaml:"appSecret"`
 			APIKey    string `yaml:"apiKey"`
 		} `yaml:"gama"`
-		IncomeCls struct {
-			BaseURL string `yaml:"baseURL"`
-			Account string `yaml:"account"`
-			Key     string `yaml:"key"`
-		} `yaml:"incomeCls"`
 	} `yaml:"upstream"`
 	Billing struct {
 		RequeryInterval duration `yaml:"requeryInterval"`
-		ReconInterval   duration `yaml:"reconInterval"`
 	} `yaml:"billing"`
 	Admin struct {
 		BootstrapUser string   `yaml:"bootstrapUser"`
@@ -169,13 +157,8 @@ func loadConfig() (config, error) {
 		gamaSecret:  fc.Upstream.Gama.AppSecret,
 		gamaAPIKey:  def(fc.Upstream.Gama.APIKey, "gama_ctmz_layer_score"),
 
-		incomeBaseURL: fc.Upstream.IncomeCls.BaseURL,
-		incomeAccount: fc.Upstream.IncomeCls.Account,
-		incomeKey:     fc.Upstream.IncomeCls.Key,
-
 		demoAppSecret:   fc.Demo.AppSecret,
 		requeryInterval: durOr(fc.Billing.RequeryInterval, 10*time.Second),
-		reconInterval:   durOr(fc.Billing.ReconInterval, 5*time.Minute),
 
 		adminUser:      def(fc.Admin.BootstrapUser, "admin"),
 		adminPass:      fc.Admin.BootstrapPass,

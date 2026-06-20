@@ -80,20 +80,16 @@ func (s *Server) adminGetUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name          string   `json:"name"`
-		ServiceTotal  int64    `json:"serviceTotal"`
-		UpstreamTotal int64    `json:"upstreamTotal"`
-		IPWhitelist   []string `json:"ipWhitelist"`
+		Name        string   `json:"name"`
+		IPWhitelist []string `json:"ipWhitelist"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAdminError(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
 	res, err := s.admin.CreateUser(r.Context(), admin.CreateUserInput{
-		Name:          in.Name,
-		ServiceTotal:  in.ServiceTotal,
-		UpstreamTotal: in.UpstreamTotal,
-		IPWhitelist:   in.IPWhitelist,
+		Name:        in.Name,
+		IPWhitelist: in.IPWhitelist,
 	})
 	if err != nil {
 		writeAdminError(w, http.StatusBadRequest, err.Error())
@@ -104,20 +100,16 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Status        string   `json:"status"`
-		ServiceTotal  int64    `json:"serviceTotal"`
-		UpstreamTotal int64    `json:"upstreamTotal"`
-		IPWhitelist   []string `json:"ipWhitelist"`
+		Status      string   `json:"status"`
+		IPWhitelist []string `json:"ipWhitelist"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAdminError(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
 	u, err := s.admin.UpdateUser(r.Context(), r.PathValue("id"), admin.UpdateUserInput{
-		Status:        in.Status,
-		ServiceTotal:  in.ServiceTotal,
-		UpstreamTotal: in.UpstreamTotal,
-		IPWhitelist:   in.IPWhitelist,
+		Status:      in.Status,
+		IPWhitelist: in.IPWhitelist,
 	})
 	if err != nil {
 		writeAdminError(w, http.StatusBadRequest, err.Error())

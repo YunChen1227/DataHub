@@ -139,12 +139,12 @@ func sign(body map[string]string, appSecret string) string {
 
 ## 三、接口列表
 
-### 3.1 经济能力评分查询（V9）
+### 3.1 经济能力评分查询（x1）
 
 | 项目 | 内容 |
 |---|---|
-| 路径 | `POST /v1/openapi/zlx/querySrmxV9` |
-| 完整地址 | `https://{网关域名}/v1/openapi/zlx/querySrmxV9` |
+| 路径 | `POST /v1/openapi/zlx/querySrmxX1` |
+| 完整地址 | `https://{网关域名}/v1/openapi/zlx/querySrmxX1` |
 | 鉴权 | appKey + MD5 签名（见第二章） |
 
 #### 3.1.1 请求 `body` 参数
@@ -235,9 +235,9 @@ func sign(body map[string]string, appSecret string) string {
 
 ---
 
-### 3.2 服务额度查询（扩展接口）
+### 3.2 成功查得数查询（扩展接口）
 
-查询本账户的服务调用额度（维度①），用于客户侧自助监控剩余量。
+查询本账户累计成功查得数据的次数，用于客户侧自助监控。自 v0.6 起取消额度限制，不再返回额度上限/剩余量。
 
 | 项目 | 内容 |
 |---|---|
@@ -250,19 +250,16 @@ func sign(body map[string]string, appSecret string) string {
   "errorCode": "0",
   "errorMsg": "success",
   "status": "ACTIVE",
-  "serviceTotal": 100000,
-  "serviceUsed": 1280,
-  "serviceRemaining": 98720
+  "serviceUsed": 1280
 }
 ```
 
 | 参数 | 说明 |
 |---|---|
-| `serviceTotal` | 已购买服务总量 |
-| `serviceUsed` | 已消耗量（仅统计查得成功） |
-| `serviceRemaining` | 剩余可用量 |
+| `status` | 账户状态（ACTIVE/SUSPENDED 等） |
+| `serviceUsed` | 累计成功查得数据的次数（仅统计 busiCode 10 查得成功） |
 
-> 说明：成本侧（上游）额度不对客户暴露。
+> 说明：无任何额度上限拦截，仅做成功查得数统计。
 
 ---
 

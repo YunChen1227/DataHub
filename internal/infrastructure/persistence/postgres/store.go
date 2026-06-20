@@ -73,14 +73,14 @@ func (s *Store) GetAppSecret(ctx context.Context, licenseID string) (string, err
 
 const ledgerCols = `id, app_key, COALESCE(trade_no,''), reqid, request_id,
 	COALESCE(upstream_code,''), COALESCE(busi_code,0), COALESCE(upstream_uid,''),
-	COALESCE(upstream_logid,''), state, counted_service, counted_upstream`
+	COALESCE(upstream_logid,''), state, counted_service`
 
 func scanLedger(row pgx.Row) (*model.Ledger, error) {
 	var l model.Ledger
 	var state string
 	err := row.Scan(&l.ID, &l.AppKey, &l.TradeNo, &l.Reqid, &l.RequestID,
 		&l.UpstreamCode, &l.BusiCode, &l.UpstreamUID, &l.UpstreamLogID,
-		&state, &l.CountedService, &l.CountedUpstream)
+		&state, &l.CountedService)
 	if err != nil {
 		return nil, err
 	}
@@ -103,19 +103,19 @@ func (s *Store) FindByReqid(ctx context.Context, appKey, reqid string) (*model.L
 func (s *Store) Append(ctx context.Context, l *model.Ledger) error {
 	const q = `INSERT INTO billing_ledger
 		(app_key, trade_no, reqid, request_id, upstream_code, busi_code,
-		 upstream_uid, upstream_logid, state, counted_service, counted_upstream)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`
+		 upstream_uid, upstream_logid, state, counted_service)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`
 	return s.pool.QueryRow(ctx, q,
 		l.AppKey, l.TradeNo, l.Reqid, l.RequestID, l.UpstreamCode, l.BusiCode,
-		l.UpstreamUID, l.UpstreamLogID, string(l.State), l.CountedService, l.CountedUpstream,
+		l.UpstreamUID, l.UpstreamLogID, string(l.State), l.CountedService,
 	).Scan(&l.ID)
 }
 
-func (s *Store) UpdateState(ctx context.Context, id int64, state model.BillingState, countedService, countedUpstream bool) error {
+func (s *Store) UpdateState(ctx context.Context, id int64, state model.BillingState, countedService bool) error {
 	const q = `UPDATE billing_ledger
-		SET state=$2, counted_service=$3, counted_upstream=$4, settled_at=now()
+		SET state=$2, counted_service=$3, settled_at=now()
 		WHERE id=$1`
-	_, err := s.pool.Exec(ctx, q, id, string(state), countedService, countedUpstream)
+	_, err := s.pool.Exec(ctx, q, id, string(state), countedService)
 	return err
 }
 
@@ -142,70 +142,23 @@ func (s *Store) ListByState(ctx context.Context, state model.BillingState, limit
 	return out, rows.Err()
 }
 
-// --- quota durable mirror (read by Redis quota repo + admin views) ---
+// --- 成功查得数 durable mirror (read by Redis quota repo + admin views) ---
 
-// QuotaSnapshot is the durable quota state for a license (DESIGN §11.2).
-type QuotaSnapshot struct {
-	ServiceTotal      int64
-	ServiceUsed       int64
-	UpstreamTotal     int64
-	UpstreamCommitted int64
-	UpstreamReserved  int64
+// ServiceUsedCount reads the cumulative 成功查得数 for a license (dim='SERVICE').
+func (s *Store) ServiceUsedCount(ctx context.Context, licenseID string) (int64, error) {
+	const q = `SELECT COALESCE(used_or_committed,0) FROM quota WHERE license_id=$1 AND dim='SERVICE'`
+	var used int64
+	err := s.pool.QueryRow(ctx, q, licenseID).Scan(&used)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	return used, err
 }
 
-// QuotaSnapshot reads both quota dimensions for a license.
-func (s *Store) QuotaSnapshot(ctx context.Context, licenseID string) (QuotaSnapshot, error) {
-	const q = `SELECT dim, total, used_or_committed, reserved FROM quota WHERE license_id=$1`
-	rows, err := s.pool.Query(ctx, q, licenseID)
-	if err != nil {
-		return QuotaSnapshot{}, err
-	}
-	defer rows.Close()
-	var snap QuotaSnapshot
-	for rows.Next() {
-		var dim string
-		var total, usedOrCommitted, reserved int64
-		if err := rows.Scan(&dim, &total, &usedOrCommitted, &reserved); err != nil {
-			return QuotaSnapshot{}, err
-		}
-		switch dim {
-		case "SERVICE":
-			snap.ServiceTotal = total
-			snap.ServiceUsed = usedOrCommitted
-		case "UPSTREAM":
-			snap.UpstreamTotal = total
-			snap.UpstreamCommitted = usedOrCommitted
-			snap.UpstreamReserved = reserved
-		}
-	}
-	return snap, rows.Err()
-}
-
-// QuotaCounters returns the durable quota counters as primitives (consumed by
-// the Redis quota repo for seeding + total checks without type coupling).
-func (s *Store) QuotaCounters(ctx context.Context, licenseID string) (svcTotal, svcUsed, upTotal, upCommitted, upReserved int64, err error) {
-	snap, err := s.QuotaSnapshot(ctx, licenseID)
-	if err != nil {
-		return 0, 0, 0, 0, 0, err
-	}
-	return snap.ServiceTotal, snap.ServiceUsed, snap.UpstreamTotal, snap.UpstreamCommitted, snap.UpstreamReserved, nil
-}
-
-// AddServiceUsed write-throughs a 维度① delta to the durable quota row.
+// AddServiceUsed write-throughs a 成功查得数 delta to the durable quota row.
 func (s *Store) AddServiceUsed(ctx context.Context, licenseID string, delta int64) error {
 	const q = `UPDATE quota SET used_or_committed = GREATEST(used_or_committed + $2, 0), updated_at=now()
 	             WHERE license_id=$1 AND dim='SERVICE'`
 	_, err := s.pool.Exec(ctx, q, licenseID, delta)
-	return err
-}
-
-// AddUpstream write-throughs 维度② committed/reserved deltas to the durable row.
-func (s *Store) AddUpstream(ctx context.Context, licenseID string, committedDelta, reservedDelta int64) error {
-	const q = `UPDATE quota
-		SET used_or_committed = GREATEST(used_or_committed + $2, 0),
-		    reserved          = GREATEST(reserved + $3, 0),
-		    updated_at        = now()
-		WHERE license_id=$1 AND dim='UPSTREAM'`
-	_, err := s.pool.Exec(ctx, q, licenseID, committedDelta, reservedDelta)
 	return err
 }

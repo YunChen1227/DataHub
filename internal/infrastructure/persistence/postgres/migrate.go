@@ -103,12 +103,9 @@ func SeedDemo(ctx context.Context, s *Store) error {
 	if _, err := s.pool.Exec(ctx, insLicense); err != nil {
 		return err
 	}
-	const insQuota = `INSERT INTO quota (license_id, dim, total) VALUES ('LIC-DEMO-0001',$1,100000)
+	const insQuota = `INSERT INTO quota (license_id, dim) VALUES ('LIC-DEMO-0001','SERVICE')
 		ON CONFLICT (license_id, dim) DO NOTHING`
-	if _, err := s.pool.Exec(ctx, insQuota, "SERVICE"); err != nil {
-		return err
-	}
-	if _, err := s.pool.Exec(ctx, insQuota, "UPSTREAM"); err != nil {
+	if _, err := s.pool.Exec(ctx, insQuota); err != nil {
 		return err
 	}
 	return nil

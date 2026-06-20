@@ -1,48 +1,48 @@
 # 经济能力查询转接服务 — 设计文档（DESIGN.md）
 
-> 版本：v0.4
-> 角色定位：本服务是一个**接口转接（API Relay / Gateway）网关**。对外为客户（商户）提供经济能力查询 API（对齐《接口文档 - 经济能力》：`POST /v1/openapi/zlx/querySrmxV9`）；对内调用**上游数据源**获取评分后回传。
-> 在此基础上提供 **License 鉴权** 与 **双维度配额（计费）** 能力。
+> 版本：v0.7（服务版本 **x1**）
+> 角色定位：本服务是一个**接口转接（API Relay / Gateway）网关**。对外为客户（商户）提供经济能力查询 API（当前版本 **x1**：`POST /v1/openapi/zlx/querySrmxX1`）；对内调用**上游数据源**（伽马分层分）获取评分后回传。
+> 在此基础上提供 **License 鉴权** 与 **成功查得数统计**（无额度限制）能力。
 
-> **v0.4 拓扑变更（重要）**：此前误把《伽马分层分_定制版》PDF 当作"对外契约"。修正为：
-> - **对外（下游，权威=《接口文档 - 经济能力》.doc）**：端点 `POST /v1/openapi/zlx/querySrmxV9`，网关信封 `appKey/sign/encryptionType/body`（**MD5 加签**），响应 `head{errorCode,logId,time,errorMsg,timestamp} / body{code,msg,uid,reqid,verify,result{range}}`。`head.errorCode` 由内部 busiCode 映射（"0"=成功含查得/查无；非0=网关级错误，无 body）；查得/查无落在 `body.code` 001/999。
-> - **对内（上游，可路由切换）**：
->   - **伽马分层分**（《伽马分层分_定制版》PDF，**默认**）：`POST /enol/api/v1/doCheck`，信封 `appId/sign/apiKey/encryptionType/body` + MD5，返回 `data.busiCode/result.score`。
->   - **income_cls**（备选）：`GET /yrzx/finan/net/10w/v9`，`account/key` MD5 签名，返回 `code/result.range`。
->   - 由 `UPSTREAM_PROVIDER` 选择当前生效者；各 provider 把原生响应归一化为 `UpstreamResult`（Code `001`查得/`999`查无）。
+> **v0.7 变更（重要）**：**彻底移除维度②（上游配额 / 上游调用计数 / 对账作业）**。后台只保留单一统计「成功查得数」。删除内容：`QuotaRepository` 的预留/提交/释放、Redis `up_committed/up_reserved`、`billing_ledger.counted_upstream`、`quota.total/reserved` 列与 `UPSTREAM` 行、`ReconciliationJob`、管理端 `serviceTotal/upstreamTotal` 字段。台账状态机（PENDING→BILLED/UNBILLED）与异步复查（RequeryWorker）保留，仅用于幂等与成功查得数结算。本文 §7.x / §11.2 中关于维度② 的预留/提交/释放/对账描述均**已作废**，以本节为准。
+>
+> **v0.6 变更**：**取消额度限制**。不再对客户做余额拦截、也不再做成本上限拦截；任何持有效 license 的客户均可不受次数限制地调用。系统**仅统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。`busiCode 1001 账户余额不足` 与 `1006 透支余额已达上限` 不再触发。
 
-### 决策基线（v0.4 已确认）
-1. **签名**：**客户侧（下游）**采用 **appKey + MD5 加签**（对 body 业务参数按键 ASCII 升序拼接后追加 `secret`，再 MD5；见 §8.1）；**上游侧**因是第三方服务无法修改，伽马保持 MD5 信封加签、income_cls 保持 `MD5(account+idCard+mobile+reqid+key)` 口径（§8.2）。
-2. **维度①（客户用量 / 对用户计费）计数口径**：**仅查得数据（busiCode=10，上游 001）才对客户计费**。上游查无结果（999 → busiCode 1000）或任何未查得数据的情况一律**不计维度①、不向客户计费**；鉴权/参数拦截、我方内部错误、上游我方原因失败等同样不计。
-3. **维度②（我方成本）计数口径**：**以上游实际扣费为准，凡上游扣费一律计入，绝不漏计**。
-4. **无 UNKNOWN 态**：超时/无响应一律通过**幂等 re-query（按 reqid 复查）**得到确定结论，最终以**上游扣费记录**为准，因此请求计费状态只有"已计费/未计费"两种终态。
-5. **配额模式**：**总量买断**，不按日/月周期重置，用尽即止（可再充值续量）。
-6. **客户配额查询**：提供查询路由；当**无余额仍调用**主查询接口时，返回"余额不足，请充值"及对应状态码。
+> **v0.5 变更**：
+> - **服务版本升级为 x1**：对外路由由旧版 `querySrmxV9` 改为 `POST /v1/openapi/zlx/querySrmxX1`。请求/响应契约保持不变（仍为 `appKey/sign/encryptionType/body` + MD5 加签、`head/body` 信封）。
+> - **旧版 v9（兼容保留）**：[`income_cls.md`](./income_cls.md)（`GET /yrzx/finan/net/10w/v9`，`account/key` 验签 `verify=MD5(account+idCard+mobile+reqid+key)`，响应 `code/msg/uid/result.range/verify`）是**本服务旧版本（v9）下游契约**，仍对老客户提供（§5.4）。它与 x1 **共用同一上游（伽马）、同一 license/鉴权（account=appKey、key=appSecret）与成功查得数统计**，仅对外的请求/响应格式不同。**income_cls.md 不是上游**。
+> - **上游唯一**：上游数据源**只有伽马分层分**（《伽马分层分_定制版》PDF，代码中的 `gama`）：`POST /enol/api/v1/doCheck`，信封 `appId/sign/apiKey/encryptionType/body` + MD5，返回 `data.busiCode/result.score`，归一化为 `UpstreamResult`（Code `001`查得/`999`查无）。
+> - **对外（下游）**：端点 `POST /v1/openapi/zlx/querySrmxX1`，网关信封 `appKey/sign/encryptionType/body`（**MD5 加签**），响应 `head{errorCode,logId,time,errorMsg,timestamp} / body{code,msg,uid,reqid,verify,result{range}}`。`head.errorCode` 由内部 busiCode 映射（"0"=成功含查得/查无；非0=网关级错误，无 body）；查得/查无落在 `body.code` 001/999。
+
+### 决策基线
+1. **签名**：**客户侧（下游）**采用 **appKey + MD5 加签**（对 body 业务参数按键 ASCII 升序拼接后追加 `secret`，再 MD5；见 §8.1）；**上游侧（伽马）**因是第三方服务无法修改，沿用伽马 MD5 信封加签（对 body 业务参数按键 ASCII 升序拼接后追加 `secret`，再 MD5；见 §8.2）。
+2. **成功查得数统计（v0.6）**：**仅查得数据（busiCode=10，上游 001）才计入用户的「成功查得数」**。上游查无结果（999 → busiCode 1000）、鉴权/参数拦截、我方内部错误、上游我方原因失败等一律**不计**。这是本服务唯一对客户维度的统计口径。
+3. **无额度限制 + 单维度统计（v0.7）**：**不做任何次数上限拦截**，且**已彻底移除维度②上游配额/调用计数与对账作业**。台账（PENDING→BILLED/UNBILLED）与异步复查仅用于幂等与「成功查得数」结算，不再有任何上游计数或对账门槛。
+4. **无 UNKNOWN 态**：超时/无响应一律通过**幂等 re-query（按 reqid 复查）**得到确定结论，最终以**上游扣费记录**为准，因此请求结算状态只有"已计费/未计费"两种终态。
+5. **客户查询路由**：提供 `GET /v1/openapi/zlx/quota` 查询路由，返回该用户**累计成功查得数**与 license 状态（无余额/上限概念）。
 
 ---
 
 ## 1. 背景与目标
 
 ### 1.1 业务背景
-- 客户按《接口文档 - 经济能力》描述的方式调用**本服务**（`POST /v1/openapi/zlx/querySrmxV9`，信封 `appKey/sign/encryptionType/body` + MD5 加签，请求体 `mobile/idCard/name`）。
-- 本服务鉴权后，按 `UPSTREAM_PROVIDER` 选择上游（默认伽马 PDF；备选 income_cls）并调用之。
-- 上游返回收入模型评分（伽马 `result.score` / income_cls `result.range`，0~51），归一化后封装进下游 `body.result.range` 返回。
+- 客户调用**本服务 x1**（`POST /v1/openapi/zlx/querySrmxX1`，信封 `appKey/sign/encryptionType/body` + MD5 加签，请求体 `mobile/idCard/name`）。
+- 本服务鉴权后调用唯一上游**伽马分层分**（《伽马分层分_定制版》PDF）。
+- 上游返回收入模型评分（伽马 `result.score`，0~51），归一化后封装进下游 `body.result.range` 返回。
 
 ### 1.2 设计目标
 1. **协议转接**：屏蔽上游接口细节，对客户提供稳定、统一的 API 契约。
 2. **License 鉴权**：只有持有合法 license 的客户才能调用。
-3. **双维度配额（总量买断）**：
-   - 维度①（客户用量 / 对用户计费）：客户访问**本服务**的次数 —— **仅查得数据（busiCode=10）才计**，查无结果不计。
-   - 维度②（我方成本）：该 license 下，本服务访问**上游**的次数 —— **以上游实际扣费为准**。
-4. **计费正确性（核心难点）**：
-   - 维度②**不漏计**：凡上游真实扣费必须被计入（即便我方侧发生超时/异常）。
-   - 维度②**不空计**：上游确实未执行/未扣费（如网络根本没连通）则不计。
-   - 通过"预留 → 以上游确定结论结算 → 对账兜底"实现，**消除不确定态**。
+3. **成功查得数统计（v0.7，单维度）**：
+   - 仅一个对客户的统计口径——**累计成功查得数**：客户调用本服务且**查得数据（busiCode=10）才计**，查无结果/错误一律不计。
+   - ~~维度②（我方上游成本）~~：**已移除**（不再有上游配额、上游调用计数与对账）。
+4. **结算正确性**：
+   - 通过"开台账 → 以上游确定结论结算 → 异步幂等复查"驱动 PENDING→BILLED/UNBILLED，**消除不确定态**；查得时累计成功查得数。
 
 ### 1.3 非目标（本期不做）
 - 不做客户自助开通 / 充值前台（仅提供查询路由 + 预留数据模型）。
-- 不做 V8（`/openapi/zlx/querySrmxV8`，发票明细数组）——本期仅 V9 经济能力评分。
-- 多上游：当前提供 **provider 路由（伽马/income_cls，配置切换）**，但不做同请求并发对比/合并或自动故障转移。
+- 不做 V8（`/openapi/zlx/querySrmxV8`，发票明细数组）——本期仅 x1 经济能力评分。
+- 多上游：当前仅伽马一个上游；保留 `upstream.Router` 抽象以便未来扩展，但不做同请求并发对比/合并或自动故障转移。
 
 ---
 
@@ -52,7 +52,7 @@
 |---|---|
 | 客户 / 商户 | 调用本服务的外部方 |
 | License | 颁发给客户的授权凭证，含密钥与配额 |
-| 上游 / Provider | `income_cls.md` 描述的经济能力数据源 |
+| 上游 / Provider | 伽马分层分（《伽马分层分_定制版》PDF）经济能力数据源 |
 | 维度①配额（service quota） | 客户调用本服务允许的次数（总量买断） |
 | 维度②配额（upstream quota） | 该 license 下我方调用上游允许的次数（= 我方成本上限，总量买断） |
 | 可计费（billable） | 上游确实执行并对我方扣费的一次查询 |
@@ -81,7 +81,7 @@ flowchart LR
         Map --> GW
     end
 
-    UC -->|GET + MD5签名| Upstream[(上游 income_cls 10W-v9)]
+    UC -->|"POST doCheck + MD5加签(appId/sign/apiKey/body)"| Upstream[(上游 伽马分层分 doCheck)]
     UC -.->|超时/无响应: 按reqid幂等复查| Upstream
 
     Auth -.-> DB[(存储: License/配额/台账)]
@@ -126,7 +126,7 @@ sequenceDiagram
     end
     Q->>Q: 维度②预留1单位 (reserved++, 台账=PENDING)
     Q->>U: 发起上游调用
-    U->>P: GET .../10w/v9?account&idCard&mobile&reqid&verify
+    U->>P: POST /enol/api/v1/doCheck (appId,sign,apiKey,body{name,idCard,mobile})
 
     alt 收到上游业务响应
         P-->>U: code + result.range
@@ -180,12 +180,12 @@ sequenceDiagram
 | head.errorMsg | String | 返回文字描述 / 错误原因 |
 | head.timestamp | Number | 毫秒时间戳 |
 | body | Object | 业务响应体（网关级错误时省略） |
-| - code | String | `001`=查得 / `999`=查无（沿用 income_cls 口径） |
+| - code | String | `001`=查得 / `999`=查无（沿用旧版 v9 业务码口径） |
 | - msg / uid / reqid / verify | String | 业务消息 / 上游流水号 / 请求流水号 / 上游签名（伽马为空） |
 | - result.range | String | 收入模型评分 |
 
-### 5.1 经济能力查询 V9
-- **路径**：`POST /v1/openapi/zlx/querySrmxV9`
+### 5.1 经济能力查询 x1
+- **路径**：`POST /v1/openapi/zlx/querySrmxX1`
 - **鉴权**：见 §8.1（appKey + MD5 签名）。
 
 **请求示例**
@@ -227,53 +227,67 @@ sequenceDiagram
 ```
 - 维度①无余额、维度②达上限时**不调用上游、不计维度①/②**。
 
-### 5.2 配额查询路由（本服务扩展，非 .doc 定义）
+### 5.2 查询路由（本服务扩展，非 .doc 定义）
 - **路径**：`GET /v1/openapi/zlx/quota`
 - **鉴权**：同主接口（appKey + MD5 签名）。
-- **用途**：供客户查询自身**维度①**（可用调用次数）余额与 license 状态；维度②为我方成本口径，**不对客户暴露**。
-- **响应**：`{errorCode, errorMsg, status, serviceTotal, serviceUsed, serviceRemaining}`（内部扩展形态）。
+- **用途**：供客户查询自身**累计成功查得数**与 license 状态。无额度限制，不返回余额/上限。
+- **响应**：`{errorCode, errorMsg, status, serviceUsed}`，其中 `serviceUsed` = 累计成功查得数据的次数。
 
 ### 5.3 内部 busiCode → head.errorCode 映射
 > 查得/查无是业务结果，落在 `body.code`（001/999），`head.errorCode` 恒为 `"0"`。下表非 0 项为网关级错误（只返回 head）。
 
 | 内部 busiCode | 含义 | head.errorCode | 触发条件 | 计维度① | 计维度② |
 |---|---|---|---|---|---|
-| 10 | 查得数据【计费】 | "0" (body.code 001) | 上游伽马 10 / income_cls 001 | 是 | 以上游扣费为准（是） |
-| 1000 | 数据未查得 | "0" (body.code 999) | 上游伽马 1000 / income_cls 999 | 否 | 以上游扣费为准（是） |
-| 1001 | 账户余额不足 | 505005 | 维度①无余额 | 否 | 否 |
+| 10 | 查得数据【计费】 | "0" (body.code 001) | 上游伽马 busiCode 10 | 是 | 以上游扣费为准（是） |
+| 1000 | 数据未查得 | "0" (body.code 999) | 上游伽马 busiCode 1000 | 否 | 以上游扣费为准（是） |
 | 1002 | 账户信息不存在 | 505004 | appKey 查无 license | 否 | 否 |
 | 1003 | appKey 异常 | 505001 | 缺少/非法 appKey | 否 | 否 |
 | 1005 | 账号信息异常 | 505002 | 签名校验失败 / IP 不在白名单 | 否 | 否 |
-| 1006 | 透支余额已达上限 | 505006 | 维度②达成本上限 | 否 | 否 |
 | 1007 | 数据请求异常 | 505062 | 参数校验失败 / 上游我方原因失败 / 内部错误 / 超时复查未决 | 否 | 否（复查/对账裁决） |
 | 1009 | 服务尚未开通 | 505007 | license 停用/过期/未开通 | 否 | 否 |
 
+> v0.6 起取消额度限制，`1001 账户余额不足`、`1006 透支余额已达上限` 不再触发（常量保留以兼容历史）。
+
 > `head.errorCode` 字典中 `0` / `505062` 取自 .doc 示例，其余 `5050xx` 为内部约定（待联调对齐真实字典）。
+
+### 5.4 旧版 v9 兼容接口（income_cls.md）
+
+> 面向仍在使用旧格式的老客户保留。**与 x1 共用同一上游（伽马）、license 鉴权与双维度配额计费**，仅对外协议不同。新接入一律用 x1（§5.1）。
+
+- **路径**：`GET /yrzx/finan/net/10w/v9`（HTTP GET，UTF-8，JSON）。
+- **入参**（query）：`account`（=客户 appKey）、`idCard`、`name`（选填）、`mobile`、`reqid`（≤20，幂等键）、`verify`。
+- **验签**：`verify = MD5(account + idCard + mobile + reqid + key).toUpperCase()`，其中 `key` = 客户 `appSecret`（服务端按 `account` 定位）。
+- **响应**：`{code, msg, uid, reqid, result{range}, verify}`；`code`：`001` 查得 / `999` 查无 / 错误码字典（`002/003/004/005/006/008/009/011/012/013/020`，见 income_cls.md）。
+- **响应签名**：`verify = MD5(code + uid + key).toUpperCase()`（是签名字段 code+uid+key 的一致口径，**待与旧版实现联调确认**）。
+- **错误码映射**（内部 busiCode → v9 code）：`10→001`、`1000→999`、`1001/1006→003`、`1002→002`、`1009→004`、`1003→009`、`1005→013`、其余（含 1007 上游/我方原因/超时未决、IP 不在白名单）→`012`。入参存在性/格式在网关层校验：account 空→`009`、reqid 空或 >20→`008`、idCard 空/格式→`005`、mobile 空/格式→`020`、verify 空→`011`。
+- **幂等**：以客户传入的 `reqid` 为维度②预留与复查的幂等键（x1 为内部生成）。
+- **计费口径同 x1**：仅查得数据（→`001`）计维度①；查无（`999`）计维度②不计维度①。
 
 ---
 
 ## 6. 上游对接（Provider 侧）
 
-> 对齐 `income_cls.md`（经济能力 10W-v9）。
+> 唯一上游：**伽马分层分**（《伽马分层分_定制版》PDF，代码中的 `gama`）。保留 `upstream.Router` 抽象以便未来扩展，但当前仅注册伽马一个 provider。
 
-- **URL**：`GET http://{server}:{port}/yrzx/finan/net/10w/v9`
-- **入参**：`account`（我方账户）、`idCard`、`name`、`mobile`、`reqid`、`verify`
-- **签名**：`verify = MD5(account + idCard + mobile + reqid + key).toUpperCase()`
-- **出参**：`code/msg/uid/reqid/result.range/verify`
+- **URL**：`POST https://{域名}/enol/api/v1/doCheck`
+- **请求信封**：`appId`（商务分配）、`sign`、`apiKey`（固定 `gama_ctmz_layer_score`）、`encryptionType`(1=明文)、`body{name?, idCard, mobile}`
+- **签名**：`sign = MD5(body 非空业务参数按键 ASCII 升序拼接 key+value … + secret)`（小写 hex；`appId/sign/apiKey/encryptionType` 不参与）
+- **出参**：`code`（0 成功）、`msg`、`seqNo`（上游流水号）、`data.busiCode`、`data.busiMsg`、`data.result.score`
+- **归一化**：`data.busiCode 10 → UpstreamResult.Code "001"`（查得，附 `score`）、`1000 → "999"`（查无）、其余 busiCode（1001/1002/1003/1005/1006/1007/1009 等，均为我方在伽马侧的账户/参数/系统问题）→ 视为上游侧错误，触发 re-query/对账兜底、不计费。
 
 ### 6.1 字段映射
-| 客户侧 | → | 上游侧 |
+| 客户侧（下游 body） | → | 上游侧（伽马 body） |
 |---|---|---|
 | mobile | → | mobile |
 | idCard | → | idCard |
 | name | → | name |
-| reqid | → | reqid（透传，保证 ≤20 位） |
-| （我方配置）| → | account / key |
+| （内部生成 reqid，≤20，用于幂等/复查） | → | （伽马以 seqNo 返回上游流水号） |
+| （我方配置）| → | appId / secret / apiKey |
 
-> `account/key` 为**我方与上游的凭证**，与客户的 license 无关，存于服务端安全配置（见 §11.4）。
+> `appId/secret` 为**我方与伽马的凭证**，与客户的 license 无关，存于服务端安全配置（见 §11.4）。
 
-### 6.2 上游返回码 → 客户 busiCode
-上游 `code` 映射为客户 `data.busiCode`：`001 → 10`（查得数据，附 `score`）、`999 → 1000`（数据未查得）、其余我方原因失败（002/003/004/012/013 等）`→ 1007`（数据请求异常）并告警。
+### 6.2 上游 busiCode → 客户 busiCode
+归一化后的上游 `Code` 映射为客户 `body.code` / 内部 busiCode：`001 → 10`（查得数据，附 `range`）、`999 → 1000`（数据未查得）、其余我方原因失败（伽马 1001/1002/1003/1005/1006/1007/1009 等）`→ 1007`（数据请求异常）并告警。
 
 ### 6.3 计数口径（决策 2 / 3，v0.3 修订）
 | 场景 | busiCode | 维度①（仅 busiCode=10 计） | 维度②（以上游扣费为准） |
@@ -350,17 +364,19 @@ stateDiagram-v2
      - 复查暂不可达 → 保持 `PENDING`，进入异步复查队列与对账兜底（§7.6），最终必收敛为 `BILLED/UNBILLED`。
 3. **为何没有 UNKNOWN**：因为最终一律以**上游扣费记录**为准（决策 3、4）。复查 + 对账保证每条记录都有确定归属，本地不接受"永久未知"。
 
-### 7.4 上游返回码 → 是否扣费（维度②）/ 客户 busiCode（维度①）判定表
-| 上游 code | 含义 | 是否扣费?(维度②) | 客户 busiCode | 计维度①? | 备注 |
-|---|---|---|---|---|---|
-| 001 | 成功 | ✅ 是 | 10 | ✅ 是 | 查得数据，标准扣费，计维度①② |
-| 999 | 查无结果 | ✅ 是 | 1000 | ❌ 否 | 上游已执行并扣费（维度②），但非查得数据，不计维度① |
-| 003 | 余额不足 | ❌ 否 | 1007 | ❌ 否 | 我方上游账户欠费，未执行 → 告警 |
-| 002 | 账号不存在 | ❌ 否 | 1007 | ❌ 否 | 我方配置错误 → 告警 |
-| 004 | 请给该账户授权 | ❌ 否 | 1007 | ❌ 否 | 我方授权问题 → 告警 |
-| 005/006/008/009/011/020 | 参数/签名格式错 | ❌ 否 | 1007 | ❌ 否 | 我方应在调用前拦截，不应到达上游 |
-| 012 | 接口错误 | ❌ 否 | 1007 | ❌ 否 | 上游内部错误 |
-| 013 | 校验签名错误 | ❌ 否 | 1007 | ❌ 否 | 我方签名错误 → 告警 |
+### 7.4 上游伽马 busiCode → 是否扣费（维度②）/ 客户 busiCode（维度①）判定表
+> 上游为伽马（《伽马分层分_定制版》PDF §2.1 busiCode）；10/1000 归一化为 `UpstreamResult.Code` 001/999，其余 busiCode 视为上游侧错误（不产生归一化结果）。
+
+| 伽马 busiCode | 含义 | 是否扣费?(维度②) | 归一化 Code | 客户 busiCode | 计维度①? | 备注 |
+|---|---|---|---|---|---|---|
+| 10 | 查询成功 | ✅ 是 | 001 | 10 | ✅ 是 | 查得数据，标准扣费，计维度①② |
+| 1000 | 数据未查得 | ✅ 是 | 999 | 1000 | ❌ 否 | 上游已执行并扣费（维度②），但非查得数据，不计维度① |
+| 1001 | 账户余额不足 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马账户欠费，未执行 → 告警 |
+| 1002 | 账户信息不存在 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马配置错误 → 告警 |
+| 1003 | appId 异常 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马 appId 配置错误 → 告警 |
+| 1005 | 账号信息异常 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马加签错误 → 告警 |
+| 1006 | 透支余额已达上限 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马额度上限 → 告警 |
+| 1009 | 服务尚未开通 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马侧服务未开通 → 告警 |
 
 > - **维度②（是否扣费）** 与 **维度①（busiCode=10）** 解耦：999 计维度②、不计维度①。
 > - 判定表应做成**配置**并与上游计费口径严格对齐；若上游对 999 的计费口径与此不同，以上游实际扣费记录为准（决策 3）。
@@ -391,29 +407,29 @@ stateDiagram-v2
 
 ## 8. 鉴权与签名（决策 1：客户侧 MD5 加签 / 上游侧 MD5）
 
-> 客户侧（本服务对外）按 PDF 使用 **appId + MD5 加签**；上游侧因是第三方服务无法修改，沿用 **MD5**。两侧签名相互独立、互不影响。
+> 客户侧（本服务对外）使用 **appKey + MD5 加签**；上游侧（伽马）因是第三方服务无法修改，沿用伽马 **MD5**。两侧签名相互独立、互不影响。
 
-### 8.1 客户 → 本服务（MD5 加签，对齐 PDF §3.1）
-- 客户持 `appId`（公开标识，由商务分配）与 `secret`（加签密钥，仅双方持有、不在请求中传输）。
-- 签名材料在请求信封中：`appId`、`apiKey`（固定 `gama_ctmz_layer_score`）、`sign`、`body`。
+### 8.1 客户 → 本服务（appKey + MD5 加签）
+- 客户持 `appKey`（公开标识，由我方分配）与 `appSecret`（加签密钥，仅双方持有、不在请求中传输）。
+- 签名材料在请求信封中：`appKey`、`sign`、`encryptionType`、`body`。**本服务下游不使用 `apiKey`**（`apiKey` 仅存在于上游伽马侧）。
 - **签名算法**：
-  1. 取 `body` 中**所有业务参数**（含非空 `tradeNo`），剔除字节/文件类型与**值为空**的参数；按参数名的 ASCII 升序排序（比较第一个字符，相同则比较下一个字符，依此类推）。
-  2. 将排序后的参数与其值拼成 `参数名参数值参数名参数值…`，末尾追加 `secret`，得到待签名字符串。
-     - 例（业务参数 name/idCard/mobile，按 ASCII 升序 `idCard < mobile < name`）：`idCard330129199511153412mobile13290879000name张三secret`
-     - 注：PDF §3.1 正文里那串 `name…mobile…idCard…secret` 仅为文字说明、顺序并不严格；**实际以 ASCII 升序为准**（与 PDF 末尾 Java 示例的 `Collections.sort` 一致）。
+  1. 取 `body` 中**所有业务参数**，剔除字节/文件类型与**值为空**的参数；按参数名的 ASCII 升序排序（比较第一个字符，相同则比较下一个字符，依此类推）。
+  2. 将排序后的参数与其值拼成 `参数名参数值参数名参数值…`，末尾追加 `appSecret`，得到待签名字符串。
+     - 例（业务参数 name/idCard/mobile，按 ASCII 升序 `idCard < mobile < name`）：`idCard330129199511153412mobile13290879000name张三<appSecret>`
   3. 对待签名字符串做 **MD5**（**小写 hex**），赋值给 `sign`；服务端比较时大小写不敏感（统一转小写后常量时间比较）。
-  - `appId / apiKey / sign / encryptionType` **不参与**拼接；`appId` 仅用于服务端定位 `secret`。
-  - **`tradeNo` 非空时一并参与加签**（按上述规则排序，`tradeNo` 的 't' ASCII 大于 name 的 'n'，故排在末位）。
-- **服务端校验顺序**：
-  1. `appId` 存在且 license `ACTIVE`、在有效期内（否则 `1003`/`1009`）；
-  2. `apiKey == gama_ctmz_layer_score`（否则 `1004`）；
-  3. 用服务端存储的 `secret` 按同一算法重算签名并**常量时间比较**，一致才放行（否则 `1005`）。
+  - `appKey / sign / encryptionType` **不参与**拼接；`appKey` 仅用于服务端定位 `appSecret`。
+- **服务端校验顺序**（见 §5.3 错误码）：
+  1. `appKey` 存在（否则 `1003`，head.errorCode 505001）；
+  2. `appKey` 匹配到 license（否则 `1002`，505004）；
+  3. license `ACTIVE` 且在有效期内（否则 `1009`，505007）；
+  4. 用服务端存储的 `appSecret` 按同一算法重算签名并**常量时间比较**，一致才放行（否则 `1005`，505002）。
 - **加密类型**：`encryptionType=1` 明文（本期仅支持）；非 1 暂不支持，按 `1007` 处理。
-- 上游 reqid 由 `tradeNo` 推导（§5.1）。
+- 上游 reqid 由本服务内部生成（≤20 位，§5.1），不来自客户。
 
-### 8.2 本服务 → 上游（MD5，第三方不可改）
-- 按 `income_cls.md`：`verify = MD5(account + idCard + mobile + reqid + key).toUpperCase()`。
-- `account/key` 由服务端安全配置注入，不暴露给客户。
+### 8.2 本服务 → 上游伽马（MD5，第三方不可改）
+- 按《伽马分层分_定制版》PDF §3.1：`sign = MD5(body 非空业务参数按键 ASCII 升序拼接 key+value … 末尾追加 secret)`，取**小写 hex**；`appId/sign/apiKey/encryptionType` 不参与拼接。
+- 请求信封 `appId`（商务分配）+ `apiKey`（固定 `gama_ctmz_layer_score`）+ `encryptionType=1`。
+- `appId/secret` 由服务端安全配置注入，不暴露给客户。
 
 ---
 
@@ -566,7 +582,7 @@ requestId = ts(Base36) + "-" + clientShort + "-" + bodyHash + "-" + core
 1. `encryptionType` 是否需要支持**密文**（本期仅明文 `1`；非 1 暂按 `1007` 处理）。
 2. 上游对 `999 查无结果` 的**实际扣费口径**（以上游为准；据此校准 §7.4）。
 3. 上游是否提供**对账文件 / 单笔查询（按 reqid 复查）接口**及其格式 —— 这是消除不确定态与对账兜底的前提。
-4. `server:port`、`account/key` 等上游联调参数；`tradeNo` 超过 20 位时与上游 reqid 的映射规则（本期：超长截断，缺省时生成内部 reqid）。
+4. 伽马上游联调参数：正式/测试`域名`、`appId/secret`、`apiKey`；reqid 由本服务内部生成（≤20 位）。
 5. 各 `busiCode` 与上游 code 的最终映射（特别是我方原因失败是否细分到 1002/1005 等）。
 6. 正式 / 测试访问地址与白名单外网 IP。
 
@@ -593,14 +609,14 @@ requestId = ts(Base36) + "-" + clientShort + "-" + bodyHash + "-" + core
 ### 16.2 普通用户（license）管理
 | 操作 | 方法 / 路由 | 说明 |
 |---|---|---|
-| 列表 | `GET /admin/api/users` | 返回每个用户的 license 状态、两维度配额（total/used/committed/reserved）、IP 白名单、创建时间 |
+| 列表 | `GET /admin/api/users` | 返回每个用户的 license 状态、**累计成功查得数**（`serviceUsed`）、IP 白名单、创建时间 |
 | 详情 | `GET /admin/api/users/{licenseId}` | 单个用户聚合视图 |
-| 新建 | `POST /admin/api/users` | 体 `{name?, serviceTotal, upstreamTotal, ipWhitelist?}`；**自动生成 `appId + secret` 并绑定**，响应**一次性**返回明文 `secret` |
-| 修改 | `PATCH /admin/api/users/{licenseId}` | 改 `status`(ACTIVE/SUSPENDED/EXPIRED)、`serviceTotal`、`upstreamTotal`、`ipWhitelist` |
+| 新建 | `POST /admin/api/users` | 体 `{name?, ipWhitelist?}`；**自动生成 `appKey + secret` 并绑定**，响应**一次性**返回明文 `secret`（无额度配置） |
+| 修改 | `PATCH /admin/api/users/{licenseId}` | 改 `status`(ACTIVE/SUSPENDED/EXPIRED)、`ipWhitelist` |
 | 删除 | `DELETE /admin/api/users/{licenseId}` | 删除用户及其绑定密钥 |
 | 轮换密钥 | `POST /admin/api/users/{licenseId}/rotate-secret` | 重新生成 `secret`，一次性返回明文 |
 
-- **配额配置**：维度① `serviceTotal`（对用户计费上限）、维度② `upstreamTotal`（我方成本上限）；总量买断口径（§7.1）。增量续费表现为调高 `total`。
+- **无额度配置（v0.6）**：不再配置维度①/②额度上限；管理后台只展示**累计成功查得数**（`serviceUsed`）。
 - **状态**：`SUSPENDED/EXPIRED` 的用户调用主接口返回 `busiCode 1009 服务尚未开通`（§5.3 / §8.1）。
 
 ### 16.3 操作记录 / 审计查询

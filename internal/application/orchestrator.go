@@ -90,13 +90,7 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 		return fail(errs.BusiAccountAbnormal, "IP 不在白名单")
 	}
 
-	// 2. 维度① balance pre-check (no balance → 1001, no upstream call).
-	if err := o.quota.CheckServiceQuota(ctx, lic.LicenseID); err != nil {
-		ae := errs.AsAppError(err)
-		rec.ErrMsg = ae.Error()
-		log.Info("service quota rejected", "busiCode", ae.Busi)
-		return fail(ae.Busi, ae.Msg)
-	}
+	// 2. 无额度限制：不做余额拦截，仅在查得数据时累计成功查得数 (见 Settle)。
 
 	// 3. Param validation + build upstream request (我方拦截, before reserve).
 	upReq, err := parse.Parse(cmd)
@@ -109,70 +103,196 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 	rec.Reqid = upReq.Reqid
 	log = log.With("reqid", upReq.Reqid)
 
-	// 4. Idempotency + 维度② reservation.
-	token, existing, err := o.quota.ReserveUpstream(ctx, lic, upReq.Reqid, "", requestID)
+	// 4-6. Idempotency + reserve + upstream + settle (shared core).
+	out := o.runCore(ctx, lic, upReq, requestID, rec, log)
+	return o.respondX1(out, requestID, rec, lat())
+}
+
+// queryOutcome is the normalized result of the post-auth core flow, shared by
+// the x1 (head/body) and v9 (income_cls.md) response mappers.
+type queryOutcome struct {
+	decision *model.BillingDecision // settled verdict (查得/查无/未扣费)
+	existing *model.Ledger          // idempotent hit (already BILLED)
+	appErr   *errs.AppError         // reserve/upstream-unresolved failure
+}
+
+// runCore runs the shared §4 steps after authentication: 幂等命中、开台账、上游
+// 调用(+按 reqid 复查)、结算。It updates the audit record's flow fields and applies
+// settlement; wire-format mapping is left to the caller.
+func (o *QueryOrchestrator) runCore(ctx context.Context, lic *model.LicenseView, upReq *model.UpstreamRequest, requestID string, rec *model.AuditRecord, log *slog.Logger) queryOutcome {
+	token, existing, err := o.quota.Begin(ctx, lic, upReq.Reqid, "", requestID)
 	if err != nil {
 		ae := errs.AsAppError(err)
 		rec.ErrMsg = ae.Error()
-		log.Info("reserve rejected", "busiCode", ae.Busi)
-		return fail(ae.Busi, ae.Msg)
+		log.Info("begin ledger failed", "busiCode", ae.Busi)
+		return queryOutcome{appErr: ae}
 	}
 	if existing != nil {
 		log.Info("idempotent hit, replaying cached billed result")
 		rec.CalledUpstream = true
 		rec.Billed = existing.CountedService
-		return o.replay(existing, requestID, rec, lat())
+		return queryOutcome{existing: existing}
 	}
 
-	// 5. Call upstream; on timeout/no-response → idempotent re-query by reqid.
 	result, callErr := o.upstream.Query(ctx, upReq)
+	var decision *model.BillingDecision
 	if callErr != nil {
 		log.Warn("upstream call failed, re-querying by reqid", "err", callErr)
 		rr, rqErr := o.upstream.Requery(ctx, upReq.Reqid)
 		if rqErr != nil || rr == nil || !rr.Reachable {
 			rec.ErrMsg = "上游超时/复查未决，PENDING 待对账"
 			log.Warn("re-query unresolved, leaving PENDING for reconciliation", "err", rqErr)
-			return fail(errs.BusiDataRequestErr, "")
+			return queryOutcome{appErr: errs.New(errs.BusiDataRequestErr, "")}
 		}
-		decision := o.billing.FromRequery(rr)
-		return o.settleAndRespond(ctx, token, decision, requestID, rec, log, lat)
+		decision = o.billing.FromRequery(rr)
+	} else {
+		decision = o.billing.Decide(result)
 	}
 
-	// 6. Decide + settle on the确定结论.
-	decision := o.billing.Decide(result)
-	return o.settleAndRespond(ctx, token, decision, requestID, rec, log, lat)
-}
-
-// settleAndRespond applies the billing verdict and maps the client response
-// (DESIGN §6.2/§7.4): 查得→body.code 001(计维度①), 查无→body.code 999(计维度②不
-// 计维度①), 其余→head.errorCode 505062.
-func (o *QueryOrchestrator) settleAndRespond(ctx context.Context, token *quota.ReserveToken, d *model.BillingDecision, requestID string, rec *model.AuditRecord, log *slog.Logger, lat func() int64) *model.QueryResponse {
-	if err := o.quota.Settle(ctx, token, d); err != nil {
+	if err := o.quota.Settle(ctx, token, decision); err != nil {
 		log.Error("settle failed", "err", err)
 	}
-	if d.Result != nil {
+	if decision.Result != nil {
 		rec.CalledUpstream = true
-		rec.UpstreamCode = d.Result.Code
-		rec.UpstreamUID = d.Result.UID
-		rec.UpstreamLogID = d.Result.LogID
+		rec.UpstreamCode = decision.Result.Code
+		rec.UpstreamUID = decision.Result.UID
+		rec.UpstreamLogID = decision.Result.LogID
 	}
-	rec.Billed = d.Returned
+	rec.Billed = decision.Returned
+	return queryOutcome{decision: decision}
+}
+
+// respondX1 maps a queryOutcome to the x1 head/body response (DESIGN §6.2/§7.4):
+// 查得→body.code 001(累计成功查得数), 查无→body.code 999, 其余→head.errorCode.
+func (o *QueryOrchestrator) respondX1(out queryOutcome, requestID string, rec *model.AuditRecord, latencyMs int64) *model.QueryResponse {
 	switch {
-	case d.Charged && d.Returned && d.Result != nil:
+	case out.existing != nil:
+		return o.replay(out.existing, requestID, rec, latencyMs)
+	case out.appErr != nil:
+		rec.BusiCode = int(out.appErr.Busi)
+		rec.BusiMsg = out.appErr.Msg
+		return mapping.Error(out.appErr.Busi, out.appErr.Msg, requestID, latencyMs)
+	}
+	d := out.decision
+	switch {
+	case d.Resolved && d.Returned && d.Result != nil:
 		rec.BusiCode = int(errs.BusiSuccess)
 		rec.BusiMsg = "success"
-		log.Info("billed (查得数据)", "range", d.Result.Range, "upstreamCode", d.Result.Code)
-		return mapping.Found(d.Result, requestID, lat())
-	case d.Charged && !d.Returned:
+		return mapping.Found(d.Result, requestID, latencyMs)
+	case d.Resolved && !d.Returned:
 		rec.BusiCode = int(errs.BusiNotFound)
 		rec.BusiMsg = "查无结果"
-		log.Info("billed (查无结果, 计维度②不计维度①)")
-		return mapping.NotFound(d.Result, requestID, lat())
+		return mapping.NotFound(d.Result, requestID, latencyMs)
 	default:
 		rec.BusiCode = int(errs.BusiDataRequestErr)
 		rec.ErrMsg = "上游未扣费/我方原因"
-		log.Info("unbilled (our-side / not charged)")
-		return mapping.Error(errs.BusiDataRequestErr, "", requestID, lat())
+		return mapping.Error(errs.BusiDataRequestErr, "", requestID, latencyMs)
+	}
+}
+
+// HandleV9 serves the旧版 v9 下游契约 (income_cls.md, GET account/key 验签). 入参
+// 存在性/格式校验由 API 层完成 (v9 返回码 005/008/009/011/020); 此处做账户+签名鉴权、
+// 复用 runCore 调上游+结算，再映射为 income_cls.md 响应。
+func (o *QueryOrchestrator) HandleV9(ctx context.Context, req *model.V9Request) *model.V9Response {
+	requestID := appctx.RequestID(ctx)
+	clientIP := appctx.ClientIP(ctx)
+	start := time.Now()
+	log := o.log.With("requestId", requestID, "clientIp", clientIP, "route", "v9")
+	lat := func() int64 { return time.Since(start).Milliseconds() }
+
+	rec := &model.AuditRecord{
+		RequestID:  requestID,
+		AppKey:     req.Account,
+		Reqid:      req.Reqid,
+		ClientIP:   clientIP,
+		NameMask:   mask.Name(req.Name),
+		IDCardMask: mask.IDCard(req.IDCard),
+		MobileMask: mask.Mobile(req.Mobile),
+	}
+	defer func() {
+		rec.FoundData = rec.BusiCode == int(errs.BusiSuccess)
+		rec.LatencyMs = lat()
+		rec.CreatedAt = time.Now()
+		if o.audit != nil {
+			if err := o.audit.AppendAudit(ctx, rec); err != nil {
+				log.Error("append audit failed", "err", err)
+			}
+		}
+	}()
+
+	failV9 := func(busi errs.BusiCode, msg string) *model.V9Response {
+		rec.BusiCode = int(busi)
+		rec.BusiMsg = msg
+		return mapping.V9Error(mapping.V9CodeFromBusi(busi), msg, req.Reqid)
+	}
+
+	// 1. account 定位 license + verify 验签 (返回 secret 供响应签名).
+	lic, secret, err := o.auth.AuthenticateV9(ctx, req)
+	if err != nil {
+		ae := errs.AsAppError(err)
+		rec.ErrMsg = ae.Error()
+		log.Warn("v9 auth failed", "busiCode", ae.Busi, "err", err)
+		return failV9(ae.Busi, ae.Msg)
+	}
+	log = log.With("appKey", lic.AppKey)
+
+	// 1b. Per-user IP whitelist (DESIGN §16.4).
+	if !ipfilter.Allowed(clientIP, lic.IPWhitelist) {
+		rec.BusiCode = int(errs.BusiAccountAbnormal)
+		rec.ErrMsg = "IP 不在白名单"
+		log.Warn("per-user ip rejected", "clientIp", clientIP)
+		return mapping.V9Error("012", "IP 不在白名单", req.Reqid)
+	}
+
+	// 2. 无额度限制：不做余额拦截，仅在查得数据时累计成功查得数 (见 Settle)。
+
+	// 3. Build upstream request; v9 以客户传入 reqid 为幂等键。
+	upReq := &model.UpstreamRequest{IDCard: req.IDCard, Name: req.Name, Mobile: req.Mobile, Reqid: req.Reqid}
+	log = log.With("reqid", upReq.Reqid)
+
+	// 4-6. Shared core (reserve + upstream + settle).
+	out := o.runCore(ctx, lic, upReq, requestID, rec, log)
+	return o.respondV9(out, req.Reqid, secret, rec)
+}
+
+// respondV9 maps a queryOutcome to the income_cls.md 响应 (查得 001 / 查无 999 /
+// 其余错误码)，并按客户 key 计算响应 verify。
+func (o *QueryOrchestrator) respondV9(out queryOutcome, reqid, secret string, rec *model.AuditRecord) *model.V9Response {
+	sign := func(code, uid string) string { return auth.SignV9Response(code, uid, secret) }
+	switch {
+	case out.existing != nil:
+		if out.existing.CountedService {
+			rec.BusiCode = int(errs.BusiSuccess)
+			rec.BusiMsg = "success"
+			r := &model.UpstreamResult{Code: "001", Reqid: reqid, UID: out.existing.UpstreamUID}
+			return mapping.V9Found(r, reqid, sign("001", r.UID))
+		}
+		rec.BusiCode = int(errs.BusiNotFound)
+		rec.BusiMsg = "查无结果"
+		return mapping.V9NotFound(&model.UpstreamResult{Code: "999", Reqid: reqid}, reqid, sign("999", ""))
+	case out.appErr != nil:
+		rec.BusiCode = int(out.appErr.Busi)
+		rec.BusiMsg = out.appErr.Msg
+		return mapping.V9Error(mapping.V9CodeFromBusi(out.appErr.Busi), out.appErr.Msg, reqid)
+	}
+	d := out.decision
+	switch {
+	case d.Resolved && d.Returned && d.Result != nil:
+		rec.BusiCode = int(errs.BusiSuccess)
+		rec.BusiMsg = "success"
+		return mapping.V9Found(d.Result, reqid, sign("001", d.Result.UID))
+	case d.Resolved && !d.Returned:
+		rec.BusiCode = int(errs.BusiNotFound)
+		rec.BusiMsg = "查无结果"
+		uid := ""
+		if d.Result != nil {
+			uid = d.Result.UID
+		}
+		return mapping.V9NotFound(d.Result, reqid, sign("999", uid))
+	default:
+		rec.BusiCode = int(errs.BusiDataRequestErr)
+		rec.ErrMsg = "上游未扣费/我方原因"
+		return mapping.V9Error("012", "", reqid)
 	}
 }
 

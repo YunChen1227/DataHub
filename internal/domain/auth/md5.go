@@ -31,6 +31,38 @@ func (Md5Verifier) Verify(req *model.SignedRequest, secret string) bool {
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(got)) == 1
 }
 
+// SignV9 computes the旧版 v9 (income_cls.md §输入参数) request signature:
+//
+//	verify = MD5(account + idCard + mobile + reqid + key).toUpperCase()
+//
+// key 为客户 appSecret。第三方旧契约口径，不可更改。
+func SignV9(account, idCard, mobile, reqid, key string) string {
+	sum := md5.Sum([]byte(account + idCard + mobile + reqid + key))
+	return strings.ToUpper(hex.EncodeToString(sum[:]))
+}
+
+// SignV9Response signs the旧版 v9 响应 over its是签名字段 (income_cls.md §返回参数:
+// code、uid 为是签名)：
+//
+//	verify = MD5(code + uid + key).toUpperCase()
+//
+// 注：income_cls.md 未给出响应签名的精确公式，此处沿用"是签名字段顺序+key"的一致口径，
+// 待与旧版实现联调确认。
+func SignV9Response(code, uid, key string) string {
+	sum := md5.Sum([]byte(code + uid + key))
+	return strings.ToUpper(hex.EncodeToString(sum[:]))
+}
+
+// EqualFoldSig compares two signatures case-insensitively in constant time.
+func EqualFoldSig(a, b string) bool {
+	a = strings.ToUpper(strings.TrimSpace(a))
+	b = strings.ToUpper(strings.TrimSpace(b))
+	if a == "" || len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 // Sign computes the client MD5 signature over the non-empty body params
 // (DESIGN §8.1). Keys are sorted by ASCII ascending; empty values are skipped.
 func Sign(params map[string]string, secret string) string {

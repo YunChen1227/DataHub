@@ -11,21 +11,18 @@ type AdminUser struct {
 	CreatedAt    time.Time
 }
 
-// UserDetail is the admin-facing aggregate view of a普通用户 (license + 配额 +
-// IP 白名单), used by the user management screens (DESIGN §16.2).
+// UserDetail is the admin-facing aggregate view of a普通用户 (license + 成功
+// 查得数 + IP 白名单), used by the user management screens (DESIGN §16.2). v0.6
+// 起取消额度限制，仅保留 ServiceUsed (累计成功查得数)。
 type UserDetail struct {
-	LicenseID         string    `json:"licenseId"`
-	AppKey            string    `json:"appKey"`
-	Name              string    `json:"name"`
-	Status            string    `json:"status"`
-	ClientUUID        string    `json:"clientUuid"`
-	ServiceTotal      int64     `json:"serviceTotal"`
-	ServiceUsed       int64     `json:"serviceUsed"`
-	UpstreamTotal     int64     `json:"upstreamTotal"`
-	UpstreamCommitted int64     `json:"upstreamCommitted"`
-	UpstreamReserved  int64     `json:"upstreamReserved"`
-	IPWhitelist       []string  `json:"ipWhitelist"`
-	CreatedAt         time.Time `json:"createdAt"`
+	LicenseID   string    `json:"licenseId"`
+	AppKey      string    `json:"appKey"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	ClientUUID  string    `json:"clientUuid"`
+	ServiceUsed int64     `json:"serviceUsed"` // 累计成功查得数
+	IPWhitelist []string  `json:"ipWhitelist"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 // AuditRecord is the rich per-request audit log (DESIGN §16.3 / §16.5). It is
@@ -45,7 +42,7 @@ type AuditRecord struct {
 	UpstreamCode   string    `json:"upstreamCode"`
 	UpstreamUID    string    `json:"upstreamUid"`
 	UpstreamLogID  string    `json:"upstreamLogId"`
-	Billed         bool      `json:"billed"` // 是否计维度①（对用户计费）
+	Billed         bool      `json:"billed"` // 是否查得数据（计入成功查得数）
 	LatencyMs      int64     `json:"latencyMs"`
 	NameMask       string    `json:"nameMask"`
 	IDCardMask     string    `json:"idCardMask"`

@@ -83,7 +83,7 @@ func main() {
 	st, body, err := call(http.MethodGet, "/healthz", nil)
 	check("GET /healthz", st, body, err)
 
-	// 2. POST /v1/openapi/zlx/querySrmxV9
+	// 2. POST /v1/openapi/zlx/querySrmxX1
 	qBody := map[string]string{
 		"mobile": "13809091009",
 		"idCard": "330129199109094312",
@@ -95,8 +95,8 @@ func main() {
 		"sign":           sign(qBody, secret),
 		"body":           qBody,
 	}
-	st, body, err = call(http.MethodPost, "/v1/openapi/zlx/querySrmxV9", payload)
-	check("POST /v1/openapi/zlx/querySrmxV9", st, body, err)
+	st, body, err = call(http.MethodPost, "/v1/openapi/zlx/querySrmxX1", payload)
+	check("POST /v1/openapi/zlx/querySrmxX1", st, body, err)
 
 	// 3. GET /v1/openapi/zlx/quota (empty body → sign = MD5(secret))
 	quotaPayload := map[string]any{

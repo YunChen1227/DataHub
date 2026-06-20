@@ -14,20 +14,13 @@ type LicenseRepository interface {
 	FindByAppKey(ctx context.Context, appKey string) (*model.LicenseView, error)
 }
 
-// QuotaRepository performs atomic两维度 counting (DESIGN §7.5). All mutating
-// methods MUST be atomic (Redis+Lua or DB conditional update) to避免超卖.
+// QuotaRepository tracks the 成功查得数 statistic (DESIGN §7). v0.6 起取消额度
+// 限制，仅累计查得次数；ServiceUsed/IncServiceUsed 必须原子，避免并发漏计。
 type QuotaRepository interface {
-	// ServiceQuota returns 维度① total/used.
-	ServiceQuota(ctx context.Context, licenseID string) (total, used int64, err error)
-	// IncServiceUsed increments 维度① used by 1.
+	// ServiceUsed returns the cumulative 成功查得数 (busiCode 10) for the license.
+	ServiceUsed(ctx context.Context, licenseID string) (used int64, err error)
+	// IncServiceUsed increments the 成功查得数 by 1.
 	IncServiceUsed(ctx context.Context, licenseID string) error
-	// TryReserveUpstream atomically checks 维度② remaining>0 and reserved++.
-	// Returns false when the cost ceiling is reached.
-	TryReserveUpstream(ctx context.Context, licenseID string) (ok bool, err error)
-	// CommitUpstream moves a reservation to committed (reserved--, committed++).
-	CommitUpstream(ctx context.Context, licenseID string) error
-	// ReleaseUpstream cancels a reservation (reserved--).
-	ReleaseUpstream(ctx context.Context, licenseID string) error
 }
 
 // LedgerRepository is the append-only billing台账 store (DESIGN §11.3).
@@ -36,14 +29,14 @@ type LedgerRepository interface {
 	FindByReqid(ctx context.Context, appID, reqid string) (*model.Ledger, error)
 	// Append inserts a new PENDING ledger and back-fills the assigned ID.
 	Append(ctx context.Context, l *model.Ledger) error
-	// UpdateState settles a ledger to BILLED/UNBILLED with the count flags.
-	UpdateState(ctx context.Context, id int64, state model.BillingState, countedService, countedUpstream bool) error
+	// UpdateState settles a ledger to BILLED/UNBILLED with the 成功查得 flag.
+	UpdateState(ctx context.Context, id int64, state model.BillingState, countedService bool) error
 	// ListByState powers the re-query worker and reconciliation job.
 	ListByState(ctx context.Context, state model.BillingState, limit int) ([]*model.Ledger, error)
 }
 
 // UpstreamPort talks to a data provider (DESIGN §6). The active provider is
-// selected by the upstream Router (income_cls / 伽马); each provider normalizes
+// selected by the upstream Router (当前唯一伽马); each provider normalizes
 // its native response into model.UpstreamResult.
 type UpstreamPort interface {
 	Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error)
@@ -70,7 +63,7 @@ type AdminUserRepository interface {
 	PutAdmin(ctx context.Context, a *model.AdminUser) error
 }
 
-// UserAdminRepository manages普通用户 (license) lifecycle + quota + per-user IP
+// UserAdminRepository manages普通用户 (license) lifecycle + per-user IP
 // whitelist + bound secret for the admin console (DESIGN §16.2).
 type UserAdminRepository interface {
 	ListUsers(ctx context.Context) ([]*model.UserDetail, error)
@@ -78,7 +71,7 @@ type UserAdminRepository interface {
 	// CreateUser persists a new license + quota + bound secret (plaintext secret
 	// is passed in; the adapter is responsible for at-rest encryption, §11.4).
 	CreateUser(ctx context.Context, d *model.UserDetail, secret string) error
-	UpdateUser(ctx context.Context, licenseID string, status string, serviceTotal, upstreamTotal int64, ipWhitelist []string) error
+	UpdateUser(ctx context.Context, licenseID string, status string, ipWhitelist []string) error
 	DeleteUser(ctx context.Context, licenseID string) error
 	RotateSecret(ctx context.Context, licenseID, secret string) error
 }

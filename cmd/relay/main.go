@@ -113,14 +113,8 @@ func main() {
 		Secret:  cfg.gamaSecret,
 		APIKey:  cfg.gamaAPIKey,
 	}, httpClient)
-	incomeClient := upstream.NewIncomeCls(upstream.IncomeClsConfig{
-		BaseURL: cfg.incomeBaseURL,
-		Account: cfg.incomeAccount,
-		Key:     cfg.incomeKey,
-	}, httpClient)
 	upRouter, err := upstream.NewRouter(cfg.upstreamProvider, map[string]port.UpstreamPort{
-		upstream.ProviderGama:      gamaClient,
-		upstream.ProviderIncomeCls: incomeClient,
+		upstream.ProviderGama: gamaClient,
 	})
 	if err != nil {
 		logger.Error("upstream router init failed", "err", err)
@@ -157,9 +151,7 @@ func main() {
 	}
 
 	requery := job.NewRequeryWorker(ledgerRepo, licenseRepo, upRouter, billSvc, quotaSvc, cfg.requeryInterval, logger)
-	recon := job.NewReconciliationJob(ledgerRepo, upRouter, cfg.reconInterval, logger)
 	go requery.Run(ctx)
-	go recon.Run(ctx)
 
 	go func() {
 		logger.Info("relay listening", "addr", cfg.addr)
@@ -182,5 +174,5 @@ func seedDemo(store *memory.Store) {
 		AppKey:     "y89098io",
 		ClientUUID: "demo-client-uuid",
 		Status:     "ACTIVE",
-	}, "demo-app-secret", "Demo 商户", 100000, 100000)
+	}, "demo-app-secret", "Demo 商户")
 }

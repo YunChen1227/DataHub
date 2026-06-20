@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api.js'
 
-const emptyForm = { name: '', serviceTotal: 100000, upstreamTotal: 100000, ipWhitelist: '' }
+const emptyForm = { name: '', ipWhitelist: '' }
 
 function parseIPs(s) {
   return (s || '')
@@ -37,8 +37,6 @@ export default function Users() {
     try {
       const res = await api.createUser({
         name: form.name,
-        serviceTotal: Number(form.serviceTotal),
-        upstreamTotal: Number(form.upstreamTotal),
         ipWhitelist: parseIPs(form.ipWhitelist),
       })
       setForm(emptyForm)
@@ -54,8 +52,6 @@ export default function Users() {
     try {
       await api.updateUser(editing.licenseId, {
         status: editing.status,
-        serviceTotal: Number(editing.serviceTotal),
-        upstreamTotal: Number(editing.upstreamTotal),
         ipWhitelist: parseIPs(editing.ipWhitelistText),
       })
       setEditing(null)
@@ -97,14 +93,6 @@ export default function Users() {
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </div>
           <div>
-            <label>维度①额度 (对用户计费)</label>
-            <input type="number" value={form.serviceTotal} onChange={(e) => setForm({ ...form, serviceTotal: e.target.value })} />
-          </div>
-          <div>
-            <label>维度②额度 (我方成本)</label>
-            <input type="number" value={form.upstreamTotal} onChange={(e) => setForm({ ...form, upstreamTotal: e.target.value })} />
-          </div>
-          <div>
             <label>IP 白名单 (逗号/空格分隔, 可空)</label>
             <input value={form.ipWhitelist} onChange={(e) => setForm({ ...form, ipWhitelist: e.target.value })} placeholder="1.2.3.4, 10.0.0.0/8" />
           </div>
@@ -123,7 +111,7 @@ export default function Users() {
             <thead>
               <tr>
                 <th>appKey</th><th>名称</th><th>状态</th>
-                <th>维度①(用/总)</th><th>维度②(已计/预留/总)</th>
+                <th>成功查得数</th>
                 <th>IP 白名单</th><th>创建时间</th><th>操作</th>
               </tr>
             </thead>
@@ -133,8 +121,7 @@ export default function Users() {
                   <td><code>{u.appKey}</code></td>
                   <td>{u.name || '-'}</td>
                   <td><span className={'badge ' + u.status}>{u.status}</span></td>
-                  <td>{u.serviceUsed} / {u.serviceTotal}</td>
-                  <td>{u.upstreamCommitted} / {u.upstreamReserved} / {u.upstreamTotal}</td>
+                  <td><strong>{u.serviceUsed}</strong></td>
                   <td>{(u.ipWhitelist && u.ipWhitelist.length) ? u.ipWhitelist.join(', ') : <span className="muted">不限制</span>}</td>
                   <td className="muted">{new Date(u.createdAt).toLocaleString()}</td>
                   <td className="row-actions">
@@ -148,7 +135,7 @@ export default function Users() {
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan="8" className="muted">暂无用户</td></tr>
+                <tr><td colSpan="7" className="muted">暂无用户</td></tr>
               )}
             </tbody>
           </table>
@@ -168,12 +155,8 @@ export default function Users() {
               </select>
             </div>
             <div className="field">
-              <label>维度①额度</label>
-              <input type="number" value={editing.serviceTotal} onChange={(e) => setEditing({ ...editing, serviceTotal: e.target.value })} />
-            </div>
-            <div className="field">
-              <label>维度②额度</label>
-              <input type="number" value={editing.upstreamTotal} onChange={(e) => setEditing({ ...editing, upstreamTotal: e.target.value })} />
+              <label>成功查得数</label>
+              <input type="number" value={editing.serviceUsed} disabled readOnly />
             </div>
             <div className="field">
               <label>IP 白名单</label>

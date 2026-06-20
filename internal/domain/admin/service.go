@@ -1,6 +1,6 @@
 // Package admin implements the admin console business logic (DESIGN §16):
-// operator login (JWT), 普通用户 (license) CRUD + 配额, MD5 凭证生成与轮换,
-// 审计查询, 以及全局/每用户 IP 白名单。
+// operator login (JWT), 普通用户 (license) CRUD, MD5 凭证生成与轮换,
+// 审计查询, 以及全局/每用户 IP 白名单。v0.6 起无额度配置。
 package admin
 
 import (
@@ -89,10 +89,8 @@ func (s *Service) VerifyToken(token string) (string, error) {
 
 // CreateUserInput is the new-user payload from the admin UI.
 type CreateUserInput struct {
-	Name          string
-	ServiceTotal  int64
-	UpstreamTotal int64
-	IPWhitelist   []string
+	Name        string
+	IPWhitelist []string
 }
 
 // CreateUserResult returns the created user plus the one-time plaintext secret.
@@ -117,20 +115,15 @@ func (s *Service) GetUser(ctx context.Context, licenseID string) (*model.UserDet
 }
 
 func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (*CreateUserResult, error) {
-	if in.ServiceTotal < 0 || in.UpstreamTotal < 0 {
-		return nil, ErrValidation
-	}
 	secret := GenerateSecret()
 	detail := &model.UserDetail{
-		LicenseID:     "LIC-" + strings.ToUpper(randAlpha(10)),
-		AppKey:        GenerateAppKey(),
-		Name:          strings.TrimSpace(in.Name),
-		Status:        "ACTIVE",
-		ClientUUID:    randAlpha(24),
-		ServiceTotal:  in.ServiceTotal,
-		UpstreamTotal: in.UpstreamTotal,
-		IPWhitelist:   normalizeCIDRs(in.IPWhitelist),
-		CreatedAt:     time.Now(),
+		LicenseID:   "LIC-" + strings.ToUpper(randAlpha(10)),
+		AppKey:      GenerateAppKey(),
+		Name:        strings.TrimSpace(in.Name),
+		Status:      "ACTIVE",
+		ClientUUID:  randAlpha(24),
+		IPWhitelist: normalizeCIDRs(in.IPWhitelist),
+		CreatedAt:   time.Now(),
 	}
 	if err := s.users.CreateUser(ctx, detail, secret); err != nil {
 		return nil, err
@@ -138,12 +131,10 @@ func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (*CreateUs
 	return &CreateUserResult{User: detail, Secret: secret}, nil
 }
 
-// UpdateUserInput carries the editable fields (nil = leave unchanged where noted).
+// UpdateUserInput carries the editable fields (empty status = leave unchanged).
 type UpdateUserInput struct {
-	Status        string
-	ServiceTotal  int64
-	UpstreamTotal int64
-	IPWhitelist   []string
+	Status      string
+	IPWhitelist []string
 }
 
 func (s *Service) UpdateUser(ctx context.Context, licenseID string, in UpdateUserInput) (*model.UserDetail, error) {
@@ -158,7 +149,7 @@ func (s *Service) UpdateUser(ctx context.Context, licenseID string, in UpdateUse
 	if status == "" {
 		status = cur.Status
 	}
-	if err := s.users.UpdateUser(ctx, licenseID, status, in.ServiceTotal, in.UpstreamTotal, normalizeCIDRs(in.IPWhitelist)); err != nil {
+	if err := s.users.UpdateUser(ctx, licenseID, status, normalizeCIDRs(in.IPWhitelist)); err != nil {
 		return nil, err
 	}
 	return s.users.GetUser(ctx, licenseID)

@@ -1,5 +1,5 @@
-// Package job hosts the异步复查 worker and对账兜底 task that drive every PENDING
-// ledger to a terminal BILLED/UNBILLED state (DESIGN §7.3 / §7.6).
+// Package job hosts the异步复查 worker that drives every PENDING ledger to a
+// terminal BILLED/UNBILLED state (DESIGN §7.3 / §7.6).
 package job
 
 import (
@@ -93,5 +93,5 @@ func (w *RequeryWorker) resolve(ctx context.Context, l *model.Ledger) {
 		log.Error("settle from requery failed", "err", err)
 		return
 	}
-	log.Info("pending resolved via requery", "charged", decision.Charged)
+	log.Info("pending resolved via requery", "resolved", decision.Resolved, "returned", decision.Returned)
 }

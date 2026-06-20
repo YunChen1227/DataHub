@@ -17,11 +17,7 @@ import (
 )
 
 type quotaRow struct {
-	serviceTotal   int64
-	serviceUsed    int64
-	upstreamTotal  int64
-	upstreamCommit int64
-	upstreamReserv int64
+	serviceUsed int64 // 累计成功查得数（busiCode 10）
 }
 
 // licenseRec is the store-internal aggregate for a普通用户 (DESIGN §7.1/§16.2).
@@ -65,9 +61,8 @@ func New() *Store {
 	}
 }
 
-// SeedLicense registers a demo license with a bound secret + both quota
-// dimensions (dev helper).
-func (s *Store) SeedLicense(lic *model.LicenseView, secret, name string, serviceTotal, upstreamTotal int64) {
+// SeedLicense registers a demo license with a bound secret (dev helper).
+func (s *Store) SeedLicense(lic *model.LicenseView, secret, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.licenses[lic.LicenseID] = &licenseRec{
@@ -77,7 +72,7 @@ func (s *Store) SeedLicense(lic *model.LicenseView, secret, name string, service
 		createdAt: time.Now(),
 	}
 	s.appKeyIndex[lic.AppKey] = lic.LicenseID
-	s.quotas[lic.LicenseID] = &quotaRow{serviceTotal: serviceTotal, upstreamTotal: upstreamTotal}
+	s.quotas[lic.LicenseID] = &quotaRow{}
 }
 
 // --- port.LicenseRepository ---
@@ -110,14 +105,14 @@ func (s *Store) GetAppSecret(_ context.Context, licenseID string) (string, error
 
 // --- port.QuotaRepository ---
 
-func (s *Store) ServiceQuota(_ context.Context, licenseID string) (int64, int64, error) {
+func (s *Store) ServiceUsed(_ context.Context, licenseID string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	q := s.quotas[licenseID]
 	if q == nil {
-		return 0, 0, nil
+		return 0, nil
 	}
-	return q.serviceTotal, q.serviceUsed, nil
+	return q.serviceUsed, nil
 }
 
 func (s *Store) IncServiceUsed(_ context.Context, licenseID string) error {
@@ -125,41 +120,6 @@ func (s *Store) IncServiceUsed(_ context.Context, licenseID string) error {
 	defer s.mu.Unlock()
 	if q := s.quotas[licenseID]; q != nil {
 		q.serviceUsed++
-	}
-	return nil
-}
-
-func (s *Store) TryReserveUpstream(_ context.Context, licenseID string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	q := s.quotas[licenseID]
-	if q == nil {
-		return false, nil
-	}
-	if q.upstreamTotal-q.upstreamCommit-q.upstreamReserv <= 0 {
-		return false, nil
-	}
-	q.upstreamReserv++
-	return true, nil
-}
-
-func (s *Store) CommitUpstream(_ context.Context, licenseID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if q := s.quotas[licenseID]; q != nil {
-		if q.upstreamReserv > 0 {
-			q.upstreamReserv--
-		}
-		q.upstreamCommit++
-	}
-	return nil
-}
-
-func (s *Store) ReleaseUpstream(_ context.Context, licenseID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if q := s.quotas[licenseID]; q != nil && q.upstreamReserv > 0 {
-		q.upstreamReserv--
 	}
 	return nil
 }
@@ -188,13 +148,12 @@ func (s *Store) Append(_ context.Context, l *model.Ledger) error {
 	return nil
 }
 
-func (s *Store) UpdateState(_ context.Context, id int64, state model.BillingState, countedService, countedUpstream bool) error {
+func (s *Store) UpdateState(_ context.Context, id int64, state model.BillingState, countedService bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if l := s.ledgerByID[id]; l != nil {
 		l.State = state
 		l.CountedService = countedService
-		l.CountedUpstream = countedUpstream
 	}
 	return nil
 }

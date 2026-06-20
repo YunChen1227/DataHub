@@ -71,11 +71,11 @@ func (s *Store) CreateUser(_ context.Context, d *model.UserDetail, secret string
 		createdAt: d.CreatedAt,
 	}
 	s.appKeyIndex[d.AppKey] = d.LicenseID
-	s.quotas[d.LicenseID] = &quotaRow{serviceTotal: d.ServiceTotal, upstreamTotal: d.UpstreamTotal}
+	s.quotas[d.LicenseID] = &quotaRow{}
 	return nil
 }
 
-func (s *Store) UpdateUser(_ context.Context, licenseID, status string, serviceTotal, upstreamTotal int64, ipWhitelist []string) error {
+func (s *Store) UpdateUser(_ context.Context, licenseID, status string, ipWhitelist []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec := s.licenses[licenseID]
@@ -84,10 +84,6 @@ func (s *Store) UpdateUser(_ context.Context, licenseID, status string, serviceT
 	}
 	rec.view.Status = status
 	rec.view.IPWhitelist = append([]string(nil), ipWhitelist...)
-	if q := s.quotas[licenseID]; q != nil {
-		q.serviceTotal = serviceTotal
-		q.upstreamTotal = upstreamTotal
-	}
 	return nil
 }
 
@@ -122,18 +118,14 @@ func (s *Store) userDetailLocked(licenseID string) *model.UserDetail {
 		q = &quotaRow{}
 	}
 	return &model.UserDetail{
-		LicenseID:         licenseID,
-		AppKey:            rec.view.AppKey,
-		Name:              rec.name,
-		Status:            rec.view.Status,
-		ClientUUID:        rec.view.ClientUUID,
-		ServiceTotal:      q.serviceTotal,
-		ServiceUsed:       q.serviceUsed,
-		UpstreamTotal:     q.upstreamTotal,
-		UpstreamCommitted: q.upstreamCommit,
-		UpstreamReserved:  q.upstreamReserv,
-		IPWhitelist:       append([]string(nil), rec.view.IPWhitelist...),
-		CreatedAt:         rec.createdAt,
+		LicenseID:   licenseID,
+		AppKey:      rec.view.AppKey,
+		Name:        rec.name,
+		Status:      rec.view.Status,
+		ClientUUID:  rec.view.ClientUUID,
+		ServiceUsed: q.serviceUsed,
+		IPWhitelist: append([]string(nil), rec.view.IPWhitelist...),
+		CreatedAt:   rec.createdAt,
 	}
 }
 

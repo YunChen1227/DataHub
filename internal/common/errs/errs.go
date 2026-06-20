@@ -19,14 +19,12 @@ const (
 type BusiCode int
 
 const (
-	BusiSuccess         BusiCode = 10   // 查询成功【计费】(伽马 10 / income_cls 001)
-	BusiNotFound        BusiCode = 1000 // 数据未查得 (伽马 1000 / income_cls 999)
-	BusiNoBalance       BusiCode = 1001 // 账户余额不足（维度①无余额）
+	BusiSuccess         BusiCode = 10   // 查询成功【计成功查得数】(伽马 busiCode 10)
+	BusiNotFound        BusiCode = 1000 // 数据未查得 (伽马 busiCode 1000)
 	BusiAccountNotExist BusiCode = 1002 // 账户信息不存在（appKey 查无 license）
 	BusiAppIDInvalid    BusiCode = 1003 // appKey 异常（缺少/非法 appKey）
 	BusiProductInvalid  BusiCode = 1004 // 产品编号异常（保留，下游已不使用）
 	BusiAccountAbnormal BusiCode = 1005 // 账号信息异常（签名校验失败 / IP 不在白名单）
-	BusiOverdraftLimit  BusiCode = 1006 // 透支余额已达上限（维度②达成本上限）
 	BusiDataRequestErr  BusiCode = 1007 // 数据请求异常（参数/上游我方原因/内部错误/超时未决）
 	BusiServiceNotOpen  BusiCode = 1009 // 服务尚未开通（license 停用/过期/未开通）
 )
@@ -34,12 +32,10 @@ const (
 // errorCodeByBusi maps an internal busiCode to the下游 head.errorCode
 // (接口文档-经济能力.doc). 0/505062 沿用 .doc 示例，其余按 5050xx 归类。
 var errorCodeByBusi = map[BusiCode]string{
-	BusiNoBalance:       "505005",
 	BusiAccountNotExist: "505004",
 	BusiAppIDInvalid:    "505001",
 	BusiProductInvalid:  "505003",
 	BusiAccountAbnormal: "505002",
-	BusiOverdraftLimit:  "505006",
 	BusiServiceNotOpen:  "505007",
 	BusiDataRequestErr:  "505062",
 }
@@ -56,12 +52,10 @@ func ErrorCode(code BusiCode) string {
 var defaultMsg = map[BusiCode]string{
 	BusiSuccess:         "success",
 	BusiNotFound:        "数据未查得",
-	BusiNoBalance:       "账户余额不足",
 	BusiAccountNotExist: "账户信息不存在",
 	BusiAppIDInvalid:    "appId 异常",
 	BusiProductInvalid:  "产品编号异常",
 	BusiAccountAbnormal: "账号信息异常",
-	BusiOverdraftLimit:  "透支余额已达上限",
 	BusiDataRequestErr:  "数据请求异常",
 	BusiServiceNotOpen:  "服务尚未开通",
 }

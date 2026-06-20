@@ -1,7 +1,7 @@
 //go:build ignore
 
 // Full-link e2e verification against a running relay (:8080) + mock 伽马 upstream.
-// Drives POST /v1/openapi/zlx/querySrmxV9 per 接口文档-经济能力.doc and verifies the
+// Drives POST /v1/openapi/zlx/querySrmxX1 (本服务 x1 契约) and verifies the
 // head/body envelope, billing (查到才计费), error codes, idempotency, quota
 // accounting and admin audit logs.
 //
@@ -16,14 +16,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
 	baseURL   = "http://localhost:8080"
-	queryPath = "/v1/openapi/zlx/querySrmxV9"
+	queryPath = "/v1/openapi/zlx/querySrmxX1"
 	secret    = "demo-app-secret"
 	appKey    = "y89098io"
 	adminUser = "admin"
@@ -104,6 +106,34 @@ func query(body map[string]string, overrides map[string]any) (errorCode, bodyCod
 	return errorCode, bodyCode, rng, raw
 }
 
+// signV9 computes the旧版 v9 request signature: MD5(account+idCard+mobile+reqid+key) uppercase.
+func signV9(account, idCard, mobile, reqid, key string) string {
+	sum := md5.Sum([]byte(account + idCard + mobile + reqid + key))
+	return strings.ToUpper(hex.EncodeToString(sum[:]))
+}
+
+// queryV9 issues GET /yrzx/finan/net/10w/v9 and returns (code, range, raw).
+func queryV9(idCard, name, mobile, reqid, verify string) (code, rng, raw string) {
+	q := url.Values{}
+	q.Set("account", appKey)
+	q.Set("idCard", idCard)
+	if name != "" {
+		q.Set("name", name)
+	}
+	q.Set("mobile", mobile)
+	q.Set("reqid", reqid)
+	q.Set("verify", verify)
+	_, m, raw := call(http.MethodGet, "/yrzx/finan/net/10w/v9?"+q.Encode(), nil, nil)
+	if m == nil {
+		return "", "", raw
+	}
+	code, _ = m["code"].(string)
+	if res, ok := m["result"].(map[string]any); ok {
+		rng, _ = res["range"].(string)
+	}
+	return code, rng, raw
+}
+
 func check(name string, cond bool, detail string) {
 	if cond {
 		pass++
@@ -128,7 +158,7 @@ func base() map[string]string {
 }
 
 func main() {
-	fmt.Println("== Full-link e2e (.doc querySrmxV9 -> 伽马 upstream) ==")
+	fmt.Println("== Full-link e2e (x1 querySrmxX1 -> 伽马 upstream) ==")
 
 	st, _, b := call(http.MethodGet, "/healthz", nil, nil)
 	check("GET /healthz == 200 ok", st == 200 && strings.Contains(b, "ok"), b)
@@ -189,7 +219,31 @@ func main() {
 	check("billing: 维度① only +2 (success-only)", usedAfter-usedBefore == 2,
 		fmt.Sprintf("delta=%v (want 2)", usedAfter-usedBefore))
 
-	// 8. admin: login + audits
+	// 8. 旧版 v9 兼容 (GET /yrzx/finan/net/10w/v9, account/key 验签)
+	{
+		idCard, mobile := "330129199109094312", "13809091009"
+		uniq := fmt.Sprintf("%x", time.Now().UnixNano())
+		reqid := ("v9" + uniq)
+		if len(reqid) > 20 {
+			reqid = reqid[:20]
+		}
+		v := signV9(appKey, idCard, mobile, reqid, secret)
+		code, rng, raw := queryV9(idCard, "张三", mobile, reqid, v)
+		check("v9 success: code=001 range=7", code == "001" && rng == "7", raw)
+
+		reqidNF := reqid + "n"
+		if len(reqidNF) > 20 {
+			reqidNF = reqidNF[:20]
+		}
+		vNF := signV9(appKey, idCard, "13800000000", reqidNF, secret)
+		code, _, raw = queryV9(idCard, "张三", "13800000000", reqidNF, vNF)
+		check("v9 not-found: code=999", code == "999", raw)
+
+		code, _, raw = queryV9(idCard, "张三", mobile, "v9badsign01", "BADVERIFY")
+		check("v9 bad-sign: code=013", code == "013", raw)
+	}
+
+	// 9. admin: login + audits
 	st, m, r := call(http.MethodPost, "/admin/api/login",
 		map[string]string{"username": adminUser, "password": adminPass}, nil)
 	token, _ := m["token"].(string)

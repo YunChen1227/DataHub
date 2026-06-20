@@ -62,7 +62,7 @@ func main() {
 
 	// 3. create user
 	st, m = call("POST", "/admin/api/users", map[string]any{
-		"name": "测试商户A", "serviceTotal": 500, "upstreamTotal": 500, "ipWhitelist": []string{},
+		"name": "测试商户A", "ipWhitelist": []string{},
 	}, true)
 	step("createUser", st, m)
 	var licenseID string
@@ -78,9 +78,9 @@ func main() {
 		step("listUsers", st, m)
 	}
 
-	// 5. update user (suspend + change quota)
+	// 5. update user (suspend + per-user IP whitelist)
 	st, m = call("PATCH", "/admin/api/users/"+licenseID, map[string]any{
-		"status": "SUSPENDED", "serviceTotal": 999, "upstreamTotal": 999, "ipWhitelist": []string{"10.0.0.0/8"},
+		"status": "SUSPENDED", "ipWhitelist": []string{"10.0.0.0/8"},
 	}, true)
 	step("updateUser", st, m)
 

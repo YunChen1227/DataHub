@@ -23,12 +23,12 @@ type SignedRequest struct {
 }
 
 // LicenseView is the authenticated client identity + status (DESIGN §7.1).
+// IP 准入自 v0.7 起移交阿里云 ECS 安全组，网关不再做 IP 白名单。
 type LicenseView struct {
-	LicenseID   string
-	AppKey      string
-	ClientUUID  string
-	Status      string   // ACTIVE / SUSPENDED / EXPIRED
-	IPWhitelist []string // 每用户 IP 白名单 (DESIGN §16.4); 空表示不限制
+	LicenseID  string
+	AppKey     string
+	ClientUUID string
+	Status     string // ACTIVE / SUSPENDED / EXPIRED
 }
 
 // Active reports whether the license may call the service.

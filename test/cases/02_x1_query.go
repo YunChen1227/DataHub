@@ -74,7 +74,7 @@ func testSuspended(rec *harness.Recorder) {
 
 	// create
 	st, m, cr := harness.Call(http.MethodPost, "/admin/api/users",
-		map[string]any{"name": "x1-suspend-临时", "ipWhitelist": []string{}}, auth)
+		map[string]any{"name": "x1-suspend-临时", "mobile": "13800002222"}, auth)
 	if st != 200 {
 		rec.Skip("SUSPENDED 用户拦截", "errorCode=505007", "建用户失败: "+cr)
 		return

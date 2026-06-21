@@ -33,12 +33,10 @@ async function req(method, path, body) {
 
 export const api = {
   login: (username, password) => req('POST', '/login', { username, password }),
-  listUsers: () => req('GET', '/users'),
+  listUsers: (q) => req('GET', '/users' + (q ? '?q=' + encodeURIComponent(q) : '')),
   createUser: (u) => req('POST', '/users', u),
   updateUser: (id, u) => req('PATCH', '/users/' + encodeURIComponent(id), u),
   deleteUser: (id) => req('DELETE', '/users/' + encodeURIComponent(id)),
   rotateSecret: (id) => req('POST', '/users/' + encodeURIComponent(id) + '/rotate-secret'),
   listAudits: (query) => req('GET', '/audits' + (query || '')),
-  getGlobalIP: () => req('GET', '/ip-whitelist'),
-  setGlobalIP: (cidrs) => req('PUT', '/ip-whitelist', { cidrs }),
 }

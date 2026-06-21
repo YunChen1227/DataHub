@@ -97,8 +97,8 @@ func splitStatements(sqlText string) []string {
 // e2e/admin flows have a known client. Mirrors memory.seedDemo.
 func SeedDemo(ctx context.Context, s *Store) error {
 	const insLicense = `INSERT INTO license
-		(license_id, app_key, app_secret_enc, client_uuid, name, status, valid_from, valid_to)
-		VALUES ('LIC-DEMO-0001','y89098io','demo-app-secret','demo-client-uuid','Demo 商户','ACTIVE', now(), now() + interval '3650 days')
+		(license_id, app_key, app_secret_enc, client_uuid, name, mobile, status, valid_from, valid_to, secret_created_at)
+		VALUES ('LIC-DEMO-0001','y89098io','demo-app-secret','demo-client-uuid','Demo 商户','13800001234','ACTIVE', now(), now() + interval '3650 days', now())
 		ON CONFLICT (license_id) DO NOTHING`
 	if _, err := s.pool.Exec(ctx, insLicense); err != nil {
 		return err

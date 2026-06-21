@@ -3,12 +3,10 @@ import { getToken, setToken } from './api.js'
 import Login from './pages/Login.jsx'
 import Users from './pages/Users.jsx'
 import Audits from './pages/Audits.jsx'
-import IpWhitelist from './pages/IpWhitelist.jsx'
 
 const TABS = [
   { id: 'users', label: '用户管理' },
   { id: 'audits', label: '操作记录' },
-  { id: 'ip', label: 'IP 白名单' },
 ]
 
 export default function App() {
@@ -44,7 +42,6 @@ export default function App() {
       <div className="container">
         {tab === 'users' && <Users />}
         {tab === 'audits' && <Audits />}
-        {tab === 'ip' && <IpWhitelist />}
       </div>
     </>
   )

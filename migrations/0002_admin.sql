@@ -1,5 +1,6 @@
 -- 管理后台 — schema (DESIGN §16.5)
--- 方言：PostgreSQL（MySQL 可将 BIGSERIAL→BIGINT AUTO_INCREMENT, TIMESTAMPTZ→DATETIME, TEXT[]→JSON）
+-- 方言：PostgreSQL（MySQL 可将 BIGSERIAL→BIGINT AUTO_INCREMENT, TIMESTAMPTZ→DATETIME）
+-- v0.7：移除全局 IP 白名单表（IP 准入交由阿里云 ECS 安全组）。
 
 -- §16.1 管理员账号
 CREATE TABLE admin_user (
@@ -10,7 +11,7 @@ CREATE TABLE admin_user (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- §16.3/§16.5 审计日志（追加写）
+-- §16.3/§16.5 审计日志（追加写）。client_ip 仅作来源记录，非准入控制。
 CREATE TABLE audit_log (
     id               BIGSERIAL   PRIMARY KEY,
     request_id       VARCHAR(64) NOT NULL,         -- 全链路追踪 ID (= head.logId)
@@ -25,7 +26,7 @@ CREATE TABLE audit_log (
     upstream_code    VARCHAR(8),
     upstream_uid     VARCHAR(64),
     upstream_logid   VARCHAR(64),
-    billed           BOOLEAN     NOT NULL DEFAULT FALSE, -- 是否计维度①（对用户计费）
+    billed           BOOLEAN     NOT NULL DEFAULT FALSE, -- 是否计维度①（成功查得数）
     latency_ms       BIGINT,
     name_mask        VARCHAR(64),                  -- 脱敏入参 (§11.5/§16.6)
     id_card_mask     VARCHAR(32),
@@ -37,14 +38,3 @@ CREATE TABLE audit_log (
 CREATE INDEX idx_audit_request_id ON audit_log (request_id);
 CREATE INDEX idx_audit_app_key    ON audit_log (app_key);
 CREATE INDEX idx_audit_busi_code  ON audit_log (busi_code);
-
--- §16.4 全局 IP 白名单（单行配置；为空表示不限制）
-CREATE TABLE ip_whitelist_global (
-    id         INT          PRIMARY KEY DEFAULT 1,
-    cidrs      TEXT[]       NOT NULL DEFAULT '{}', -- 单 IP 或 CIDR 段
-    updated_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    CONSTRAINT ip_global_singleton CHECK (id = 1)
-);
-
--- §16.4 每用户 IP 白名单：扩展 license 表（见 0001_init.sql）
-ALTER TABLE license ADD COLUMN ip_whitelist TEXT[] NOT NULL DEFAULT '{}';

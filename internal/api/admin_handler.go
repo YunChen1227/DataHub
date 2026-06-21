@@ -28,9 +28,6 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /admin/api/audits", s.requireAdmin(s.adminListAudits))
 
-	mux.HandleFunc("GET /admin/api/ip-whitelist", s.requireAdmin(s.adminGetGlobalIP))
-	mux.HandleFunc("PUT /admin/api/ip-whitelist", s.requireAdmin(s.adminSetGlobalIP))
-
 	if s.spaDir != "" {
 		mux.HandleFunc("GET /admin/", s.serveSPA)
 		mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +58,8 @@ func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 // --- §16.2 users ---
 
 func (s *Server) adminListUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := s.admin.ListUsers(r.Context())
+	// ?q= 支持按 uuid(appKey)/名称/手机号检索 (DESIGN §16.2)。
+	users, err := s.admin.SearchUsers(r.Context(), r.URL.Query().Get("q"))
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -80,16 +78,16 @@ func (s *Server) adminGetUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name        string   `json:"name"`
-		IPWhitelist []string `json:"ipWhitelist"`
+		Name   string `json:"name"`
+		Mobile string `json:"mobile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAdminError(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
 	res, err := s.admin.CreateUser(r.Context(), admin.CreateUserInput{
-		Name:        in.Name,
-		IPWhitelist: in.IPWhitelist,
+		Name:   in.Name,
+		Mobile: in.Mobile,
 	})
 	if err != nil {
 		writeAdminError(w, http.StatusBadRequest, err.Error())
@@ -100,16 +98,16 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Status      string   `json:"status"`
-		IPWhitelist []string `json:"ipWhitelist"`
+		Status string `json:"status"`
+		Mobile string `json:"mobile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAdminError(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
 	u, err := s.admin.UpdateUser(r.Context(), r.PathValue("id"), admin.UpdateUserInput{
-		Status:      in.Status,
-		IPWhitelist: in.IPWhitelist,
+		Status: in.Status,
+		Mobile: in.Mobile,
 	})
 	if err != nil {
 		writeAdminError(w, http.StatusBadRequest, err.Error())
@@ -149,41 +147,30 @@ func (s *Server) adminListAudits(w http.ResponseWriter, r *http.Request) {
 			f.BusiCode = &n
 		}
 	}
+	// ?q= 按 uuid(appKey)/名称/手机号过滤：先解析为匹配的 appKey 集合 (DESIGN §16.3)。
+	if kw := strings.TrimSpace(q.Get("q")); kw != "" {
+		matched, err := s.admin.SearchUsers(r.Context(), kw)
+		if err != nil {
+			writeAdminError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		appKeys := make([]string, 0, len(matched))
+		for _, u := range matched {
+			appKeys = append(appKeys, u.AppKey)
+		}
+		if len(appKeys) == 0 {
+			// 无匹配用户：直接返回空结果，避免退化为全量查询。
+			writeAdminJSON(w, http.StatusOK, map[string]any{"audits": []*model.AuditRecord{}})
+			return
+		}
+		f.AppKeys = appKeys
+	}
 	audits, err := s.admin.ListAudits(r.Context(), f)
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeAdminJSON(w, http.StatusOK, map[string]any{"audits": audits})
-}
-
-// --- §16.4 global IP whitelist ---
-
-func (s *Server) adminGetGlobalIP(w http.ResponseWriter, r *http.Request) {
-	cidrs, err := s.admin.GetGlobalIP(r.Context())
-	if err != nil {
-		writeAdminError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if cidrs == nil {
-		cidrs = []string{}
-	}
-	writeAdminJSON(w, http.StatusOK, map[string]any{"cidrs": cidrs})
-}
-
-func (s *Server) adminSetGlobalIP(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		CIDRs []string `json:"cidrs"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeAdminError(w, http.StatusBadRequest, "请求体解析失败")
-		return
-	}
-	if err := s.admin.SetGlobalIP(r.Context(), in.CIDRs); err != nil {
-		writeAdminError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeAdminJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // --- SPA static serving (§16.0) ---

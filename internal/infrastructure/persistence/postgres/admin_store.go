@@ -36,7 +36,23 @@ func (s *Store) PutAdmin(ctx context.Context, a *model.AdminUser) error {
 
 func (s *Store) ListUsers(ctx context.Context) ([]*model.UserDetail, error) {
 	const q = `SELECT license_id FROM license ORDER BY created_at DESC`
-	rows, err := s.pool.Query(ctx, q)
+	return s.usersByQuery(ctx, q)
+}
+
+// SearchUsers matches appKey / name / mobile by case-insensitive substring.
+func (s *Store) SearchUsers(ctx context.Context, keyword string) ([]*model.UserDetail, error) {
+	if keyword == "" {
+		return s.ListUsers(ctx)
+	}
+	const q = `SELECT license_id FROM license
+	             WHERE app_key ILIKE $1 OR name ILIKE $1 OR mobile ILIKE $1
+	             ORDER BY created_at DESC`
+	return s.usersByQuery(ctx, q, "%"+keyword+"%")
+}
+
+// usersByQuery runs an id-selecting query then hydrates each UserDetail.
+func (s *Store) usersByQuery(ctx context.Context, q string, args ...any) ([]*model.UserDetail, error) {
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -67,19 +83,19 @@ func (s *Store) ListUsers(ctx context.Context) ([]*model.UserDetail, error) {
 }
 
 func (s *Store) GetUser(ctx context.Context, licenseID string) (*model.UserDetail, error) {
-	const q = `SELECT license_id, app_key, status, client_uuid, COALESCE(ip_whitelist,'{}'), created_at
+	const q = `SELECT license_id, app_key, COALESCE(name,''), COALESCE(mobile,''), status,
+	             client_uuid, secret_created_at, valid_to, created_at
 	             FROM license WHERE license_id=$1`
 	d := &model.UserDetail{}
 	err := s.pool.QueryRow(ctx, q, licenseID).Scan(
-		&d.LicenseID, &d.AppKey, &d.Status, &d.ClientUUID, &d.IPWhitelist, &d.CreatedAt)
+		&d.LicenseID, &d.AppKey, &d.Name, &d.Mobile, &d.Status,
+		&d.ClientUUID, &d.SecretCreatedAt, &d.ValidTo, &d.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	// name is stored separately; fetch alongside (kept nullable-safe).
-	_ = s.pool.QueryRow(ctx, `SELECT COALESCE(name,'') FROM license WHERE license_id=$1`, licenseID).Scan(&d.Name)
 	used, err := s.ServiceUsedCount(ctx, licenseID)
 	if err != nil {
 		return nil, err
@@ -97,10 +113,11 @@ func (s *Store) CreateUser(ctx context.Context, d *model.UserDetail, secret stri
 
 	// uniqueness on app_key surfaces as a constraint error.
 	const insLicense = `INSERT INTO license
-		(license_id, app_key, app_secret_enc, client_uuid, name, status, valid_from, valid_to, ip_whitelist)
-		VALUES ($1,$2,$3,$4,$5,$6, now(), now() + interval '3650 days', $7)`
+		(license_id, app_key, app_secret_enc, client_uuid, name, mobile, status,
+		 valid_from, valid_to, secret_created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7, now(), now() + interval '3650 days', now())`
 	if _, err := tx.Exec(ctx, insLicense,
-		d.LicenseID, d.AppKey, secret, d.ClientUUID, d.Name, d.Status, d.IPWhitelist); err != nil {
+		d.LicenseID, d.AppKey, secret, d.ClientUUID, d.Name, d.Mobile, d.Status); err != nil {
 		return err
 	}
 	// 成功查得数计数行（dim='SERVICE'）；v0.6 起无额度上限。
@@ -110,10 +127,10 @@ func (s *Store) CreateUser(ctx context.Context, d *model.UserDetail, secret stri
 	return tx.Commit(ctx)
 }
 
-func (s *Store) UpdateUser(ctx context.Context, licenseID, status string, ipWhitelist []string) error {
+func (s *Store) UpdateUser(ctx context.Context, licenseID, status, mobile string) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE license SET status=$2, ip_whitelist=$3, updated_at=now() WHERE license_id=$1`,
-		licenseID, status, ipWhitelist)
+		`UPDATE license SET status=$2, mobile=$3, updated_at=now() WHERE license_id=$1`,
+		licenseID, status, mobile)
 	return err
 }
 
@@ -134,7 +151,8 @@ func (s *Store) DeleteUser(ctx context.Context, licenseID string) error {
 
 func (s *Store) RotateSecret(ctx context.Context, licenseID, secret string) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE license SET app_secret_enc=$2, updated_at=now() WHERE license_id=$1`, licenseID, secret)
+		`UPDATE license SET app_secret_enc=$2, secret_created_at=now(), updated_at=now() WHERE license_id=$1`,
+		licenseID, secret)
 	return err
 }
 
@@ -169,6 +187,11 @@ func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.A
 		q += " AND app_key=$" + itoa(n)
 		args = append(args, f.AppKey)
 	}
+	if len(f.AppKeys) > 0 {
+		n++
+		q += " AND app_key = ANY($" + itoa(n) + ")"
+		args = append(args, f.AppKeys)
+	}
 	if f.BusiCode != nil {
 		n++
 		q += " AND busi_code=$" + itoa(n)
@@ -202,27 +225,6 @@ func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.A
 		out = append(out, &r)
 	}
 	return out, rows.Err()
-}
-
-// --- port.GlobalIPRepository (DESIGN §16.4) ---
-
-func (s *Store) GetGlobalIP(ctx context.Context) ([]string, error) {
-	var cidrs []string
-	err := s.pool.QueryRow(ctx, `SELECT COALESCE(cidrs,'{}') FROM ip_whitelist_global WHERE id=1`).Scan(&cidrs)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return cidrs, nil
-}
-
-func (s *Store) SetGlobalIP(ctx context.Context, cidrs []string) error {
-	const q = `INSERT INTO ip_whitelist_global (id, cidrs, updated_at) VALUES (1,$1, now())
-		ON CONFLICT (id) DO UPDATE SET cidrs=EXCLUDED.cidrs, updated_at=now()`
-	_, err := s.pool.Exec(ctx, q, cidrs)
-	return err
 }
 
 // itoa is a tiny positive-int formatter for $N placeholders.

@@ -3,6 +3,8 @@ package memory
 import (
 	"context"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/datahub/relay/internal/domain/model"
 )
@@ -43,6 +45,25 @@ func (s *Store) ListUsers(_ context.Context) ([]*model.UserDetail, error) {
 	return out, nil
 }
 
+// SearchUsers matches appKey / name / mobile by case-insensitive substring.
+func (s *Store) SearchUsers(_ context.Context, keyword string) ([]*model.UserDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kw := strings.ToLower(strings.TrimSpace(keyword))
+	out := make([]*model.UserDetail, 0, len(s.licenses))
+	for id, rec := range s.licenses {
+		if kw != "" &&
+			!strings.Contains(strings.ToLower(rec.view.AppKey), kw) &&
+			!strings.Contains(strings.ToLower(rec.name), kw) &&
+			!strings.Contains(strings.ToLower(rec.mobile), kw) {
+			continue
+		}
+		out = append(out, s.userDetailLocked(id))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
 func (s *Store) GetUser(_ context.Context, licenseID string) (*model.UserDetail, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -58,24 +79,30 @@ func (s *Store) CreateUser(_ context.Context, d *model.UserDetail, secret string
 	if _, ok := s.appKeyIndex[d.AppKey]; ok {
 		return errAppKeyExists
 	}
+	now := d.CreatedAt
+	if now.IsZero() {
+		now = time.Now()
+	}
 	s.licenses[d.LicenseID] = &licenseRec{
 		view: model.LicenseView{
-			LicenseID:   d.LicenseID,
-			AppKey:      d.AppKey,
-			ClientUUID:  d.ClientUUID,
-			Status:      d.Status,
-			IPWhitelist: append([]string(nil), d.IPWhitelist...),
+			LicenseID:  d.LicenseID,
+			AppKey:     d.AppKey,
+			ClientUUID: d.ClientUUID,
+			Status:     d.Status,
 		},
-		name:      d.Name,
-		secret:    secret,
-		createdAt: d.CreatedAt,
+		name:            d.Name,
+		mobile:          d.Mobile,
+		secret:          secret,
+		secretCreatedAt: now,
+		validTo:         now.AddDate(10, 0, 0),
+		createdAt:       now,
 	}
 	s.appKeyIndex[d.AppKey] = d.LicenseID
 	s.quotas[d.LicenseID] = &quotaRow{}
 	return nil
 }
 
-func (s *Store) UpdateUser(_ context.Context, licenseID, status string, ipWhitelist []string) error {
+func (s *Store) UpdateUser(_ context.Context, licenseID, status, mobile string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec := s.licenses[licenseID]
@@ -83,7 +110,7 @@ func (s *Store) UpdateUser(_ context.Context, licenseID, status string, ipWhitel
 		return nil
 	}
 	rec.view.Status = status
-	rec.view.IPWhitelist = append([]string(nil), ipWhitelist...)
+	rec.mobile = mobile
 	return nil
 }
 
@@ -103,6 +130,7 @@ func (s *Store) RotateSecret(_ context.Context, licenseID, secret string) error 
 	defer s.mu.Unlock()
 	if rec := s.licenses[licenseID]; rec != nil {
 		rec.secret = secret
+		rec.secretCreatedAt = time.Now()
 	}
 	return nil
 }
@@ -118,14 +146,16 @@ func (s *Store) userDetailLocked(licenseID string) *model.UserDetail {
 		q = &quotaRow{}
 	}
 	return &model.UserDetail{
-		LicenseID:   licenseID,
-		AppKey:      rec.view.AppKey,
-		Name:        rec.name,
-		Status:      rec.view.Status,
-		ClientUUID:  rec.view.ClientUUID,
-		ServiceUsed: q.serviceUsed,
-		IPWhitelist: append([]string(nil), rec.view.IPWhitelist...),
-		CreatedAt:   rec.createdAt,
+		LicenseID:       licenseID,
+		AppKey:          rec.view.AppKey,
+		Name:            rec.name,
+		Mobile:          rec.mobile,
+		Status:          rec.view.Status,
+		ClientUUID:      rec.view.ClientUUID,
+		ServiceUsed:     q.serviceUsed,
+		SecretCreatedAt: rec.secretCreatedAt,
+		ValidTo:         rec.validTo,
+		CreatedAt:       rec.createdAt,
 	}
 }
 
@@ -152,6 +182,9 @@ func (s *Store) ListAudits(_ context.Context, f model.AuditFilter) ([]*model.Aud
 		if f.AppKey != "" && a.AppKey != f.AppKey {
 			continue
 		}
+		if len(f.AppKeys) > 0 && !containsStr(f.AppKeys, a.AppKey) {
+			continue
+		}
 		if f.BusiCode != nil && a.BusiCode != *f.BusiCode {
 			continue
 		}
@@ -168,17 +201,11 @@ func (s *Store) ListAudits(_ context.Context, f model.AuditFilter) ([]*model.Aud
 	return out, nil
 }
 
-// --- port.GlobalIPRepository (DESIGN §16.4) ---
-
-func (s *Store) GetGlobalIP(_ context.Context) ([]string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.globalIP...), nil
-}
-
-func (s *Store) SetGlobalIP(_ context.Context, cidrs []string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.globalIP = append([]string(nil), cidrs...)
-	return nil
+func containsStr(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

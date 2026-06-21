@@ -9,7 +9,6 @@ import (
 
 	"github.com/datahub/relay/internal/common/appctx"
 	"github.com/datahub/relay/internal/common/errs"
-	"github.com/datahub/relay/internal/common/ipfilter"
 	"github.com/datahub/relay/internal/common/mask"
 	"github.com/datahub/relay/internal/domain/auth"
 	"github.com/datahub/relay/internal/domain/billing"
@@ -82,13 +81,6 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 		return fail(ae.Busi, ae.Msg)
 	}
 	log = log.With("appKey", lic.AppKey)
-
-	// 1b. Per-user IP whitelist (DESIGN §16.4): reject when source IP not allowed.
-	if !ipfilter.Allowed(clientIP, lic.IPWhitelist) {
-		rec.ErrMsg = "IP 不在白名单"
-		log.Warn("per-user ip rejected", "clientIp", clientIP)
-		return fail(errs.BusiAccountAbnormal, "IP 不在白名单")
-	}
 
 	// 2. 无额度限制：不做余额拦截，仅在查得数据时累计成功查得数 (见 Settle)。
 
@@ -236,14 +228,6 @@ func (o *QueryOrchestrator) HandleV9(ctx context.Context, req *model.V9Request) 
 	}
 	log = log.With("appKey", lic.AppKey)
 
-	// 1b. Per-user IP whitelist (DESIGN §16.4).
-	if !ipfilter.Allowed(clientIP, lic.IPWhitelist) {
-		rec.BusiCode = int(errs.BusiAccountAbnormal)
-		rec.ErrMsg = "IP 不在白名单"
-		log.Warn("per-user ip rejected", "clientIp", clientIP)
-		return mapping.V9Error("012", "IP 不在白名单", req.Reqid)
-	}
-
 	// 2. 无额度限制：不做余额拦截，仅在查得数据时累计成功查得数 (见 Settle)。
 
 	// 3. Build upstream request; v9 以客户传入 reqid 为幂等键。
@@ -315,9 +299,6 @@ func (o *QueryOrchestrator) QuotaQuery(ctx context.Context, signed *model.Signed
 	lic, err := o.auth.Authenticate(ctx, signed)
 	if err != nil {
 		return nil, nil, err
-	}
-	if !ipfilter.Allowed(appctx.ClientIP(ctx), lic.IPWhitelist) {
-		return nil, lic, errs.New(errs.BusiAccountAbnormal, "IP 不在白名单")
 	}
 	view, err := o.quota.ServiceQuotaView(ctx, lic)
 	if err != nil {

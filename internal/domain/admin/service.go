@@ -1,6 +1,7 @@
 // Package admin implements the admin console business logic (DESIGN §16):
-// operator login (JWT), 普通用户 (license) CRUD, MD5 凭证生成与轮换,
-// 审计查询, 以及全局/每用户 IP 白名单。v0.6 起无额度配置。
+// operator login (JWT), 普通用户 (license) CRUD, MD5 凭证生成与轮换, 审计查询。
+// v0.6 起无额度配置; v0.7 起新增手机号/密钥时间字段并移除 IP 白名单 (IP 准入交由
+// 阿里云 ECS 安全组)。
 package admin
 
 import (
@@ -31,15 +32,14 @@ type Service struct {
 	admins port.AdminUserRepository
 	users  port.UserAdminRepository
 	audits port.AuditRepository
-	ips    port.GlobalIPRepository
 	cfg    Config
 }
 
-func New(admins port.AdminUserRepository, users port.UserAdminRepository, audits port.AuditRepository, ips port.GlobalIPRepository, cfg Config) *Service {
+func New(admins port.AdminUserRepository, users port.UserAdminRepository, audits port.AuditRepository, cfg Config) *Service {
 	if cfg.TokenTTL <= 0 {
 		cfg.TokenTTL = 8 * time.Hour
 	}
-	return &Service{admins: admins, users: users, audits: audits, ips: ips, cfg: cfg}
+	return &Service{admins: admins, users: users, audits: audits, cfg: cfg}
 }
 
 // --- §16.1 auth ---
@@ -89,8 +89,8 @@ func (s *Service) VerifyToken(token string) (string, error) {
 
 // CreateUserInput is the new-user payload from the admin UI.
 type CreateUserInput struct {
-	Name        string
-	IPWhitelist []string
+	Name   string
+	Mobile string
 }
 
 // CreateUserResult returns the created user plus the one-time plaintext secret.
@@ -101,6 +101,15 @@ type CreateUserResult struct {
 
 func (s *Service) ListUsers(ctx context.Context) ([]*model.UserDetail, error) {
 	return s.users.ListUsers(ctx)
+}
+
+// SearchUsers filters users by uuid(appKey)/名称/手机号 substring.
+func (s *Service) SearchUsers(ctx context.Context, keyword string) ([]*model.UserDetail, error) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return s.users.ListUsers(ctx)
+	}
+	return s.users.SearchUsers(ctx, keyword)
 }
 
 func (s *Service) GetUser(ctx context.Context, licenseID string) (*model.UserDetail, error) {
@@ -116,14 +125,17 @@ func (s *Service) GetUser(ctx context.Context, licenseID string) (*model.UserDet
 
 func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (*CreateUserResult, error) {
 	secret := GenerateSecret()
+	now := time.Now()
 	detail := &model.UserDetail{
-		LicenseID:   "LIC-" + strings.ToUpper(randAlpha(10)),
-		AppKey:      GenerateAppKey(),
-		Name:        strings.TrimSpace(in.Name),
-		Status:      "ACTIVE",
-		ClientUUID:  randAlpha(24),
-		IPWhitelist: normalizeCIDRs(in.IPWhitelist),
-		CreatedAt:   time.Now(),
+		LicenseID:       "LIC-" + strings.ToUpper(randAlpha(10)),
+		AppKey:          GenerateAppKey(),
+		Name:            strings.TrimSpace(in.Name),
+		Mobile:          strings.TrimSpace(in.Mobile),
+		Status:          "ACTIVE",
+		ClientUUID:      randAlpha(24),
+		SecretCreatedAt: now,
+		ValidTo:         now.AddDate(10, 0, 0), // 与存储层 3650 天授权期一致
+		CreatedAt:       now,
 	}
 	if err := s.users.CreateUser(ctx, detail, secret); err != nil {
 		return nil, err
@@ -131,10 +143,10 @@ func (s *Service) CreateUser(ctx context.Context, in CreateUserInput) (*CreateUs
 	return &CreateUserResult{User: detail, Secret: secret}, nil
 }
 
-// UpdateUserInput carries the editable fields (empty status = leave unchanged).
+// UpdateUserInput carries the editable fields (empty value = leave unchanged).
 type UpdateUserInput struct {
-	Status      string
-	IPWhitelist []string
+	Status string
+	Mobile string
 }
 
 func (s *Service) UpdateUser(ctx context.Context, licenseID string, in UpdateUserInput) (*model.UserDetail, error) {
@@ -149,7 +161,11 @@ func (s *Service) UpdateUser(ctx context.Context, licenseID string, in UpdateUse
 	if status == "" {
 		status = cur.Status
 	}
-	if err := s.users.UpdateUser(ctx, licenseID, status, normalizeCIDRs(in.IPWhitelist)); err != nil {
+	mobile := strings.TrimSpace(in.Mobile)
+	if mobile == "" {
+		mobile = cur.Mobile
+	}
+	if err := s.users.UpdateUser(ctx, licenseID, status, mobile); err != nil {
 		return nil, err
 	}
 	return s.users.GetUser(ctx, licenseID)
@@ -189,25 +205,4 @@ func (s *Service) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model
 		f.Limit = 100
 	}
 	return s.audits.ListAudits(ctx, f)
-}
-
-// --- §16.4 global IP whitelist ---
-
-func (s *Service) GetGlobalIP(ctx context.Context) ([]string, error) {
-	return s.ips.GetGlobalIP(ctx)
-}
-
-func (s *Service) SetGlobalIP(ctx context.Context, cidrs []string) error {
-	return s.ips.SetGlobalIP(ctx, normalizeCIDRs(cidrs))
-}
-
-func normalizeCIDRs(in []string) []string {
-	out := make([]string, 0, len(in))
-	for _, c := range in {
-		c = strings.TrimSpace(c)
-		if c != "" {
-			out = append(out, c)
-		}
-	}
-	return out
 }

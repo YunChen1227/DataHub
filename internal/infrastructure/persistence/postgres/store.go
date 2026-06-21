@@ -42,10 +42,9 @@ func (s *Store) Close() { s.pool.Close() }
 // --- port.LicenseRepository ---
 
 func (s *Store) FindByAppKey(ctx context.Context, appKey string) (*model.LicenseView, error) {
-	const q = `SELECT license_id, app_key, client_uuid, status, COALESCE(ip_whitelist, '{}')
-	             FROM license WHERE app_key=$1`
+	const q = `SELECT license_id, app_key, client_uuid, status FROM license WHERE app_key=$1`
 	var v model.LicenseView
-	err := s.pool.QueryRow(ctx, q, appKey).Scan(&v.LicenseID, &v.AppKey, &v.ClientUUID, &v.Status, &v.IPWhitelist)
+	err := s.pool.QueryRow(ctx, q, appKey).Scan(&v.LicenseID, &v.AppKey, &v.ClientUUID, &v.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

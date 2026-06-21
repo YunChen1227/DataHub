@@ -58,7 +58,6 @@ func main() {
 		auditRepo   port.AuditRepository
 		adminRepo   port.AdminUserRepository
 		userRepo    port.UserAdminRepository
-		ipRepo      port.GlobalIPRepository
 		secrets     port.SecretProvider
 		cleanup     = func() {}
 	)
@@ -90,7 +89,7 @@ func main() {
 			os.Exit(1)
 		}
 		licenseRepo, ledgerRepo, auditRepo = pg, pg, pg
-		adminRepo, userRepo, ipRepo = pg, pg, pg
+		adminRepo, userRepo = pg, pg
 		quotaRepo = rq
 		secrets = secret.NewStore(pg)
 		cleanup = func() { rq.Close(); pg.Close() }
@@ -99,7 +98,7 @@ func main() {
 		store := memory.New()
 		seedDemo(store)
 		licenseRepo, ledgerRepo, auditRepo = store, store, store
-		adminRepo, userRepo, ipRepo = store, store, store
+		adminRepo, userRepo = store, store
 		quotaRepo = store
 		secrets = secret.NewStore(store)
 		logger.Info("storage backend ready", "driver", "memory")
@@ -127,7 +126,7 @@ func main() {
 	authSvc := auth.New(licenseRepo, secrets, verifier)
 	quotaSvc := quota.New(quotaRepo, ledgerRepo)
 	billSvc := billing.New(billing.DefaultTable())
-	adminSvc := admin.New(adminRepo, userRepo, auditRepo, ipRepo, admin.Config{
+	adminSvc := admin.New(adminRepo, userRepo, auditRepo, admin.Config{
 		JWTSecret: cfg.adminJWTSecret,
 		TokenTTL:  cfg.adminTokenTTL,
 	})
@@ -143,7 +142,7 @@ func main() {
 	}
 
 	// --- HTTP server ---
-	server := api.NewServer(orch, adminSvc, ipRepo, cfg.spaDir)
+	server := api.NewServer(orch, adminSvc, cfg.spaDir)
 	httpServer := &http.Server{
 		Addr:              cfg.addr,
 		Handler:           server.Routes(),
@@ -174,5 +173,5 @@ func seedDemo(store *memory.Store) {
 		AppKey:     "y89098io",
 		ClientUUID: "demo-client-uuid",
 		Status:     "ACTIVE",
-	}, "demo-app-secret", "Demo 商户")
+	}, "demo-app-secret", "Demo 商户", "13800001234")
 }

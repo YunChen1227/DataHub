@@ -22,14 +22,17 @@ type quotaRow struct {
 
 // licenseRec is the store-internal aggregate for a普通用户 (DESIGN §7.1/§16.2).
 type licenseRec struct {
-	view      model.LicenseView
-	name      string
-	secret    string // 客户 MD5 加签 secret（开发期明文; 生产加密, §11.4）
-	createdAt time.Time
+	view            model.LicenseView
+	name            string
+	mobile          string
+	secret          string // 客户 MD5 加签 secret（开发期明文; 生产加密, §11.4）
+	secretCreatedAt time.Time
+	validTo         time.Time
+	createdAt       time.Time
 }
 
 // Store implements the persistence ports for license/quota/ledger plus the
-// admin console ports (admin users / audit / global IP).
+// admin console ports (admin users / audit).
 type Store struct {
 	mu sync.Mutex
 
@@ -40,9 +43,8 @@ type Store struct {
 	ledgerByReqid map[string]*model.Ledger // appKey|reqid
 	ledgerByID    map[int64]*model.Ledger
 
-	audits   []*model.AuditRecord
-	admins   map[string]*model.AdminUser // username -> admin
-	globalIP []string
+	audits []*model.AuditRecord
+	admins map[string]*model.AdminUser // username -> admin
 
 	seq      int64
 	auditSeq int64
@@ -62,14 +64,18 @@ func New() *Store {
 }
 
 // SeedLicense registers a demo license with a bound secret (dev helper).
-func (s *Store) SeedLicense(lic *model.LicenseView, secret, name string) {
+func (s *Store) SeedLicense(lic *model.LicenseView, secret, name, mobile string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
 	s.licenses[lic.LicenseID] = &licenseRec{
-		view:      *lic,
-		name:      name,
-		secret:    secret,
-		createdAt: time.Now(),
+		view:            *lic,
+		name:            name,
+		mobile:          mobile,
+		secret:          secret,
+		secretCreatedAt: now,
+		validTo:         now.AddDate(10, 0, 0),
+		createdAt:       now,
 	}
 	s.appKeyIndex[lic.AppKey] = lic.LicenseID
 	s.quotas[lic.LicenseID] = &quotaRow{}
@@ -89,7 +95,6 @@ func (s *Store) FindByAppKey(_ context.Context, appKey string) (*model.LicenseVi
 		return nil, nil
 	}
 	cp := rec.view
-	cp.IPWhitelist = append([]string(nil), rec.view.IPWhitelist...)
 	return &cp, nil
 }
 

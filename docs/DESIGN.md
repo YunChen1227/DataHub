@@ -4,7 +4,12 @@
 > 角色定位：本服务是一个**接口转接（API Relay / Gateway）网关**。对外为客户（商户）提供经济能力查询 API（当前版本 **x1**：`POST /v1/openapi/zlx/querySrmxX1`）；对内调用**上游数据源**（伽马分层分）获取评分后回传。
 > 在此基础上提供 **License 鉴权** 与 **成功查得数统计**（无额度限制）能力。
 
-> **v0.7 变更（重要）**：**彻底移除维度②（上游配额 / 上游调用计数 / 对账作业）**。后台只保留单一统计「成功查得数」。删除内容：`QuotaRepository` 的预留/提交/释放、Redis `up_committed/up_reserved`、`billing_ledger.counted_upstream`、`quota.total/reserved` 列与 `UPSTREAM` 行、`ReconciliationJob`、管理端 `serviceTotal/upstreamTotal` 字段。台账状态机（PENDING→BILLED/UNBILLED）与异步复查（RequeryWorker）保留，仅用于幂等与成功查得数结算。本文 §7.x / §11.2 中关于维度② 的预留/提交/释放/对账描述均**已作废**，以本节为准。
+> **v0.7 变更（重要）**：
+> - **彻底移除维度②**（上游配额 / 上游调用计数 / 对账作业）。后台只保留单一统计「成功查得数」。删除内容：`QuotaRepository` 的预留/提交/释放、Redis 双维度计数、`billing_ledger.counted_upstream`、`quota.total/reserved` 列与 `UPSTREAM` 行、`ReconciliationJob`、管理端 `serviceTotal/upstreamTotal` 字段。台账状态机（PENDING→BILLED/UNBILLED）与异步复查 worker（RequeryWorker）保留，仅用于幂等与成功查得数结算；**当前伽马 `Requery` 为 stub**，复查 worker 对伽马上游暂无实际效果。
+> - **彻底移除 IP 白名单**：删除全局/每用户 IP 白名单表、字段、管理端页面与网关拦截逻辑；来源 IP 仅写入审计。生产 IP 准入交由**阿里云 ECS 安全组**等网络层控制。
+> - **管理后台增强**：用户增加手机号（脱敏展示）、密钥创建时间（`secret_created_at`）、授权过期日期（`valid_to`）；支持按 uuid(appKey)/名称/手机号检索用户与过滤审计。
+> - **持久化**：支持 `postgres`+`redis` 生产路径；同 RDS 实例内 `dev_db`（开发/e2e）与 `prod_db`（生产）+ Redis 逻辑库 `db0`/`db1` 隔离。
+> 本文 §7.x / §11.2 中关于维度② 的预留/提交/释放/对账描述均**已作废**，以本节为准。
 >
 > **v0.6 变更**：**取消额度限制**。不再对客户做余额拦截、也不再做成本上限拦截；任何持有效 license 的客户均可不受次数限制地调用。系统**仅统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。`busiCode 1001 账户余额不足` 与 `1006 透支余额已达上限` 不再触发。
 
@@ -51,16 +56,16 @@
 | 术语 | 含义 |
 |---|---|
 | 客户 / 商户 | 调用本服务的外部方 |
-| License | 颁发给客户的授权凭证，含密钥与配额 |
+| License | 颁发给客户的授权凭证，含 `appKey`/`appSecret`、状态与成功查得数统计 |
+| appKey | 网关分配给客户的公开标识（下游信封字段名；DB 列 `app_key`） |
+| appSecret | 客户 MD5 加签密钥（仅创建/轮换时一次性返回；DB 列 `app_secret_enc`） |
 | 上游 / Provider | 伽马分层分（《伽马分层分_定制版》PDF）经济能力数据源 |
-| 维度①配额（service quota） | 客户调用本服务允许的次数（总量买断） |
-| 维度②配额（upstream quota） | 该 license 下我方调用上游允许的次数（= 我方成本上限，总量买断） |
-| 可计费（billable） | 上游确实执行并对我方扣费的一次查询 |
-| 查得数据（returned） | 上游查得到数据（001 → busiCode 10），是**维度①对用户计费**的唯一条件；查无结果(999)不算 |
-| re-query（幂等复查） | 超时/无响应时按 `reqid` 向上游复查，幂等、不重复扣费 |
-| 计费台账（billing ledger） | 记录每次上游调用计费状态的追加写流水 |
-| reqid | 客户传入的请求流水号，全局幂等键（见 §9.1） |
-| requestId | 本服务生成的全链路追踪 ID，作日志前缀并随结果返回（见 §9） |
+| 成功查得数（serviceUsed） | 客户调用本服务且**查得数据**（busiCode=10，上游 001）的**累计次数**；无上限 |
+| 查得数据（returned） | 上游查得到数据（001 → busiCode 10），是**唯一计数**条件；查无(999)不算 |
+| re-query（幂等复查） | 超时/无响应时按 `reqid` 向上游复查的设计能力；**当前伽马 client 的 Requery 为 stub** |
+| 计费台账（billing ledger） | 记录每次请求结算状态的追加写流水（PENDING/BILLED/UNBILLED） |
+| reqid | 幂等键：x1 由本服务内部生成（≤20）；v9 由客户传入 |
+| requestId | 本服务生成的全链路追踪 ID，作日志前缀并随 `head.logId` 返回（§9） |
 
 ---
 
@@ -68,39 +73,40 @@
 
 ```mermaid
 flowchart LR
-    Client[客户/商户] -->|"POST doCheck + MD5加签(appId/sign/apiKey/body)"| GW[API 网关层]
+    Client[客户/商户] -->|"POST querySrmxX1 或 GET v9"| GW[API 网关层]
 
     subgraph Service[经济能力转接服务]
-        GW --> Auth[License 鉴权]
-        Auth --> Q1[维度①余额校验]
-        Q1 --> Parse[请求解析 & 参数校验]
-        Parse --> Q2res[维度②预留]
-        Q2res --> UC[上游客户端]
-        UC --> Settle[结算: 以上游结论为准]
-        Settle --> Map[响应映射/签名]
+        GW --> Auth[License 鉴权 + MD5 验签]
+        Auth --> Parse[请求解析 & 参数校验]
+        Parse --> Ledger[开台账 PENDING + 幂等]
+        Ledger --> UC[上游客户端 伽马]
+        UC --> Settle[结算: BILLED/UNBILLED + 成功查得数]
+        Settle --> Map[响应映射]
         Map --> GW
+        GW --> Audit[审计日志 追加写]
     end
 
-    UC -->|"POST doCheck + MD5加签(appId/sign/apiKey/body)"| Upstream[(上游 伽马分层分 doCheck)]
-    UC -.->|超时/无响应: 按reqid幂等复查| Upstream
+    UC -->|"POST doCheck + MD5"| Upstream[(上游 伽马)]
+    UC -.->|超时: 设计为按 reqid 复查| Upstream
 
-    Auth -.-> DB[(存储: License/配额/台账)]
+    Auth -.-> DB[(PG: license/台账/审计)]
     Settle -.-> DB
-    Recon[对账任务] -.->|以上游扣费记录为准| DB
-    Recon -.-> Upstream
+    Settle -.-> Redis[(Redis: serviceUsed 计数)]
+    Worker[RequeryWorker] -.->|扫描 PENDING| DB
 ```
 
 ### 3.1 分层职责
 | 层 | 职责 |
 |---|---|
-| API 网关层 | HTTP 接入、限流、信封解析、MD5 签名校验入口、**生成 requestId 全链路追踪 ID（响应里以 seqNo 暴露）**、统一响应封装 |
-| License 鉴权 | 校验 appId 合法性、apiKey 产品编号、MD5 签名、license 状态/有效期 |
-| 配额模块 | 维度①计数、维度②预留/结算、原子计数、台账写入 |
-| 请求解析 | 校验 `mobile/idCard/name` 等参数，规范化 |
-| 上游客户端 | 构造上游签名请求、超时控制、**幂等复查**、结果解析、计费判定 |
-| 结算/响应映射 | 依上游确定结论结算维度①②，上游结果 → 客户响应结构 + 我方返回签名 |
-| 对账任务 | 周期性与上游扣费记录核对，保证维度②不漏计、不空计 |
-| 存储 | License、配额计数、计费台账、请求日志 |
+| API 网关层 | HTTP 接入、信封解析、**生成 requestId**（`head.logId` / `X-Request-Id`）、解析来源 IP（仅审计，**不做 IP 拦截**）、统一响应封装 |
+| License 鉴权 | 校验 appKey、license 存在、`status==ACTIVE`、MD5 签名 |
+| 配额/台账模块 | **无额度拦截**；幂等检查 → 开 PENDING 台账 → 结算时 BILLED/UNBILLED；查得时 **IncServiceUsed** |
+| 请求解析 | 校验 `mobile/idCard/name` 等参数，x1 内部生成 reqid |
+| 上游客户端 | 构造伽马 MD5 请求、超时控制、结果归一化（001/999） |
+| 结算/响应映射 | 依上游结论结算台账 + 累计成功查得数；映射 x1 head/body 或 v9 JSON |
+| 异步复查 | `RequeryWorker` 周期扫描 PENDING 台账（**伽马 Requery 当前 stub，无实际复查**） |
+| 存储 | PostgreSQL（license/台账/审计/管理员）+ Redis（成功查得数原子计数）；或 memory（开发） |
+| 管理后台 | JWT 管理员、用户 CRUD、密钥轮换、审计查询、React SPA |
 
 ---
 
@@ -111,46 +117,42 @@ sequenceDiagram
     participant C as 客户
     participant GW as 网关
     participant L as License鉴权
-    participant Q as 配额模块
+    participant Q as 台账/配额
     participant U as 上游客户端
-    participant P as 上游Provider
+    participant P as 上游伽马
 
-    C->>GW: POST /enol/api/v1/doCheck (appId,sign,apiKey,body{name,idCard,mobile,tradeNo?})
-    GW->>L: 校验 appId + apiKey 产品编号 + MD5签名 + license状态
+    C->>GW: POST querySrmxX1 (appKey,sign,body) 或 GET v9
+    GW->>GW: 生成 requestId, 记录 clientIP(审计)
+    GW->>L: 校验 appKey + MD5签名 + status==ACTIVE
     alt 鉴权失败
-        L-->>C: busiCode 1003/1004/1005/1009（不计维度①/②）
+        L-->>C: busiCode 1003/1002/1005/1009（不计成功查得数）
     end
-    L->>Q: 幂等检查(tradeNo→reqid) + 维度①余额检查
-    alt 维度①无余额
-        Q-->>C: busiCode 1001「账户余额不足」（不计、不调上游）
+    L->>Q: 幂等检查(appKey+reqid)
+    alt 已有 BILLED 台账
+        Q-->>C: 重放缓存结果（不重复计数）
     end
-    Q->>Q: 维度②预留1单位 (reserved++, 台账=PENDING)
+    Q->>Q: 写入 PENDING 台账（无额度预留）
     Q->>U: 发起上游调用
-    U->>P: POST /enol/api/v1/doCheck (appId,sign,apiKey,body{name,idCard,mobile})
+    U->>P: POST doCheck (appId,sign,apiKey,body)
 
     alt 收到上游业务响应
-        P-->>U: code + result.range
-    else 超时/连接中断/无响应
-        U->>P: 按 reqid 幂等复查(re-query)
-        P-->>U: 复查结论(已计费+结果 / 未计费)
+        P-->>U: busiCode 10/1000/...
+    else 超时/连接失败
+        U->>U: 尝试 Requery(reqid) — 当前伽马 stub，视为未决
     end
 
-    U->>Q: 提交"上游确定结论"
-    alt 上游成功 001 (查得数据)
-        Q->>Q: 维度② committed++ / reserved-- ✅以上游扣费为准
-        Q->>Q: 维度① used++（busiCode=10 计）✅
-        U->>GW: 映射客户响应
-        GW-->>C: code=0, busiCode=10, data.result.score
-    else 上游查无结果 999
-        Q->>Q: 维度② committed++ / reserved-- ✅（上游已扣费）
-        Q->>Q: 维度① 不计（非 busiCode=10）
-        GW-->>C: code=0, busiCode=1000「数据未查得」
-    else 上游未扣费(我方原因/未执行)
-        Q->>Q: 维度② reserved-- ❌不计成本
-        Q->>Q: 维度① 不计（我方原因）
-        GW-->>C: code=0, busiCode=1007「数据请求异常」（可凭 tradeNo 幂等重试）
+    U->>Q: Settle(Resolved/Returned)
+    alt 查得 001 (busiCode 10)
+        Q->>Q: 台账 BILLED + serviceUsed++
+        GW-->>C: head.errorCode=0, body.code=001
+    else 查无 999
+        Q->>Q: 台账 BILLED，不计 serviceUsed
+        GW-->>C: head.errorCode=0, body.code=999
+    else 上游未决/我方原因
+        Q->>Q: 台账 UNBILLED 或保持 PENDING
+        GW-->>C: head.errorCode 非0 或 body 错误
     end
-    note over Q,P: 任何超期未结算的 PENDING，由对账任务以上游扣费记录裁决，无 UNKNOWN 终态
+    GW->>GW: 追加 audit_log（脱敏入参）
 ```
 
 ---
@@ -219,13 +221,13 @@ sequenceDiagram
 }
 ```
 
-**查无结果**：`head.errorCode="0"` + `body.code="999"`（无 `result` 节点），**不计维度①**。
+**查无结果**：`head.errorCode="0"` + `body.code="999"`（无 `result` 节点），**不计成功查得数**。
 
-**网关级错误（鉴权/配额/参数/系统，只返回 head）**
+**网关级错误（鉴权/参数/系统，只返回 head）**
 ```json
 { "head": { "errorCode": "505062", "logId": "...", "time": 12, "errorMsg": "数据请求异常", "timestamp": 1672822394403 } }
 ```
-- 维度①无余额、维度②达上限时**不调用上游、不计维度①/②**。
+- v0.6+ **无额度拦截**，不会因余额/上限拒绝请求。
 
 ### 5.2 查询路由（本服务扩展，非 .doc 定义）
 - **路径**：`GET /v1/openapi/zlx/quota`
@@ -236,15 +238,15 @@ sequenceDiagram
 ### 5.3 内部 busiCode → head.errorCode 映射
 > 查得/查无是业务结果，落在 `body.code`（001/999），`head.errorCode` 恒为 `"0"`。下表非 0 项为网关级错误（只返回 head）。
 
-| 内部 busiCode | 含义 | head.errorCode | 触发条件 | 计维度① | 计维度② |
-|---|---|---|---|---|---|
-| 10 | 查得数据【计费】 | "0" (body.code 001) | 上游伽马 busiCode 10 | 是 | 以上游扣费为准（是） |
-| 1000 | 数据未查得 | "0" (body.code 999) | 上游伽马 busiCode 1000 | 否 | 以上游扣费为准（是） |
-| 1002 | 账户信息不存在 | 505004 | appKey 查无 license | 否 | 否 |
-| 1003 | appKey 异常 | 505001 | 缺少/非法 appKey | 否 | 否 |
-| 1005 | 账号信息异常 | 505002 | 签名校验失败 / IP 不在白名单 | 否 | 否 |
-| 1007 | 数据请求异常 | 505062 | 参数校验失败 / 上游我方原因失败 / 内部错误 / 超时复查未决 | 否 | 否（复查/对账裁决） |
-| 1009 | 服务尚未开通 | 505007 | license 停用/过期/未开通 | 否 | 否 |
+| 内部 busiCode | 含义 | head.errorCode | 触发条件 | 计成功查得数 |
+|---|---|---|---|---|
+| 10 | 查得数据 | "0" (body.code 001) | 上游伽马 busiCode 10 | 是 |
+| 1000 | 数据未查得 | "0" (body.code 999) | 上游伽马 busiCode 1000 | 否 |
+| 1002 | 账户信息不存在 | 505004 | appKey 查无 license | 否 |
+| 1003 | appKey 异常 | 505001 | 缺少/非法 appKey | 否 |
+| 1005 | 账号信息异常 | 505002 | 签名校验失败 | 否 |
+| 1007 | 数据请求异常 | 505062 | 参数校验失败 / 上游我方原因失败 / 内部错误 / 超时复查未决 | 否 |
+| 1009 | 服务尚未开通 | 505007 | license 非 ACTIVE（SUSPENDED/EXPIRED） | 否 |
 
 > v0.6 起取消额度限制，`1001 账户余额不足`、`1006 透支余额已达上限` 不再触发（常量保留以兼容历史）。
 
@@ -252,16 +254,16 @@ sequenceDiagram
 
 ### 5.4 旧版 v9 兼容接口（income_cls.md）
 
-> 面向仍在使用旧格式的老客户保留。**与 x1 共用同一上游（伽马）、license 鉴权与双维度配额计费**，仅对外协议不同。新接入一律用 x1（§5.1）。
+> 面向仍在使用旧格式的老客户保留。**与 x1 共用同一上游（伽马）、license 鉴权与成功查得数统计**，仅对外协议不同。新接入一律用 x1（§5.1）。
 
 - **路径**：`GET /yrzx/finan/net/10w/v9`（HTTP GET，UTF-8，JSON）。
 - **入参**（query）：`account`（=客户 appKey）、`idCard`、`name`（选填）、`mobile`、`reqid`（≤20，幂等键）、`verify`。
 - **验签**：`verify = MD5(account + idCard + mobile + reqid + key).toUpperCase()`，其中 `key` = 客户 `appSecret`（服务端按 `account` 定位）。
 - **响应**：`{code, msg, uid, reqid, result{range}, verify}`；`code`：`001` 查得 / `999` 查无 / 错误码字典（`002/003/004/005/006/008/009/011/012/013/020`，见 income_cls.md）。
 - **响应签名**：`verify = MD5(code + uid + key).toUpperCase()`（是签名字段 code+uid+key 的一致口径，**待与旧版实现联调确认**）。
-- **错误码映射**（内部 busiCode → v9 code）：`10→001`、`1000→999`、`1001/1006→003`、`1002→002`、`1009→004`、`1003→009`、`1005→013`、其余（含 1007 上游/我方原因/超时未决、IP 不在白名单）→`012`。入参存在性/格式在网关层校验：account 空→`009`、reqid 空或 >20→`008`、idCard 空/格式→`005`、mobile 空/格式→`020`、verify 空→`011`。
-- **幂等**：以客户传入的 `reqid` 为维度②预留与复查的幂等键（x1 为内部生成）。
-- **计费口径同 x1**：仅查得数据（→`001`）计维度①；查无（`999`）计维度②不计维度①。
+- **错误码映射**（内部 busiCode → v9 code）：`10→001`、`1000→999`、`1002→002`、`1009→004`、`1003→009`、`1005→013`、其余（含 1007 上游/我方原因/超时未决）→`012`。入参存在性/格式在网关层校验：account 空→`009`、reqid 空或 >20→`008`、idCard 空/格式→`005`、mobile 空/格式→`020`、verify 空→`011`。
+- **幂等**：以客户传入的 `reqid` 为台账幂等键（x1 为内部生成）。
+- **统计口径同 x1**：仅查得数据（→`001`）累计成功查得数；查无（`999`）不计。
 
 ---
 
@@ -289,119 +291,91 @@ sequenceDiagram
 ### 6.2 上游 busiCode → 客户 busiCode
 归一化后的上游 `Code` 映射为客户 `body.code` / 内部 busiCode：`001 → 10`（查得数据，附 `range`）、`999 → 1000`（数据未查得）、其余我方原因失败（伽马 1001/1002/1003/1005/1006/1007/1009 等）`→ 1007`（数据请求异常）并告警。
 
-### 6.3 计数口径（决策 2 / 3，v0.3 修订）
-| 场景 | busiCode | 维度①（仅 busiCode=10 计） | 维度②（以上游扣费为准） |
-|---|---|---|---|
-| 上游成功(001) | 10 | ✅ 计 | ✅ 计（上游扣费） |
-| 上游查无结果(999) | 1000 | ❌ 不计（非查得数据） | ✅ 计（上游已执行查询并扣费） |
-| 超时/无响应，但复查确认上游**已扣费**且查得数据 | 10 | ✅ 计 | ✅ **必须计**（不漏计） |
-| 超时/无响应，复查确认上游**已扣费**但查无结果 | 1000 | ❌ 不计 | ✅ **必须计**（不漏计） |
-| 超时/无响应，复查确认上游**未扣费** | 1007 | ❌ 不计 | ❌ 不计 |
-| 网络根本未连通/连接中断且上游未执行 | 1007 | ❌ 不计 | ❌ 不计 |
-| 我方原因失败：02/003/004/012/013、参数/鉴权拦截、我方内部错误 | 1007/100x | ❌ 不计 | ❌ 不计（上游未扣费） |
-
-> 口径要点（v0.3）：
-> - **维度①**：仅当**查得数据（busiCode=10）**时向客户计费；查无结果（1000）不计维度①（对齐 PDF：仅 busiCode=10 标【计费】）。
-> - **维度②**：唯一标准是"上游是否扣费"。凡上游扣费一律计入（决策 3），通过复查 + 对账保证不漏计；上游确实未扣费则不计。**故 999 查无结果计维度②而不计维度①，两维度可分离。**
+### 6.3 计数口径（v0.7 现行）
+| 场景 | busiCode | 累计成功查得数 (serviceUsed) |
+|---|---|---|
+| 上游成功(001) | 10 | ✅ +1 |
+| 上游查无结果(999) | 1000 | ❌ 不计 |
+| 鉴权/参数拦截 | 1003/1005/1009/1007 等 | ❌ 不计 |
+| 超时/上游未决 | 1007 | ❌ 不计（台账可能保持 PENDING） |
+| 幂等重放（已有 BILLED） | 10 或 1000 | ❌ 不重复计数 |
 
 ---
 
-## 7. License 与配额设计（核心）
+## 7. License 与成功查得数设计（v0.7 现行）
 
-### 7.1 License 数据模型
+### 7.1 License 数据模型（代码 / DB）
 ```text
-License
-├── licenseId        主键
-├── appId            客户公开标识（PDF：由商务分配）
-├── appSecret        客户签名密钥（MD5 加签用 secret，加密存储）
-├── status           ACTIVE / SUSPENDED / EXPIRED
-├── validFrom        生效时间
-├── validTo          失效时间（总量买断，时间仅作授权有效期，不做周期重置）
-├── quotaService     维度①：{ total, used }            // 总量买断
-├── quotaUpstream    维度②：{ total, committed, reserved } // 总量买断（成本上限）
-└── rateLimit        限流配置(QPS/并发)
+License (表 license)
+├── license_id        主键
+├── app_key           客户公开标识 appKey（唯一）
+├── app_secret_enc    客户 MD5 加签 secret（当前 e2e 明文存储；生产应加密）
+├── client_uuid       内部 UUID（requestId 等用途）
+├── name              商户展示名/备注
+├── mobile            联系手机号（管理后台脱敏展示）
+├── status            ACTIVE / SUSPENDED / EXPIRED
+├── valid_from        生效时间
+├── valid_to          授权过期日期（后台展示；鉴权当前仅检查 status）
+├── secret_created_at 当前密钥创建/轮换时间
+├── rate_limit        JSONB（schema 预留，代码未读取）
+├── created_at / updated_at
+
+Quota (表 quota, dim='SERVICE' 唯一)
+├── license_id
+├── used_or_committed 累计成功查得数
+└── updated_at
 ```
 
-- **维度①剩余** = `quotaService.total - quotaService.used`
-- **维度②剩余** = `quotaUpstream.total - quotaUpstream.committed - quotaUpstream.reserved`
-- **总量买断（决策 5）**：配额为一次性买断额度，用尽即止；充值表现为对 `total` 增量续费，不按日/月自动重置。
+- **无额度上限**：不做任何次数拦截。
+- **Active()**：代码仅判断 `status == "ACTIVE"`，**未**按 `valid_to` 日期自动过期。
 
-### 7.2 两类配额语义
-| | 维度① service | 维度② upstream |
-|---|---|---|
-| 计的是 | 客户访问本服务的次数 | 我方被上游扣费的次数（= 成本） |
-| 计数口径 | **仅查得数据（busiCode=10）即计**（v0.3） | **以上游实际扣费为准**（决策 3） |
-| 计数时机 | 得到上游确定结论（含复查）后 | 得到上游确定结论后；对账兜底 |
-| 关键原则 | 仅 busiCode=10 计；查无结果(1000)不计 | **不漏计**（上游扣费必计）+ 不空计 |
-| 重置 | 无（总量买断） | 无（总量买断） |
+### 7.2 成功查得数（serviceUsed）语义
+| 项 | 说明 |
+|---|---|
+| 计的是什么 | 客户调用本服务且**查得数据**（busiCode=10）的累计次数 |
+| 计数时机 | `Settle` 时 `Returned=true` → `IncServiceUsed` |
+| 存储 | memory 内存计数；生产 Redis `quota:{licenseId}:svc_used` + PG `quota` 表镜像 |
+| 查询 | `GET /v1/openapi/zlx/quota` 返回 `{errorCode, errorMsg, status, serviceUsed}` |
 
-### 7.3 维度②计费模型：预留 → 以上游确定结论结算（无 UNKNOWN，决策 4）
-
-核心思想：**上游扣费记录是唯一真相来源**。本地不保留任何"未知"终态——任何超时/无响应都通过**按 `reqid` 的幂等复查**收敛到确定结论；万一复查也暂不可达，则由对账任务以上游扣费记录裁决。请求计费状态只有两种终态：`BILLED`（已计费）/ `UNBILLED`（未计费）。
+### 7.3 台账状态机（幂等 + 结算）
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING: 调上游前预留 reserved++
-    PENDING --> BILLED: 上游已扣费(001/999) / 复查确认已扣费 → committed++ , reserved--（busiCode=10 时另计维度①）
-    PENDING --> UNBILLED: 收到不可计费返回 / 复查确认未扣费 → reserved--
-    PENDING --> PENDING: 超时未响应 → 按reqid幂等复查(重试直到有确定结论)
-    note right of PENDING
-      超期仍 PENDING 的，由对账任务
-      以上游扣费记录强制裁决为 BILLED/UNBILLED
-      —— 不存在 UNKNOWN 终态
-    end note
+    [*] --> PENDING: Begin() 写入台账
+    PENDING --> BILLED: Settle(Resolved=true)
+    PENDING --> UNBILLED: Settle(Resolved=false)
+    BILLED --> [*]: 幂等重放直接返回缓存结果
 ```
 
-**流程：**
-1. **预留**：调上游前，原子校验维度②剩余 > 0 并 `reserved++`，写入 `PENDING` 台账（以 `reqid` 为幂等键）。预留用于防止高并发"超卖"（成本超上限）。
-2. **调用上游并取确定结论**：
-   - **收到业务响应** → 查 §7.4 计费判定表：
-     - 上游已扣费（如 001/999）→ `BILLED`：`committed++`、`reserved--`，**计成本（维度②）**；**仅当查得数据（001→busiCode 10）时另计维度①**。
-     - 上游未扣费（我方原因）→ `UNBILLED`：`reserved--`，**不计**。
-   - **超时/连接中断/无响应** → **按 `reqid` 幂等复查**（re-query，不会重复扣费）：
-     - 复查确认上游已扣费 → `BILLED`：计维度②（不漏计）；若为查得数据（busiCode=10）再计维度①，客户可凭 `tradeNo` 幂等拉取结果。
-     - 复查确认上游未执行/未扣费 → `UNBILLED`：不计。
-     - 复查暂不可达 → 保持 `PENDING`，进入异步复查队列与对账兜底（§7.6），最终必收敛为 `BILLED/UNBILLED`。
-3. **为何没有 UNKNOWN**：因为最终一律以**上游扣费记录**为准（决策 3、4）。复查 + 对账保证每条记录都有确定归属，本地不接受"永久未知"。
+**流程（`quota.Service` + `QueryOrchestrator`）：**
+1. **Begin**：按 `(appKey, reqid)` 查台账；若已有 **BILLED** → 幂等重放，不重复计数。
+2. 否则 append **PENDING** 台账（**无预留、无余额检查**）。
+3. 调用上游伽马 → `billing.Decide` 产出 `BillingDecision`。
+4. **Settle**：
+   - `Resolved && Returned` → 台账 **BILLED** + `serviceUsed++`
+   - `Resolved && !Returned`（查无）→ 台账 **BILLED**，不计数
+   - `!Resolved` → 台账 **UNBILLED**
+5. 超时路径：orchestrator 尝试 `upstream.Requery`；**当前伽马实现恒返回不可达**，视为未决 → `1007` / PENDING 留待 worker。
 
-### 7.4 上游伽马 busiCode → 是否扣费（维度②）/ 客户 busiCode（维度①）判定表
-> 上游为伽马（《伽马分层分_定制版》PDF §2.1 busiCode）；10/1000 归一化为 `UpstreamResult.Code` 001/999，其余 busiCode 视为上游侧错误（不产生归一化结果）。
-
-| 伽马 busiCode | 含义 | 是否扣费?(维度②) | 归一化 Code | 客户 busiCode | 计维度①? | 备注 |
-|---|---|---|---|---|---|---|
-| 10 | 查询成功 | ✅ 是 | 001 | 10 | ✅ 是 | 查得数据，标准扣费，计维度①② |
-| 1000 | 数据未查得 | ✅ 是 | 999 | 1000 | ❌ 否 | 上游已执行并扣费（维度②），但非查得数据，不计维度① |
-| 1001 | 账户余额不足 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马账户欠费，未执行 → 告警 |
-| 1002 | 账户信息不存在 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马配置错误 → 告警 |
-| 1003 | appId 异常 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马 appId 配置错误 → 告警 |
-| 1005 | 账号信息异常 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马加签错误 → 告警 |
-| 1006 | 透支余额已达上限 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马额度上限 → 告警 |
-| 1009 | 服务尚未开通 | ❌ 否 | - | 1007 | ❌ 否 | 我方伽马侧服务未开通 → 告警 |
-
-> - **维度②（是否扣费）** 与 **维度①（busiCode=10）** 解耦：999 计维度②、不计维度①。
-> - 判定表应做成**配置**并与上游计费口径严格对齐；若上游对 999 的计费口径与此不同，以上游实际扣费记录为准（决策 3）。
+### 7.4 上游伽马 busiCode → 客户响应
+| 伽马 busiCode | 含义 | 归一化 Code | 客户 busiCode | serviceUsed |
+|---|---|---|---|---|
+| 10 | 查询成功 | 001 | 10 | +1 |
+| 1000 | 数据未查得 | 999 | 1000 | 0 |
+| 其它 | 我方伽马账户/参数/系统问题 | - | 1007 | 0 |
 
 ### 7.5 并发与原子性
-- 计数与预留必须**原子**执行，避免竞态导致超卖/重复扣：
-  - 方案 A（推荐）：**Redis + Lua 脚本**对 `remaining` 做"检查并预留"原子操作，台账落库到关系库。
-  - 方案 B：关系库**条件更新**：`UPDATE ... SET reserved=reserved+1 WHERE total-committed-reserved>0`，按受影响行数判断成功。
-- **幂等**：以 `reqid`（或 `appId+reqid`）为唯一键；客户侧以 `tradeNo` 推导该 `reqid`（§5.1）。
-  - 命中已有 `BILLED` 台账 → 直接返回缓存结果，**不重复扣费、不重复计维度①②**。
-  - 命中 `PENDING` → 触发/等待复查结果，避免并发重复调用上游。
+- **serviceUsed 递增**必须原子：Redis `INCR` + PG 写回（生产）；memory 单 mutex（开发）。
+- **幂等**：`(app_key, reqid)` 唯一约束；BILLED 命中直接重放。
 
-### 7.6 对账与审计（保证维度②不漏计、不空计 —— 决策 3/4 的兜底）
-- **上游扣费记录为唯一真相来源**。计费台账为追加写、不可篡改，含：reqid、tradeNo、appId、上游 code、busiCode、状态(BILLED/UNBILLED/PENDING)、时间戳、上游 logId/uid。
-- **定时对账任务**：
-  1. 拉取上游对账单 / 调用上游单笔查询接口，逐条与本地台账比对。
-  2. 上游已扣费但本地未计（漏计）→ 强制补计 `committed++`（决策 3：必须计入），并告警。
-  3. 本地已计但上游无扣费记录（空计）→ 冲正 `committed--`，并告警。
-  4. 超期 `PENDING` → 依上游记录裁决为 `BILLED/UNBILLED`，清空 `reserved`。
-- **冲正**：所有补计/冲正均留痕、可追溯。
+### 7.6 异步复查（RequeryWorker）
+- 周期扫描 `PENDING` 台账，尝试上游复查并结算。
+- **现状**：`upstream/gama.go` 的 `Requery` 为 stub（`Reachable=false`），对伽马上游**无实际复查**；inline 复查同理。
 
-### 7.7 配额耗尽行为
-- **维度①耗尽（决策 6）**：返回 `busiCode 1001`「账户余额不足」，**不调用上游**。
-- 维度②达上限：返回 `busiCode 1006`「透支余额已达上限」，**不调用上游**（保护我方成本），并告警；待续量后恢复。
-- 可配置软阈值（如剩余 10%）触发到量告警通知。
+### 7.7 已移除（v0.6/v0.7 勿再实现）
+- ~~维度①余额检查、1001/1006 错误~~
+- ~~维度②预留/committed/reserved、上游配额、对账任务 ReconciliationJob~~
+- ~~全局/每用户 IP 白名单拦截~~
 
 ---
 
@@ -421,7 +395,7 @@ stateDiagram-v2
 - **服务端校验顺序**（见 §5.3 错误码）：
   1. `appKey` 存在（否则 `1003`，head.errorCode 505001）；
   2. `appKey` 匹配到 license（否则 `1002`，505004）；
-  3. license `ACTIVE` 且在有效期内（否则 `1009`，505007）；
+  3. license `status == ACTIVE`（否则 `1009`，505007）；**注意**：当前代码**未**校验 `valid_to` 日期；
   4. 用服务端存储的 `appSecret` 按同一算法重算签名并**常量时间比较**，一致才放行（否则 `1005`，505002）。
 - **加密类型**：`encryptionType=1` 明文（本期仅支持）；非 1 暂不支持，按 `1007` 处理。
 - 上游 reqid 由本服务内部生成（≤20 位，§5.1），不来自客户。
@@ -435,39 +409,35 @@ stateDiagram-v2
 
 ## 9. 全链路追踪（requestId / Trace）
 
-为支撑后续所有 debug 与客户问题排查，本服务在**请求入口**生成一个全链路追踪标识 `requestId`，贯穿整条调用链，**在响应里以 `seqNo`（交易流水号）字段暴露给客户**，并作为**所有日志行的前缀**。
+为支撑后续 debug 与客户问题排查，本服务在**请求入口**生成全链路追踪标识 `requestId`，贯穿整条调用链，**在响应 `head.logId` 与 Header `X-Request-Id` 中返回**，并作为结构化日志的关键字段。
 
 ### 9.1 与 reqid 的区别（重要）
 | 标识 | 来源 | 粒度 | 用途 |
 |---|---|---|---|
-| `reqid` | 由客户 `tradeNo` 推导（无则本服务生成，≤20 位） | 每个业务请求 | **幂等键**、计费去重、按 reqid 复查上游 |
-| `requestId`（响应 `seqNo`） | **本服务生成**的追踪 ID | 每次物理请求（每次到达网关） | **全链路追踪 / 日志前缀 / 排障**，以 `seqNo` 返回客户 |
-
-> 客户用同一 `tradeNo` 幂等重试时，会产生**不同的 `seqNo`**（属于不同物理请求），二者关联关系记入日志与台账，便于还原"一次业务、多次物理调用"的全貌。
+| `reqid` | 幂等键：x1 内部生成；v9 客户传入 | 每个业务请求 | **幂等键**、台账去重 |
+| `requestId`（响应 `head.logId`） | **本服务生成**的追踪 ID | 每次物理请求 | **全链路追踪 / 日志前缀 / 排障** |
 
 ### 9.2 requestId 生成规则
-在网关收到请求、完成基础校验后立即生成（鉴权前即生成，保证鉴权失败也可追踪）：
+在网关收到请求、完成 body 缓冲后立即生成（鉴权前即生成，保证鉴权失败也可追踪）：
 
 ```
 输入：
-  ts        = 请求到达时间（毫秒时间戳）
-  clientUuid= 客户标识（license 维度的客户 UUID；未鉴权时退化为 appId/“anon”）
-  body      = 原始请求体字节
+  ts         = 请求到达时间（毫秒时间戳）
+  clientShort= 信封 appKey（未鉴权时从 body 解析；空则 "anon"）
+  body       = 原始请求体字节
 
 bodyHash  = SHA-256(body) 的前 8 个 hex 字符
-seed      = ts + "|" + clientUuid + "|" + SHA-256(body)
-core      = Base32( SHA-256(seed) ) 前 10 位      // 抗碰撞、可读
-requestId = ts(Base36) + "-" + clientShort + "-" + bodyHash + "-" + core
+seed      = ts + "|" + clientShort + "|" + SHA-256(body) hex
+core      = Base32( SHA-256(seed) ) 前 10 位
+requestId = ts(Base36) + "-" + clientShort(≤8) + "-" + bodyHash + "-" + core
 ```
 
-- **可排序**：前缀含时间戳，按字典序近似按时间排序，便于按时间窗捞日志。
-- **唯一性**：`ts + clientUuid + body` 已高度唯一；`core` 为整体哈希进一步抗碰撞。即便同客户在同一毫秒发送相同 body（如并发重试），可附加进程内自增/随机 4 位 `rand` 兜底，确保物理唯一。
-- **可读可定位**：从 requestId 即可肉眼读出大致时间、哪个客户、body 指纹，方便客户报障时快速比对。
-- **入站透传**：若客户在 Header 携带 `X-Request-Id`，可选择信任并复用（便于客户侧串联），否则由本服务生成；最终值以返回为准。
+实现见 `internal/common/reqid/reqid.go`、`internal/api/middleware.go`。
 
 ### 9.3 返回给客户
 - `requestId` 作为响应 `head.logId` 返回。
-- 同时通过响应头 `X-Request-Id` 返回，方便客户在不解析 body 时也能记录。
+- 同时通过响应头 `X-Request-Id` 返回。
+- 若请求 Header 已带 `X-Request-Id`，网关**直接复用**该值。
 
 ```json
 {
@@ -479,20 +449,17 @@ requestId = ts(Base36) + "-" + clientShort + "-" + bodyHash + "-" + core
 ### 9.4 日志前缀与上下文传播
 - **日志前缀**：所有日志行以 `[requestId]` 开头，例如：
   ```
-  [lq8x2f-y89098io-9f3a1b2c-K7M2P9QXTV] INFO  auth ok, appId=y89098io
+  [lq8x2f-y89098io-9f3a1b2c-K7M2P9QXTV] INFO  auth ok, appKey=y89098io
   [lq8x2f-y89098io-9f3a1b2c-K7M2P9QXTV] INFO  upstream call start reqid=1778059529283
   [lq8x2f-y89098io-9f3a1b2c-K7M2P9QXTV] WARN  upstream timeout, re-query by reqid
   [lq8x2f-y89098io-9f3a1b2c-K7M2P9QXTV] INFO  billed=true busiCode=10 score=39
   ```
-- **上下文传播**：
-  - Java：用 **MDC**（`MDC.put("requestId", ...)`），日志 pattern 加 `[%X{requestId}]`；线程池/异步需透传 MDC。
-  - Go：通过 `context.Context` 携带 requestId，封装 logger 自动注入；跨 goroutine 显式传递。
-- **跨调用关联**：调用上游时记录 `requestId ↔ 上游 uid/logId` 的映射；写入计费台账，做到"我方 requestId ↔ 客户 reqid ↔ 上游 uid"三方可互查。
-- **贯穿范围**：鉴权、配额、解析、上游调用、复查、对账、异常处理全部携带同一 requestId。
+- **上下文传播**：Go 通过 `context.Context`（`appctx.RequestID`）携带 requestId；slog 结构化字段 `requestId`。
+- **跨调用关联**：审计与台账写入 `request_id`；上游 uid 记入 audit/ledger。
 
 ### 9.5 排障价值
-- 客户报障只需提供 `seqNo`（= requestId，已随结果返回），即可在日志中一键检索整条链路。
-- 计费争议时，凭 requestId 关联台账与上游 uid，复核维度①/②是否应计。
+- 客户报障只需提供 `head.logId`（= requestId），即可在日志中检索整条链路。
+- 计费争议时，凭 requestId 关联台账与上游 uid，复核是否应计入成功查得数。
 
 ---
 
@@ -500,70 +467,83 @@ requestId = ts(Base36) + "-" + clientShort + "-" + bodyHash + "-" + core
 
 | 类别 | 处理 |
 |---|---|
-| 客户参数错 | 前置校验，返回 `busiCode 1007`，不调用上游、不计费 |
-| 鉴权错 | `busiCode 1003/1004/1005/1009`，不计费 |
-| 维度①无余额 | `busiCode 1001`「账户余额不足」，不调用上游、不计费 |
-| 上游超时/无响应 | **按 reqid 幂等复查**确定是否已扣费；已扣费→计维度②（不漏计），查得数据(10)再计维度①；未扣费→不计 |
-| 上游业务错（我方原因） | 按判定表 `UNBILLED`（`busiCode 1007`），不计费 |
-| 服务内部错 | 若上游已扣费仍须保证维度②计入（对账兜底）；返回 `code=-1` 响应异常；告警 |
-
-> **重试安全**：所有重试/复查携带相同 `reqid`（由 `tradeNo` 推导），依赖上游幂等，避免重复扣费与重复计数。
+| 客户参数错 | 前置校验，返回 `busiCode 1007`，不调用上游、不计数 |
+| 鉴权错 | `busiCode 1003/1002/1005/1009`，不计数 |
+| 上游超时/无响应 | 尝试 Requery（**伽马 stub**）→ 未决则 `1007`，台账可能 PENDING |
+| 上游业务错（我方伽马账户/配置） | `UNBILLED`，`busiCode 1007`，不计数 |
+| 服务内部错 | 返回网关级错误；不计数 |
 
 ---
 
 ## 11. 存储设计
 
-### 11.1 license 表
-`license_id, app_id, app_secret(enc), client_uuid, status, valid_from, valid_to, rate_limit, created_at, updated_at`
-- 总量买断：无周期重置字段。
-- `app_id`：PDF 中由商务分配的客户公开标识；`app_secret` 为 MD5 加签 secret（加密存储）。
-- `client_uuid`：客户 UUID，用于 requestId 生成与对账。
+### 11.1 license 表（`migrations/0001_init.sql`）
+`license_id, app_key, app_secret_enc, client_uuid, name, mobile, status, valid_from, valid_to, secret_created_at, rate_limit, created_at, updated_at`
 
-### 11.2 quota 表（或合并进 license）
-`license_id, dim(SERVICE|UPSTREAM), total, used_or_committed, reserved, updated_at`
+- `app_key`：客户公开标识（下游字段名 appKey）。
+- `app_secret_enc`：客户 MD5 secret；**当前实现为明文存储**（e2e/开发），生产应加密。
+- `mobile`：联系手机号；管理后台列表脱敏展示（前3+后4）。
+- `valid_to` / `secret_created_at`：授权过期日、当前密钥创建/轮换时间（后台展示）。
+- `rate_limit`：schema 预留，**代码未读取**。
+
+### 11.2 quota 表
+`license_id, dim('SERVICE'), used_or_committed, updated_at`
+
+- 仅 **SERVICE** 维度一行；`used_or_committed` = 累计成功查得数。
+- 生产环境 Redis 为热计数，PG 为持久镜像（`persistence/redis/quota.go`）。
 
 ### 11.3 billing_ledger 表（追加写）
-`id, app_id, trade_no, reqid, request_id, upstream_logId, upstream_uid, upstream_code, busi_code, state(PENDING|BILLED|UNBILLED), counted_service(bool), counted_upstream(bool), created_at, settled_at`
-- 唯一索引：`(app_id, reqid)`；普通索引：`request_id`。
-- `trade_no`：客户业务单号（幂等来源）；`reqid` 由其推导。
-- `busi_code`：返回客户的业务码（§5.3），便于按 10/1000 等核对维度①。
-- `request_id`：全链路追踪 ID（§9，= 响应 seqNo），关联日志、客户 reqid 与上游 uid。
-- **无 UNKNOWN 状态**（决策 4）；`PENDING` 仅为中间态，必由复查/对账收敛。
+`id, app_key, trade_no, reqid, request_id, upstream_logid, upstream_uid, upstream_code, busi_code, state(PENDING|BILLED|UNBILLED), counted_service(bool), created_at, settled_at`
 
-### 11.4 secrets 配置
-- 上游 `account/key`、客户 `secret`（MD5 加签）加密存储（KMS / Vault / 加密列），禁止明文落库与日志。
+- 唯一索引：`(app_key, reqid)`；普通索引：`request_id`、`state`。
+- `counted_service`：是否计入成功查得数（与 `Returned` 一致）。
+- **无** `counted_upstream` 列（v0.7 已删）。
 
-### 11.5 请求日志
-- 每条日志以 `[requestId]` 为前缀（§9）；脱敏存储（idCard/mobile 掩码），便于排障与对账。
-- 建议结构化字段：`requestId, reqid, tradeNo, appId, stage, upstreamCode, busiCode, billed, latencyMs`。
+### 11.4 admin_user / audit_log（`migrations/0002_admin.sql`）
+- `admin_user`：管理员账号（username 唯一，password_hash 加盐 SHA-256）。
+- `audit_log`：每次请求追加写；`app_key`、脱敏入参、`client_ip`（仅记录，**不用于拦截**）、上下游 metadata。
+
+### 11.5 环境与隔离
+| 环境 | 配置文件 | PG 库 | Redis DB |
+|---|---|---|---|
+| 开发/e2e | `config.aliyun.e2e.yaml` | `dev_db` | 0 |
+| 生产 | `config.aliyun.prod.yaml` | `prod_db` | 1 |
+
+重建：`scripts/recreate_schema.sql` + `scripts/recreate_databases.go`（删旧表 → 重跑 migrations → SeedDemo）。
+
+### 11.6 请求日志 / PII
+- 结构化日志带 `requestId`；审计表存 `name_mask/id_card_mask/mobile_mask`（`common/mask`）。
 
 ---
 
-## 12. 技术选型建议（可替换）
-- 语言/框架：Java(Spring Boot) 或 Go；高并发计数偏好 Go。
-- 计数/幂等：Redis（Lua 原子）+ 关系库（MySQL/PG）做台账与对账。
-- HTTP 客户端：连接池 + 显式连接/读超时 + 幂等复查 + 熔断（Resilience4j / sentinel）。
-- 可观测：结构化日志 + Prometheus 指标（配额水位、上游成功率、计费状态分布、漏计/空计对账差异）+ 告警。
+## 12. 技术选型（当前实现）
+- **语言**：Go 1.22+；入口 `cmd/relay`。
+- **HTTP**：标准库 `net/http`（Go 1.22+ 路由模式）。
+- **持久化**：
+  - 开发：`persistence/memory`（单进程 mutex，默认）。
+  - 生产/e2e：`persistence/postgres`（pgxpool）+ `persistence/redis`（成功查得数 INCR）。
+- **管理后台**：React + Vite SPA，JWT（HS256），静态托管 `/admin/`。
+- **配置**：YAML + `CONFIG_FILE` 环境变量（`cmd/relay/config.go`）。
+- **测试**：PowerShell 编排 `test/run.ps1` + `test/cases/*.go`（`//go:build ignore`）。
 
 ---
 
 ## 13. 非功能需求
-- **限流**：按 license 维度 QPS/并发限制（与配额解耦）。
-- **超时**：上游连接超时/读超时显式配置，配合按 reqid 幂等复查，避免线程/协程堆积。
-- **安全**：HTTPS、密钥加密、PII 脱敏、IP 白名单（接入时提供外网 IP）。
-- **监控告警**：维度②水位、上游 003/013 等异常码、超期 PENDING 堆积、对账漏计/空计差异、维度①到量。
-- **幂等**：reqid 全链路贯穿。
+- **超时**：上游连接/读超时可配置（`upstream.timeout`，默认 4s）。
+- **安全**：HTTPS（部署侧）、密钥与 PII 脱敏、**IP 准入由 ECS 安全组/网络层控制**（网关不做 IP 白名单）。
+- **幂等**：`(app_key, reqid)` 全链路贯穿。
+- **可观测**：结构化 slog 日志（带 requestId）；Prometheus 等指标待接入。
 
 ---
 
-## 14. 关键设计取舍小结
-1. **维度②"以上游扣费为准、不漏计"**：预留 + 上游确定结论结算 + 对账兜底；超时用幂等复查收敛，**不存在 UNKNOWN 终态**（决策 3/4）。
-2. **维度①"仅查得数据(busiCode=10)即计"**（v0.3，对齐 PDF：仅 10 标【计费】）；查无结果(1000)计维度②不计维度①，两维度解耦。
-3. **客户侧 MD5 加签 / 上游侧 MD5**：对外对齐 PDF 的 MD5 加签（appId + body 排序 + secret），上游因第三方不可改沿用 MD5（决策 1）。
-4. **配额总量买断**，用尽即止、可续费，不做周期重置（决策 5）。
-5. **客户配额查询路由 + 无余额"账户余额不足"返回**（决策 6）。
-6. **幂等以 reqid 为核心**（由 `tradeNo` 推导），复查/重试不重复扣费、不重复计数。
-7. **全链路追踪 requestId（响应 seqNo）**：入口按"时间+客户UUID+请求体"生成，以 seqNo 随结果返回、作日志前缀，串联 reqid 与上游 uid，支撑 debug 与客户报障（§9）。
+## 14. 关键设计取舍小结（v0.7 现行）
+1. **无额度限制**：任意 ACTIVE license 可无限调用；仅统计成功查得数。
+2. **单维度统计**：仅 busiCode=10（上游 001）累计 `serviceUsed`；查无/错误不计。
+3. **台账 + 幂等**：PENDING→BILLED/UNBILLED 驱动结算与重放；无维度②预留/对账。
+4. **客户 MD5 / 上游 MD5**：两侧独立加签（§8）。
+5. **全链路 requestId**：`head.logId` + `X-Request-Id` + 审计/台账关联（§9）。
+6. **IP 准入外置**：网关不拦截 IP；ECS 安全组 + 审计记录 `client_ip`。
+7. **管理后台**：YAML 引导管理员、用户手机号/密钥时间/过期日、检索与审计过滤。
 
 ---
 
@@ -574,7 +554,7 @@ requestId = ts(Base36) + "-" + clientShort + "-" + bodyHash + "-" + core
 - **`tradeNo` 参与加签**：作为 `body` 业务参数，**非空时一并参与**排序拼接。
 - **hex 大小写**：签名取**小写 hex**；服务端比较大小写不敏感。
 - **空值剔除**：值为空（空串）的业务参数**不参与**加签。
-- **防重放**：PDF 的 MD5 加签**不含 nonce / 时间戳**，本期**不实现** nonce 去重与时间戳容差（依赖 HTTPS + IP 白名单 + `appId+reqid` 幂等）。
+- **防重放**：MD5 加签不含 nonce/时间戳；依赖 HTTPS + `appKey+reqid` 幂等 + **网络层 IP 控制**（非应用内白名单）。
 - **配额查询路由**：`GET /openapi/zlx/quota` 为 PDF 之外的本服务扩展，**保留**，响应对齐 PDF 的 `code/msg/seqNo/data` 风格（§5.2）。
 - **`score=0` 处理**：上游 `range=0`（不连续/收入能力弱）时，按 `busiCode=10` **原样透传** `score="0"`（PDF 标称 1-51，0 为上游边界值）。
 
@@ -584,88 +564,66 @@ requestId = ts(Base36) + "-" + clientShort + "-" + bodyHash + "-" + core
 3. 上游是否提供**对账文件 / 单笔查询（按 reqid 复查）接口**及其格式 —— 这是消除不确定态与对账兜底的前提。
 4. 伽马上游联调参数：正式/测试`域名`、`appId/secret`、`apiKey`；reqid 由本服务内部生成（≤20 位）。
 5. 各 `busiCode` 与上游 code 的最终映射（特别是我方原因失败是否细分到 1002/1005 等）。
-6. 正式 / 测试访问地址与白名单外网 IP。
+6. 正式 / 测试访问地址与**网络层**外网 IP 白名单（阿里云 ECS 安全组 / RDS 白名单）。
 
 ---
 
 ## 16. 管理后台（Admin Console）
 
-> 面向**管理员（我方运营）**的内部控制台，与对外 PDF 契约相互独立。提供：① 查看普通用户（license/商户）的全部操作与上下游日志；② 增删用户与配置配额；③ 生成并绑定鉴权密钥（`appId + secret`）；④ 配置 IP 白名单限制访问。
+> 面向**管理员（我方运营）**的内部控制台。提供：① 普通用户 CRUD 与密钥轮换；② 累计成功查得数展示；③ 操作/审计记录查询与检索；④ React SPA 托管于 `/admin/`。
+>
+> **v0.7 已移除**：全局/每用户 IP 白名单管理页与 API；IP 准入交由阿里云 ECS 安全组。
 
-### 16.0 决策基线（已确认）
-1. **前端形态**：独立 **React + Vite SPA**，通过 admin REST JSON API 对接；生产构建产物由本服务静态托管于 `/admin`。
-2. **管理员鉴权**：**独立管理员账号**（用户名 + 密码），登录后下发 **JWT（HS256）**；初始管理员由环境变量引导（`ADMIN_BOOTSTRAP_USER` / `ADMIN_BOOTSTRAP_PASS`）。与客户的 `appId/secret` 体系完全隔离。
-3. **存储**：沿用内存适配器扩展（与现有骨架一致，生产换 Redis/关系库）。
-4. **密钥体制**：沿用 PDF 的 **MD5 对称加签**——为用户生成 `appId + secret`，`secret` **仅创建/轮换时返回一次**、服务端加密存储（§11.4），不再可读取明文；支持**轮换**。
-5. **审计粒度**：在 `billing_ledger` 之外新增**审计日志**，记录每次请求的：是否成功调用上游、是否查得数据、`busiCode`、上游 `code/uid/logId`、耗时、来源 IP、脱敏入参（name/idCard/mobile）、错误信息。
-6. **IP 白名单**：**全局 + 每用户**两级；在业务入口（`doCheck` / `quota`）校验来源 IP。
+### 16.0 决策基线（与代码一致）
+1. **前端形态**：React + Vite SPA；生产构建产物由 relay 静态托管 `/admin/`（`admin.spaDir`）。
+2. **管理员鉴权**：独立账号 + JWT（HS256）；**初始管理员由配置文件** `admin.bootstrapUser` / `admin.bootstrapPass` 引导（**非**环境变量）。与客户 appKey/secret 体系隔离。
+3. **存储**：`storage.driver=memory`（开发）或 `postgres`+`redis`（生产/e2e）。
+4. **密钥**：为用户生成 `appKey` + `secret`；`secret` **仅创建/轮换响应返回一次**；DB 列 `app_secret_enc`（当前明文，生产应加密）。
+5. **审计**：每次下游请求追加 `audit_log`（上游是否调用、是否查得、busiCode、脱敏入参、client_ip 等）。
+6. **无额度配置**：仅展示 `serviceUsed`（累计成功查得数）。
 
 ### 16.1 管理员鉴权与会话
-- **登录**：`POST /admin/api/login`，体 `{username, password}`；校验通过返回 `{token, expireAt}`。
-- **令牌**：JWT（HS256），Header `Authorization: Bearer <token>`；签名密钥 `ADMIN_JWT_SECRET`，默认有效期 8h。
-- **密码存储**：加盐哈希（开发期 salted SHA-256；**生产应换 bcrypt/argon2**），禁止明文落库。
-- **中间件**：除 `/admin/api/login` 外，所有 `/admin/api/**` 需校验合法 JWT，否则 `401`。
+- **登录**：`POST /admin/api/login`，体 `{username, password}` → `{token, expireAt}`。
+- **令牌**：JWT HS256，`Authorization: Bearer <token>`；密钥 `admin.jwtSecret`，TTL `admin.tokenTTL`（默认 8h）。
+- **密码**：加盐 SHA-256（`admin/credential.go`）；生产应换 bcrypt/argon2。
+- **中间件**：除 login 外所有 `/admin/api/**` 需 JWT，否则 401。
 
 ### 16.2 普通用户（license）管理
 | 操作 | 方法 / 路由 | 说明 |
 |---|---|---|
-| 列表 | `GET /admin/api/users` | 返回每个用户的 license 状态、**累计成功查得数**（`serviceUsed`）、IP 白名单、创建时间 |
-| 详情 | `GET /admin/api/users/{licenseId}` | 单个用户聚合视图 |
-| 新建 | `POST /admin/api/users` | 体 `{name?, ipWhitelist?}`；**自动生成 `appKey + secret` 并绑定**，响应**一次性**返回明文 `secret`（无额度配置） |
-| 修改 | `PATCH /admin/api/users/{licenseId}` | 改 `status`(ACTIVE/SUSPENDED/EXPIRED)、`ipWhitelist` |
-| 删除 | `DELETE /admin/api/users/{licenseId}` | 删除用户及其绑定密钥 |
-| 轮换密钥 | `POST /admin/api/users/{licenseId}/rotate-secret` | 重新生成 `secret`，一次性返回明文 |
+| 列表/检索 | `GET /admin/api/users?q=` | `q` 模糊匹配 appKey / 名称 / 手机号；返回 `serviceUsed`、手机号、密钥创建时间、过期日期等 |
+| 详情 | `GET /admin/api/users/{licenseId}` | 单个用户 |
+| 新建 | `POST /admin/api/users` | 体 `{name?, mobile?}`；自动生成 appKey+secret+clientUuid；**一次性**返回明文 secret |
+| 修改 | `PATCH /admin/api/users/{licenseId}` | 改 `status`、`mobile` |
+| 删除 | `DELETE /admin/api/users/{licenseId}` | 删 license + quota |
+| 轮换密钥 | `POST /admin/api/users/{licenseId}/rotate-secret` | 新 secret 一次性返回；更新 `secret_created_at` |
 
-- **无额度配置（v0.6）**：不再配置维度①/②额度上限；管理后台只展示**累计成功查得数**（`serviceUsed`）。
-- **状态**：`SUSPENDED/EXPIRED` 的用户调用主接口返回 `busiCode 1009 服务尚未开通`（§5.3 / §8.1）。
+- **展示字段**：appKey、名称、手机号（前端脱敏 `138****1009`）、状态、成功查得数、密钥创建时间、过期日期、创建时间。
+- **状态**：`SUSPENDED/EXPIRED` → 主接口 `busiCode 1009`。
 
 ### 16.3 操作记录 / 审计查询
-- `GET /admin/api/audits?appId=&busiCode=&limit=&offset=`：按用户（`appId`）、业务码筛选，倒序返回审计记录。
-- 字段：`requestId、appId、tradeNo、reqid、clientIP、calledUpstream(是否成功调用上游)、foundData(是否查得数据)、busiCode、busiMsg、upstreamCode、upstreamUID、upstreamLogId、billed(是否计维度①)、latencyMs、name/idCard/mobile(脱敏)、errMsg、createdAt`。
-- **上下游日志串联**：审计记录以 `requestId`（= 响应 `seqNo`）为主键，可与计费台账（§11.3）、`[requestId]` 日志前缀（§9）三方互查，还原"一次请求"的全链路（来源 IP → 鉴权 → 配额 → 上游 code/uid → 客户 busiCode）。
+- `GET /admin/api/audits?appKey=&q=&busiCode=&limit=&offset=`
+  - `appKey`：精确匹配
+  - `q`：按 uuid(appKey)/名称/手机号解析用户 → 过滤其 appKey 集合
+  - `busiCode`、`limit`（默认100，最大500）、`offset`
+- 字段：`requestId, appKey, tradeNo, reqid, clientIp, calledUpstream, foundData, busiCode, busiMsg, upstreamCode, upstreamUid, upstreamLogId, billed, latencyMs, nameMask, idCardMask, mobileMask, errMsg, createdAt`
 
-### 16.4 IP 白名单
-- **全局**：`GET/PUT /admin/api/ip-whitelist`，体 `{cidrs: ["1.2.3.4", "10.0.0.0/8"]}`；为空表示不限制。
-- **每用户**：通过用户的 `ipWhitelist` 字段配置（§16.2）。
-- **校验顺序（业务入口 `doCheck`/`quota`）**：
-  1. 全局白名单非空且来源 IP 不在其中 → 拒绝（`code=-1`「IP 不在白名单」）。
-  2. 用户白名单非空且来源 IP 不在其中 → `busiCode 1005 账号信息异常`（"IP 不在白名单"）。
-  3. 支持单 IP 与 CIDR 段；来源 IP 取 `X-Forwarded-For` 首段（存在时）否则 `RemoteAddr`。
-
-### 16.5 数据模型（新增，对应 §11 / 迁移 `0002_admin.sql`）
+### 16.4 数据模型（`migrations/0002_admin.sql` + license 扩展）
 ```text
-admin_user
-├── id              主键
-├── username        唯一
-├── password_hash   加盐哈希（生产 bcrypt/argon2）
-├── role            ADMIN（本期单一角色）
-└── created_at
+admin_user(id, username, password_hash, role, created_at)
 
-audit_log（追加写）
-├── id              主键
-├── request_id      全链路追踪 ID（= seqNo）, 索引
-├── app_id          用户标识, 索引
-├── trade_no / reqid
-├── client_ip
-├── called_upstream bool（是否成功调用上游）
-├── found_data      bool（是否查得数据 = busiCode 10）
-├── busi_code / busi_msg
-├── upstream_code / upstream_uid / upstream_logid
-├── billed          bool（是否计维度①）
-├── latency_ms
-├── name_mask / id_card_mask / mobile_mask   PII 脱敏
-├── err_msg
-└── created_at
+audit_log(id, request_id, app_key, trade_no, reqid, client_ip,
+          called_upstream, found_data, busi_code, busi_msg,
+          upstream_code, upstream_uid, upstream_logid, billed,
+          latency_ms, name_mask, id_card_mask, mobile_mask, err_msg, created_at)
 
-ip_whitelist_global
-└── cidrs           文本数组（全局白名单）
-
--- license 表扩展（§11.1）
-license += ip_whitelist (text[])   每用户白名单
+license 扩展字段（0001）: name, mobile, secret_created_at
+-- 无 ip_whitelist 列（v0.7 已删）
+-- 无 ip_whitelist_global 表（v0.7 已删）
 ```
 
-### 16.6 安全与边界
-- 管理员 API 与 SPA 仅限内网/受控网络访问；生产应叠加独立的运维网络隔离与审计。
-- `secret` 明文仅在创建/轮换响应里出现一次，前端提示管理员立即保存；服务端只存加密值。
-- 审计入参中的 `idCard/mobile/name` 一律脱敏存储与展示（§11.5）。
-- 管理员的所有写操作（增删改、轮换、改白名单）应记录管理操作日志（本期记录到结构化日志，生产落库）。
+### 16.5 安全与边界
+- 管理 API / SPA 应仅限内网或受控网络；生产叠加 ECS 安全组。
+- `secret` 明文仅创建/轮换响应出现一次。
+- 审计与管理入参 PII 脱敏存储（`common/mask`）。
+- **不做应用层 IP 白名单**；`client_ip` 仅审计。

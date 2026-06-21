@@ -41,7 +41,7 @@ func main() {
 
 	// 4. 建用户
 	st, m, cr := harness.Call(http.MethodPost, "/admin/api/users",
-		map[string]any{"name": "admin-crud-临时", "ipWhitelist": []string{}}, auth)
+		map[string]any{"name": "admin-crud-临时", "mobile": "13800001111"}, auth)
 	user, _ := m["user"].(map[string]any)
 	licenseID, _ := user["licenseId"].(string)
 	appKey, _ := user["appKey"].(string)

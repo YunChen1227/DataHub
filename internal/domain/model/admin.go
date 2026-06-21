@@ -12,17 +12,20 @@ type AdminUser struct {
 }
 
 // UserDetail is the admin-facing aggregate view of a普通用户 (license + 成功
-// 查得数 + IP 白名单), used by the user management screens (DESIGN §16.2). v0.6
-// 起取消额度限制，仅保留 ServiceUsed (累计成功查得数)。
+// 查得数), used by the user management screens (DESIGN §16.2). v0.6 起取消额度
+// 限制，仅保留 ServiceUsed (累计成功查得数); v0.7 起新增手机号、密钥创建时间、
+// 授权过期日期，并移除每用户 IP 白名单 (IP 准入交由阿里云 ECS 安全组)。
 type UserDetail struct {
-	LicenseID   string    `json:"licenseId"`
-	AppKey      string    `json:"appKey"`
-	Name        string    `json:"name"`
-	Status      string    `json:"status"`
-	ClientUUID  string    `json:"clientUuid"`
-	ServiceUsed int64     `json:"serviceUsed"` // 累计成功查得数
-	IPWhitelist []string  `json:"ipWhitelist"`
-	CreatedAt   time.Time `json:"createdAt"`
+	LicenseID       string    `json:"licenseId"`
+	AppKey          string    `json:"appKey"`
+	Name            string    `json:"name"`
+	Mobile          string    `json:"mobile"` // 联系手机号 (前端脱敏展示)
+	Status          string    `json:"status"`
+	ClientUUID      string    `json:"clientUuid"`
+	ServiceUsed     int64     `json:"serviceUsed"`     // 累计成功查得数
+	SecretCreatedAt time.Time `json:"secretCreatedAt"` // 当前密钥创建/轮换时间
+	ValidTo         time.Time `json:"validTo"`         // 授权过期日期
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 // AuditRecord is the rich per-request audit log (DESIGN §16.3 / §16.5). It is
@@ -51,9 +54,11 @@ type AuditRecord struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
-// AuditFilter narrows an audit query (DESIGN §16.3).
+// AuditFilter narrows an audit query (DESIGN §16.3). AppKeys (任一匹配) 支持按
+// uuid/名称/手机号检索时先解析出的多个 appKey；AppKey 仍保留精确匹配入口。
 type AuditFilter struct {
 	AppKey   string
+	AppKeys  []string
 	BusiCode *int
 	Limit    int
 	Offset   int

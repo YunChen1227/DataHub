@@ -1,13 +1,21 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api.js'
 
-const emptyForm = { name: '', ipWhitelist: '' }
+const emptyForm = { name: '', mobile: '' }
 
-function parseIPs(s) {
-  return (s || '')
-    .split(/[\s,]+/)
-    .map((x) => x.trim())
-    .filter(Boolean)
+// maskMobile 脱敏：保留开头三位与尾数四位，中间以 **** 替换。
+function maskMobile(m) {
+  if (!m) return '-'
+  const s = String(m)
+  if (s.length <= 7) return s[0] + '*'.repeat(Math.max(s.length - 1, 0))
+  return s.slice(0, 3) + '****' + s.slice(-4)
+}
+
+function fmtDate(v) {
+  if (!v) return '-'
+  const d = new Date(v)
+  if (isNaN(d.getTime()) || d.getFullYear() < 1971) return '-'
+  return d.toLocaleString()
 }
 
 export default function Users() {
@@ -16,11 +24,12 @@ export default function Users() {
   const [form, setForm] = useState(emptyForm)
   const [secret, setSecret] = useState(null) // {appKey, secret, title}
   const [editing, setEditing] = useState(null)
+  const [query, setQuery] = useState('')
 
-  const load = async () => {
+  const load = async (q) => {
     setErr('')
     try {
-      const { users } = await api.listUsers()
+      const { users } = await api.listUsers(q !== undefined ? q : query)
       setUsers(users || [])
     } catch (e) {
       setErr(e.message)
@@ -28,17 +37,24 @@ export default function Users() {
   }
 
   useEffect(() => {
-    load()
+    load('')
   }, [])
+
+  const search = (e) => {
+    e.preventDefault()
+    load(query)
+  }
+
+  const resetSearch = () => {
+    setQuery('')
+    load('')
+  }
 
   const create = async (e) => {
     e.preventDefault()
     setErr('')
     try {
-      const res = await api.createUser({
-        name: form.name,
-        ipWhitelist: parseIPs(form.ipWhitelist),
-      })
+      const res = await api.createUser({ name: form.name, mobile: form.mobile })
       setForm(emptyForm)
       setSecret({ appKey: res.user.appKey, secret: res.secret, title: '新用户已创建' })
       load()
@@ -52,7 +68,7 @@ export default function Users() {
     try {
       await api.updateUser(editing.licenseId, {
         status: editing.status,
-        ipWhitelist: parseIPs(editing.ipWhitelistText),
+        mobile: editing.mobile || '',
       })
       setEditing(null)
       load()
@@ -78,6 +94,7 @@ export default function Users() {
     try {
       const { secret } = await api.rotateSecret(u.licenseId)
       setSecret({ appKey: u.appKey, secret, title: 'secret 已轮换' })
+      load()
     } catch (e) {
       setErr(e.message)
     }
@@ -93,8 +110,8 @@ export default function Users() {
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </div>
           <div>
-            <label>IP 白名单 (逗号/空格分隔, 可空)</label>
-            <input value={form.ipWhitelist} onChange={(e) => setForm({ ...form, ipWhitelist: e.target.value })} placeholder="1.2.3.4, 10.0.0.0/8" />
+            <label>手机号</label>
+            <input value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value })} placeholder="13800001234" />
           </div>
           <div>
             <button className="btn" type="submit">创建并生成密钥</button>
@@ -106,13 +123,25 @@ export default function Users() {
 
       <div className="card">
         <h2>用户列表（{users.length}）</h2>
+        <form className="toolbar" onSubmit={search}>
+          <div>
+            <label>检索（uuid / 名称 / 手机号）</label>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="输入关键字" />
+          </div>
+          <div>
+            <button className="btn" type="submit">查询</button>
+          </div>
+          <div>
+            <button className="btn ghost" type="button" onClick={resetSearch}>重置</button>
+          </div>
+        </form>
         <div style={{ overflowX: 'auto' }}>
           <table>
             <thead>
               <tr>
-                <th>appKey</th><th>名称</th><th>状态</th>
+                <th>uuid</th><th>名称</th><th>手机号</th><th>状态</th>
                 <th>成功查得数</th>
-                <th>IP 白名单</th><th>创建时间</th><th>操作</th>
+                <th>密钥创建时间</th><th>过期日期</th><th>创建时间</th><th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -120,22 +149,21 @@ export default function Users() {
                 <tr key={u.licenseId}>
                   <td><code>{u.appKey}</code></td>
                   <td>{u.name || '-'}</td>
+                  <td>{maskMobile(u.mobile)}</td>
                   <td><span className={'badge ' + u.status}>{u.status}</span></td>
                   <td><strong>{u.serviceUsed}</strong></td>
-                  <td>{(u.ipWhitelist && u.ipWhitelist.length) ? u.ipWhitelist.join(', ') : <span className="muted">不限制</span>}</td>
-                  <td className="muted">{new Date(u.createdAt).toLocaleString()}</td>
+                  <td className="muted">{fmtDate(u.secretCreatedAt)}</td>
+                  <td className="muted">{fmtDate(u.validTo)}</td>
+                  <td className="muted">{fmtDate(u.createdAt)}</td>
                   <td className="row-actions">
-                    <button className="btn ghost small" onClick={() => setEditing({
-                      ...u,
-                      ipWhitelistText: (u.ipWhitelist || []).join(', '),
-                    })}>编辑</button>
+                    <button className="btn ghost small" onClick={() => setEditing({ ...u })}>编辑</button>
                     <button className="btn ghost small" onClick={() => rotate(u)}>轮换密钥</button>
                     <button className="btn danger small" onClick={() => remove(u)}>删除</button>
                   </td>
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan="7" className="muted">暂无用户</td></tr>
+                <tr><td colSpan="9" className="muted">暂无用户</td></tr>
               )}
             </tbody>
           </table>
@@ -155,12 +183,12 @@ export default function Users() {
               </select>
             </div>
             <div className="field">
-              <label>成功查得数</label>
-              <input type="number" value={editing.serviceUsed} disabled readOnly />
+              <label>手机号</label>
+              <input value={editing.mobile || ''} onChange={(e) => setEditing({ ...editing, mobile: e.target.value })} placeholder="13800001234" />
             </div>
             <div className="field">
-              <label>IP 白名单</label>
-              <input value={editing.ipWhitelistText} onChange={(e) => setEditing({ ...editing, ipWhitelistText: e.target.value })} />
+              <label>成功查得数</label>
+              <input type="number" value={editing.serviceUsed} disabled readOnly />
             </div>
             <div className="row-actions" style={{ marginTop: 12 }}>
               <button className="btn" onClick={saveEdit}>保存</button>
@@ -174,7 +202,7 @@ export default function Users() {
         <div className="modal-backdrop" onClick={() => setSecret(null)}>
           <div className="card modal" onClick={(e) => e.stopPropagation()}>
             <h2>{secret.title}</h2>
-            <p className="muted">appKey：<code>{secret.appKey}</code></p>
+            <p className="muted">uuid：<code>{secret.appKey}</code></p>
             <p className="muted">secret（仅此一次展示，请立即保存）：</p>
             <div className="secret-box">{secret.secret}</div>
             <button className="btn" onClick={() => setSecret(null)}>我已保存</button>

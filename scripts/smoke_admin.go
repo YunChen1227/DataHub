@@ -60,9 +60,9 @@ func main() {
 	st, m = call("POST", "/admin/api/login", map[string]string{"username": "admin", "password": "wrong"}, false)
 	step("login(wrong)", st, m)
 
-	// 3. create user
+	// 3. create user (name + mobile)
 	st, m = call("POST", "/admin/api/users", map[string]any{
-		"name": "测试商户A", "ipWhitelist": []string{},
+		"name": "测试商户A", "mobile": "13812345678",
 	}, true)
 	step("createUser", st, m)
 	var licenseID string
@@ -78,9 +78,17 @@ func main() {
 		step("listUsers", st, m)
 	}
 
-	// 5. update user (suspend + per-user IP whitelist)
+	// 4b. search users by mobile
+	st, m = call("GET", "/admin/api/users?q=1381234", nil, true)
+	if arr, ok := m["users"].([]any); ok {
+		fmt.Printf("[%d] searchUsers(q=1381234) -> %d users\n", st, len(arr))
+	} else {
+		step("searchUsers", st, m)
+	}
+
+	// 5. update user (suspend + change mobile)
 	st, m = call("PATCH", "/admin/api/users/"+licenseID, map[string]any{
-		"status": "SUSPENDED", "ipWhitelist": []string{"10.0.0.0/8"},
+		"status": "SUSPENDED", "mobile": "13900009999",
 	}, true)
 	step("updateUser", st, m)
 
@@ -88,15 +96,7 @@ func main() {
 	st, m = call("POST", "/admin/api/users/"+licenseID+"/rotate-secret", nil, true)
 	step("rotateSecret", st, m)
 
-	// 7. global ip whitelist set + get
-	st, m = call("PUT", "/admin/api/ip-whitelist", map[string]any{"cidrs": []string{"127.0.0.1", "10.0.0.0/8"}}, true)
-	step("setGlobalIP", st, m)
-	st, m = call("GET", "/admin/api/ip-whitelist", nil, true)
-	step("getGlobalIP", st, m)
-	// reset to empty so it doesn't block other tests
-	call("PUT", "/admin/api/ip-whitelist", map[string]any{"cidrs": []string{}}, true)
-
-	// 8. audits (after a doCheck call below would populate; list now)
+	// 7. audits (after a doCheck call below would populate; list now)
 	st, m = call("GET", "/admin/api/audits?limit=10", nil, true)
 	if arr, ok := m["audits"].([]any); ok {
 		fmt.Printf("[%d] listAudits -> %d records\n", st, len(arr))

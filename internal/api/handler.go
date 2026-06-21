@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,28 +8,22 @@ import (
 	"github.com/datahub/relay/internal/application"
 	"github.com/datahub/relay/internal/common/appctx"
 	"github.com/datahub/relay/internal/common/errs"
-	"github.com/datahub/relay/internal/common/ipfilter"
 	"github.com/datahub/relay/internal/domain/admin"
 	"github.com/datahub/relay/internal/domain/mapping"
 	"github.com/datahub/relay/internal/domain/model"
 )
 
-// GlobalIPProvider exposes the global IP whitelist for edge enforcement (§16.4).
-type GlobalIPProvider interface {
-	GetGlobalIP(ctx context.Context) ([]string, error)
-}
-
 // Server holds the HTTP handlers and their dependencies.
 type Server struct {
-	orch     *application.QueryOrchestrator
-	admin    *admin.Service
-	globalIP GlobalIPProvider
-	spaDir   string // optional dir holding the built SPA (web/admin/dist)
+	orch   *application.QueryOrchestrator
+	admin  *admin.Service
+	spaDir string // optional dir holding the built SPA (web/admin/dist)
 }
 
 // NewServer wires the business orchestrator plus the admin console (DESIGN §16).
-func NewServer(orch *application.QueryOrchestrator, adminSvc *admin.Service, globalIP GlobalIPProvider, spaDir string) *Server {
-	return &Server{orch: orch, admin: adminSvc, globalIP: globalIP, spaDir: spaDir}
+// IP 准入自 v0.7 起交由阿里云 ECS 安全组，网关不再做 IP 白名单。
+func NewServer(orch *application.QueryOrchestrator, adminSvc *admin.Service, spaDir string) *Server {
+	return &Server{orch: orch, admin: adminSvc, spaDir: spaDir}
 }
 
 // Routes wires the public endpoints with edge middleware
@@ -49,18 +42,6 @@ func (s *Server) Routes() http.Handler {
 	return RequestIDMiddleware(mux)
 }
 
-// globalIPAllowed enforces the global whitelist at the business edge (§16.4).
-func (s *Server) globalIPAllowed(ctx context.Context) bool {
-	if s.globalIP == nil {
-		return true
-	}
-	cidrs, err := s.globalIP.GetGlobalIP(ctx)
-	if err != nil {
-		return true // fail-open on lookup error; logged elsewhere
-	}
-	return ipfilter.Allowed(appctx.ClientIP(ctx), cidrs)
-}
-
 // envelope is the请求信封 (网关 appKey/appSecret): appKey/sign/encryptionType/body.
 type envelope struct {
 	AppKey         string          `json:"appKey"`
@@ -72,11 +53,6 @@ type envelope struct {
 // handleQuery serves POST /v1/openapi/zlx/querySrmxX1 (本服务 x1 契约, DESIGN §5.1).
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	seqNo := appctx.RequestID(r.Context())
-
-	if !s.globalIPAllowed(r.Context()) {
-		writeJSON(w, mapping.Error(errs.BusiAccountAbnormal, "IP 不在白名单", seqNo, 0))
-		return
-	}
 
 	raw, _ := io.ReadAll(r.Body)
 	var env envelope
@@ -108,11 +84,6 @@ type quotaResponse struct {
 // handleQuota serves GET /v1/openapi/zlx/quota (本服务扩展). 鉴权同主接口
 // (appKey + MD5 签名)，信封从请求体读取；返回累计成功查得数。
 func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
-	if !s.globalIPAllowed(r.Context()) {
-		writeJSON(w, quotaResponse{ErrorCode: errs.ErrorCode(errs.BusiAccountAbnormal), ErrorMsg: "IP 不在白名单"})
-		return
-	}
-
 	raw, _ := io.ReadAll(r.Body)
 	var env envelope
 	_ = json.Unmarshal(raw, &env)

@@ -29,12 +29,6 @@ func (s *Server) handleQueryV9(w http.ResponseWriter, r *http.Request) {
 		Verify:  strings.TrimSpace(q.Get("verify")),
 	}
 
-	// 全局 IP 白名单 (DESIGN §16.4)。
-	if !s.globalIPAllowed(r.Context()) {
-		writeJSON(w, mapping.V9Error("012", "IP 不在白名单", req.Reqid))
-		return
-	}
-
 	// 入参校验 (income_cls.md §返回码字典)。
 	switch {
 	case req.Account == "":

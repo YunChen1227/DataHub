@@ -4,7 +4,7 @@ import { api } from '../api.js'
 export default function Audits() {
   const [rows, setRows] = useState([])
   const [err, setErr] = useState('')
-  const [appKey, setAppKey] = useState('')
+  const [keyword, setKeyword] = useState('')
   const [busiCode, setBusiCode] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -13,7 +13,7 @@ export default function Audits() {
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      if (appKey) params.set('appKey', appKey)
+      if (keyword) params.set('q', keyword)
       if (busiCode) params.set('busiCode', busiCode)
       params.set('limit', '200')
       const q = params.toString()
@@ -33,19 +33,19 @@ export default function Audits() {
   return (
     <div className="card">
       <h2>操作记录 / 审计日志</h2>
-      <div className="toolbar">
+      <form className="toolbar" onSubmit={(e) => { e.preventDefault(); load() }}>
         <div>
-          <label>appKey 筛选</label>
-          <input value={appKey} onChange={(e) => setAppKey(e.target.value)} placeholder="全部" />
+          <label>检索（uuid / 名称 / 手机号）</label>
+          <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="全部" />
         </div>
         <div>
           <label>busiCode 筛选</label>
           <input value={busiCode} onChange={(e) => setBusiCode(e.target.value)} placeholder="如 10 / 1000 / 1007" />
         </div>
         <div>
-          <button className="btn" onClick={load} disabled={loading}>{loading ? '查询中…' : '查询'}</button>
+          <button className="btn" type="submit" disabled={loading}>{loading ? '查询中…' : '查询'}</button>
         </div>
-      </div>
+      </form>
 
       {err && <div className="error">{err}</div>}
 

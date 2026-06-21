@@ -63,15 +63,17 @@ type AdminUserRepository interface {
 	PutAdmin(ctx context.Context, a *model.AdminUser) error
 }
 
-// UserAdminRepository manages普通用户 (license) lifecycle + per-user IP
-// whitelist + bound secret for the admin console (DESIGN §16.2).
+// UserAdminRepository manages普通用户 (license) lifecycle + bound secret for the
+// admin console (DESIGN §16.2). v0.7 起携带手机号；IP 准入交由阿里云 ECS 安全组。
 type UserAdminRepository interface {
 	ListUsers(ctx context.Context) ([]*model.UserDetail, error)
+	// SearchUsers 按关键字匹配 appKey / 名称 / 手机号 (任一包含即命中)。
+	SearchUsers(ctx context.Context, keyword string) ([]*model.UserDetail, error)
 	GetUser(ctx context.Context, licenseID string) (*model.UserDetail, error)
 	// CreateUser persists a new license + quota + bound secret (plaintext secret
 	// is passed in; the adapter is responsible for at-rest encryption, §11.4).
 	CreateUser(ctx context.Context, d *model.UserDetail, secret string) error
-	UpdateUser(ctx context.Context, licenseID string, status string, ipWhitelist []string) error
+	UpdateUser(ctx context.Context, licenseID string, status string, mobile string) error
 	DeleteUser(ctx context.Context, licenseID string) error
 	RotateSecret(ctx context.Context, licenseID, secret string) error
 }
@@ -80,10 +82,4 @@ type UserAdminRepository interface {
 type AuditRepository interface {
 	AppendAudit(ctx context.Context, rec *model.AuditRecord) error
 	ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.AuditRecord, error)
-}
-
-// GlobalIPRepository stores the global IP whitelist (DESIGN §16.4).
-type GlobalIPRepository interface {
-	GetGlobalIP(ctx context.Context) ([]string, error)
-	SetGlobalIP(ctx context.Context, cidrs []string) error
 }

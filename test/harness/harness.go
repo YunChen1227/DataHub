@@ -20,14 +20,14 @@ import (
 	"time"
 )
 
-// Primary test client credentials (admin-created license).
+// Primary test client credentials: the demo license seeded on a fresh DB
+// (memory seedDemo / postgres SeedDemo). v0.7 起取消 IP 白名单。
 const (
-	UserName       = "chenyun"
-	AppKey         = "mqh8zjh26ra6"
-	Secret         = "9c1f0fcdaab59fd08ae445d0379520d0"
-	ClientPublicIP = "121.35.187.243" // per-user IP whitelist entry
-	AdminUser      = "admin"
-	AdminPass      = "admin12345"
+	UserName  = "Demo 商户"
+	AppKey    = "y89098io"
+	Secret    = "demo-app-secret"
+	AdminUser = "admin"
+	AdminPass = "admin12345"
 
 	X1Path    = "/v1/openapi/zlx/querySrmxX1"
 	QuotaPath = "/v1/openapi/zlx/quota"

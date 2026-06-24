@@ -10,6 +10,10 @@ import (
 	"github.com/datahub/relay/internal/domain/model"
 )
 
+// 旧版对外 v9 下游契约 (account/key/verify 大写 MD5) 已下线：三版本对外统一为
+// x1 信封格式 (appKey + 小写 MD5 加签)，仅靠路由名区分。经济能力上游侧的大写
+// MD5 签名逻辑迁入 infrastructure/upstream/income.go。
+
 // Md5Verifier implements port.SignatureVerifier per DESIGN §8.1 / PDF §3.1:
 //
 //	待签名串 = 对 body 非空业务参数按参数名 ASCII 升序拼接 (name+value)…，末尾追加 secret
@@ -29,38 +33,6 @@ func (Md5Verifier) Verify(req *model.SignedRequest, secret string) bool {
 	}
 	// constant-time compare to avoid timing side channels.
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(got)) == 1
-}
-
-// SignV9 computes the旧版 v9 (income_cls.md §输入参数) request signature:
-//
-//	verify = MD5(account + idCard + mobile + reqid + key).toUpperCase()
-//
-// key 为客户 appSecret。第三方旧契约口径，不可更改。
-func SignV9(account, idCard, mobile, reqid, key string) string {
-	sum := md5.Sum([]byte(account + idCard + mobile + reqid + key))
-	return strings.ToUpper(hex.EncodeToString(sum[:]))
-}
-
-// SignV9Response signs the旧版 v9 响应 over its是签名字段 (income_cls.md §返回参数:
-// code、uid 为是签名)：
-//
-//	verify = MD5(code + uid + key).toUpperCase()
-//
-// 注：income_cls.md 未给出响应签名的精确公式，此处沿用"是签名字段顺序+key"的一致口径，
-// 待与旧版实现联调确认。
-func SignV9Response(code, uid, key string) string {
-	sum := md5.Sum([]byte(code + uid + key))
-	return strings.ToUpper(hex.EncodeToString(sum[:]))
-}
-
-// EqualFoldSig compares two signatures case-insensitively in constant time.
-func EqualFoldSig(a, b string) bool {
-	a = strings.ToUpper(strings.TrimSpace(a))
-	b = strings.ToUpper(strings.TrimSpace(b))
-	if a == "" || len(a) != len(b) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // Sign computes the client MD5 signature over the non-empty body params

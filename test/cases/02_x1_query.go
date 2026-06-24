@@ -71,9 +71,10 @@ func testSuspended(rec *harness.Recorder) {
 		return
 	}
 	auth := harness.AuthHeader(token)
+	adminBase := harness.AdminBase("x1")
 
 	// create
-	st, m, cr := harness.Call(http.MethodPost, "/admin/api/users",
+	st, m, cr := harness.Call(http.MethodPost, adminBase+"/users",
 		map[string]any{"name": "x1-suspend-临时", "mobile": "13800002222"}, auth)
 	if st != 200 {
 		rec.Skip("SUSPENDED 用户拦截", "errorCode=505007", "建用户失败: "+cr)
@@ -83,14 +84,14 @@ func testSuspended(rec *harness.Recorder) {
 	licenseID, _ := user["licenseId"].(string)
 	appKey, _ := user["appKey"].(string)
 	secret, _ := m["secret"].(string)
-	defer harness.Call(http.MethodDelete, "/admin/api/users/"+licenseID, nil, auth)
+	defer harness.Call(http.MethodDelete, adminBase+"/users/"+licenseID, nil, auth)
 
 	// 健全性：新用户可成功查得
 	r := harness.QueryX1(appKey, secret, base(), nil)
 	rec.Check("新建用户可查得", "errorCode=0 & body.code=001", r.ErrorCode == "0" && r.BodyCode == "001", r.Raw)
 
 	// suspend
-	stp, _, pr := harness.Call(http.MethodPatch, "/admin/api/users/"+licenseID,
+	stp, _, pr := harness.Call(http.MethodPatch, adminBase+"/users/"+licenseID,
 		map[string]any{"status": "SUSPENDED"}, auth)
 	if stp != 200 {
 		rec.Skip("SUSPENDED 用户拦截", "errorCode=505007", "停用失败: "+pr)

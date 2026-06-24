@@ -1,24 +1,24 @@
 //go:build ignore
 
-// 03_v9_query: v9 版本对外接口 POST /v1/openapi/zlx/querySrmxV9（与 x1 完全一致的
-// 信封格式，仅路由名不同；内部对接 v9 独立上游）。全场景：成功/查无/各类鉴权与参数
+// 05_v8_query: v8 版本对外接口 POST /v1/openapi/zlx/querySrmxV8（与 x1 完全一致的
+// 信封格式，仅路由名不同；内部对接 v8 独立上游）。全场景：成功/查无/各类鉴权与参数
 // 错误/二次成功。
 //
-// Run: go run test/cases/03_v9_query.go
+// Run: go run test/cases/05_v8_query.go
 package main
 
 import (
 	"github.com/datahub/relay/test/harness"
 )
 
-const version = "v9"
+const version = "v8"
 
 func base() map[string]string {
 	return map[string]string{"mobile": "13809091009", "idCard": "330129199109094312", "name": "张三"}
 }
 
 func main() {
-	rec := harness.NewRecorder("03_v9_query", "v9 主接口全场景 (x1 信封格式)")
+	rec := harness.NewRecorder("05_v8_query", "v8 主接口全场景 (x1 信封格式)")
 	defer rec.Finish()
 
 	// 1. 成功

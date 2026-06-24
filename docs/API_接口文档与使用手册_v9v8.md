@@ -1,24 +1,29 @@
-# 经济能力查询服务 · API 接口文档与使用手册
+# 经济能力查询服务 · API 接口文档与使用手册（V9 / V8）
 
 > 面向接入方（客户）技术与运维人员的对外接口说明。  
-> 版本：x1 ｜ 通信：HTTPS + JSON ｜ 编码：UTF-8
+> 版本：V9 / V8 ｜ 通信：HTTPS + JSON ｜ 编码：UTF-8
+
+> 说明：V9 与 V8 为两套相互独立的服务版本，**接口格式、鉴权、加签、返回码完全一致**，
+> 仅**请求路径名不同**（`querySrmxV9` / `querySrmxV8`、`quotaV9` / `quotaV8`）。
+> 两版本的账户、密钥、调用统计与计费各自独立、互不影响；请按商务为贵方开通的版本选用对应路径。
 
 ---
 
 ## 一、接入必读
 
 ### 1.1 适用范围
-本文档适用于接入本平台「经济能力查询服务」的第三方产品技术开发人员与日常运维人员。
+本文档适用于接入本平台「经济能力查询服务」V9 / V8 版本的第三方产品技术开发人员与日常运维人员。
 
 ### 1.2 接入须知
 1. 正式访问域名在接入时由我方商务提供。
 2. 接入前需先申请开通账户，由我方分配 **`appKey`** 与 **`appSecret`**（加签密钥）。
+3. 商务会告知贵方开通的版本（V9 或 V8），请使用对应版本的请求路径。
 
 ### 1.3 接口说明
 
 | 项目 | 说明 |
 |---|---|
-| 请求方式 | `POST`（配额查询为 `GET`） |
+| 请求方式 | `POST`（成功查得数查询为 `GET`） |
 | 通信协议 | HTTPS |
 | 数据格式 | 请求体与响应体均为 JSON |
 | 字符编码 | UTF-8 |
@@ -35,7 +40,7 @@
 
 ## 二、鉴权与加签
 
-所有业务接口共用同一套请求信封与鉴权方式。
+所有业务接口共用同一套请求信封与鉴权方式（与 V9/V8 路径无关）。
 
 ### 2.1 请求信封（顶层参数）
 
@@ -46,7 +51,7 @@
 | `encryptionType` | `1` | int | 否 | 参数加密类型，`1` = 明文（默认） |
 | `body` | `{...}` | Object | 是 | 业务请求体，见各接口定义 |
 
-> 注意：本服务**不需要** `apiKey` 参数（产品由请求路径区分）。`appKey` / `sign` / `encryptionType` **不参与**签名计算。
+> 注意：本服务**不需要** `apiKey` 参数（版本由请求路径区分）。`appKey` / `sign` / `encryptionType` **不参与**签名计算。
 
 ### 2.2 鉴权校验顺序
 网关按以下顺序校验，任一失败立即返回对应 `head.errorCode`（不调用上游、不计费）：
@@ -137,13 +142,16 @@ func sign(body map[string]string, appSecret string) string {
 
 ## 三、接口列表
 
-### 3.1 经济能力评分查询（x1）
+### 3.1 经济能力评分查询（V9 / V8）
 
 | 项目 | 内容 |
 |---|---|
-| 路径 | `POST /v1/openapi/zlx/querySrmxX1` |
-| 完整地址 | `https://{网关域名}/v1/openapi/zlx/querySrmxX1` |
+| 路径（V9） | `POST /v1/openapi/zlx/querySrmxV9` |
+| 路径（V8） | `POST /v1/openapi/zlx/querySrmxV8` |
+| 完整地址 | `https://{网关域名}/v1/openapi/zlx/querySrmxV9`（或 `...querySrmxV8`） |
 | 鉴权 | appKey + MD5 签名（见第二章） |
+
+> 请按贵方开通的版本选用对应路径；两者请求/响应结构完全一致。
 
 #### 3.1.1 请求 `body` 参数
 
@@ -235,11 +243,12 @@ func sign(body map[string]string, appSecret string) string {
 
 ### 3.2 成功查得数查询（扩展接口）
 
-查询本账户累计成功查得数据的次数，用于客户侧自助监控。自 v0.6 起取消额度限制，不再返回额度上限/剩余量。
+查询本账户累计成功查得数据的次数，用于客户侧自助监控。无额度限制，不返回额度上限/剩余量。
 
 | 项目 | 内容 |
 |---|---|
-| 路径 | `GET /v1/openapi/zlx/quotaX1` |
+| 路径（V9） | `GET /v1/openapi/zlx/quotaV9` |
+| 路径（V8） | `GET /v1/openapi/zlx/quotaV8` |
 | 鉴权 | 与主接口一致（请求体中携带 `appKey` + `sign` 信封；`body` 可为 `{}`，此时 `sign = MD5(appSecret)`） |
 
 #### 响应示例
@@ -255,9 +264,9 @@ func sign(body map[string]string, appSecret string) string {
 | 参数 | 说明 |
 |---|---|
 | `status` | 账户状态（ACTIVE/SUSPENDED 等） |
-| `serviceUsed` | 累计成功查得数据的次数（仅统计 busiCode 10 查得成功） |
+| `serviceUsed` | 累计成功查得数据的次数（仅统计查得成功） |
 
-> 说明：无任何额度上限拦截，仅做成功查得数统计。
+> 说明：无任何额度上限拦截，仅做成功查得数统计；该统计在 V9 / V8 之间相互独立。
 
 ---
 
@@ -298,15 +307,16 @@ func sign(body map[string]string, appSecret string) string {
 
 - **仅当返回 `body.code = 001`（查得数据）时，才计入服务额度并对客户计费。**
 - `body.code = 999`（查无结果）**不计费**。
-- 网关级错误（`head.errorCode` 非 0：鉴权失败、参数非法、配额不足、系统异常等）**一律不计费**。
+- 网关级错误（`head.errorCode` 非 0：鉴权失败、参数非法、系统异常等）**一律不计费**。
 - 计费以最终落库的台账为准，超时未决请求会经异步复查/对账裁定状态，不会重复计费。
+- V9 与 V8 的计费与台账完全独立。
 
 ---
 
 ## 六、使用手册（接入与最佳实践）
 
 ### 6.1 接入流程
-1. 向商务申请账户，获取 `appKey`、`appSecret`、正式/测试域名。
+1. 向商务申请账户，获取 `appKey`、`appSecret`、正式/测试域名，并确认开通的版本（V9 或 V8）。
 2. 按第二章实现加签，先在测试环境联调，再切正式环境。
 3. 上线后通过成功查得数查询接口（3.2）监控调用量。
 
@@ -319,7 +329,7 @@ func sign(body map[string]string, appSecret string) string {
 
 | 现象 | 排查方向 |
 |---|---|
-| `505001 / 505004` | 检查 `appKey` 是否正确、是否用错环境账户 |
+| `505001 / 505004` | 检查 `appKey` 是否正确、是否用错环境账户、是否用错版本路径 |
 | `505002` | 检查签名算法（排序/空值剔除/UTF-8/小写 hex） |
 | `505007` | 联系商务确认账户状态与有效期 |
 | `505062` | 检查 `mobile`/`idCard` 格式；若入参正常仍持续出现，记录 `logId` 联系我方 |
@@ -327,7 +337,7 @@ func sign(body map[string]string, appSecret string) string {
 > 任何异常排查请一并提供响应中的 `head.logId`，便于我方全链路定位。
 
 ### 6.4 联调自检清单
-- [ ] 域名、`appKey`、`appSecret`、环境匹配无误
+- [ ] 域名、`appKey`、`appSecret`、环境、版本路径（V9/V8）匹配无误
 - [ ] 待签名串严格按 ASCII 升序拼接、剔除空值、UTF-8、MD5 小写
 - [ ] 能正确解析 `head.errorCode` 与 `body.code` 两级状态
 - [ ] 已实现超时重试（依赖幂等，不重复计费）
@@ -341,5 +351,4 @@ func sign(body map[string]string, appSecret string) string {
 | `appKey` | 公开账户标识，随请求明文传输 |
 | `appSecret` | 加签密钥，仅本地保存用于计算 `sign`，**切勿泄露或随请求传输** |
 | `logId` | 全链路追踪 ID（= `head.logId`），排障/对账唯一凭据 |
-| 维度① | 服务额度（对客户计费口径，仅查得计数） |
 | `range` | 经济能力评分，取值 1–51 |

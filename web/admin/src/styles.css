@@ -48,6 +48,9 @@ a { color: var(--accent); }
 .nav button.active { background: var(--panel-2); color: var(--text); }
 .nav button:hover { color: var(--text); }
 
+.version-switch { display: flex; gap: 4px; align-items: center; }
+.version-switch .btn { min-width: 38px; }
+
 .container { max-width: 1180px; margin: 24px auto; padding: 0 24px; }
 
 .card {

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/datahub/relay/internal/common/errs"
@@ -43,8 +44,20 @@ func Parse(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	}, nil
 }
 
-// NewReqid generates an internal upstream reqid（base36 时间戳，≤13 位，满足各
-// 上游 reqid ≤20 的约束）。
+// reqidSeq guarantees in-process uniqueness even when the wall clock does not
+// advance between two rapid calls (Windows time.Now() can have coarse ~ms
+// granularity, so consecutive UnixNano() values may be identical and cause
+// reqid collisions → idempotency replay).
+var reqidSeq atomic.Uint64
+
+// NewReqid generates an internal upstream reqid（base36 时间戳 + 进程内自增序号，
+// ≤20 位，满足各上游 reqid ≤20 的约束并保证同进程内绝不重复）。
 func NewReqid() string {
-	return strconv.FormatInt(time.Now().UnixNano(), 36)
+	ts := strconv.FormatInt(time.Now().UnixNano(), 36) // ≤13 位
+	seq := strconv.FormatUint(reqidSeq.Add(1)%46656, 36) // 1–3 位 (36^3)
+	r := ts + seq
+	if len(r) > 20 {
+		r = r[:20]
+	}
+	return r
 }

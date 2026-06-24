@@ -1,6 +1,8 @@
 //go:build ignore
 
-// Drop legacy tables and re-apply migrations on dev_db + prod_db (Aliyun RDS).
+// Create/recreate + migrate + seed the three per-version databases on the Aliyun
+// RDS instance (datahub_x1_db / datahub_v9_db / datahub_v8_db, or whatever names
+// the config's versions.*.database.name specify). Each version is fully isolated.
 // Usage:
 //
 //	CONFIG_FILE=config.aliyun.e2e.yaml go run ./scripts/recreate_databases.go
@@ -19,10 +21,7 @@ import (
 	"github.com/datahub/relay/internal/infrastructure/persistence/postgres"
 )
 
-type fileConfig struct {
-	Storage struct {
-		MigrationsDir string `yaml:"migrationsDir"`
-	} `yaml:"storage"`
+type fileVersion struct {
 	Database struct {
 		Host     string `yaml:"host"`
 		Port     int    `yaml:"port"`
@@ -34,8 +33,18 @@ type fileConfig struct {
 	} `yaml:"database"`
 }
 
+type fileConfig struct {
+	Storage struct {
+		MigrationsDir string `yaml:"migrationsDir"`
+	} `yaml:"storage"`
+	Versions map[string]fileVersion `yaml:"versions"`
+}
+
+// versionOrder keeps a deterministic processing order matching model.Versions.
+var versionOrder = []string{"x1", "v9", "v8"}
+
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	path := os.Getenv("CONFIG_FILE")
@@ -54,59 +63,55 @@ func main() {
 	if migDir == "" {
 		migDir = "migrations"
 	}
-	devDB := fc.Database.Name
-	if devDB == "" {
-		devDB = "dev_db"
-	}
-	prodDB := "prod_db"
 
 	recreateSQL, err := os.ReadFile("scripts/recreate_schema.sql")
 	if err != nil {
 		fatal("read recreate_schema.sql: %v", err)
 	}
 
-	// 1) dev_db: drop old tables
-	fmt.Println("== dev_db: drop legacy tables ==")
-	if err := execSQL(ctx, dsn(fc, devDB), string(recreateSQL)); err != nil {
-		fatal("dev_db recreate: %v", err)
+	for _, v := range versionOrder {
+		fv, ok := fc.Versions[v]
+		if !ok || fv.Database.Name == "" {
+			fmt.Printf("== %s: no database configured, skipping ==\n", v)
+			continue
+		}
+		dbName := fv.Database.Name
+		fmt.Printf("== %s: ensure database %s exists ==\n", v, dbName)
+		// Bootstrap connection: use this version's own host/user but connect to the
+		// default 'postgres' maintenance DB to issue CREATE DATABASE if needed.
+		if err := ensureDatabase(ctx, fv, "postgres", dbName); err != nil {
+			// Aliyun RDS sometimes blocks the postgres maintenance DB; fall back to
+			// assuming the database already exists.
+			fmt.Printf("  (ensureDatabase warning for %s: %v; assuming it exists)\n", dbName, err)
+		}
+		fmt.Printf("== %s: drop legacy tables on %s ==\n", v, dbName)
+		if err := execSQL(ctx, dsn(fv, dbName), string(recreateSQL)); err != nil {
+			fatal("%s recreate: %v", v, err)
+		}
+		if err := migrateAndSeed(ctx, fv, dbName, migDir); err != nil {
+			fatal("%s migrate: %v", v, err)
+		}
+		fmt.Printf("%s (%s) OK\n", v, dbName)
 	}
-	if err := migrateAndSeed(ctx, fc, devDB, migDir); err != nil {
-		fatal("dev_db migrate: %v", err)
-	}
-	fmt.Println("dev_db OK")
-
-	// 2) prod_db: create if missing, then migrate
-	fmt.Println("== prod_db: ensure database exists ==")
-	if err := ensureDatabase(ctx, fc, devDB, prodDB); err != nil {
-		fatal("create prod_db: %v", err)
-	}
-	fmt.Println("== prod_db: drop legacy tables (if any) ==")
-	if err := execSQL(ctx, dsn(fc, prodDB), string(recreateSQL)); err != nil {
-		fatal("prod_db recreate: %v", err)
-	}
-	if err := migrateAndSeed(ctx, fc, prodDB, migDir); err != nil {
-		fatal("prod_db migrate: %v", err)
-	}
-	fmt.Println("prod_db OK")
-	fmt.Println("\nDone. dev_db + prod_db rebuilt with v0.7 schema.")
+	fmt.Println("\nDone. All configured version databases rebuilt.")
 }
 
-func dsn(fc fileConfig, dbName string) string {
-	port := fc.Database.Port
+func dsn(fv fileVersion, dbName string) string {
+	port := fv.Database.Port
 	if port == 0 {
 		port = 5432
 	}
-	ssl := fc.Database.SSLMode
+	ssl := fv.Database.SSLMode
 	if ssl == "" {
 		ssl = "disable"
 	}
-	maxConns := fc.Database.MaxConns
+	maxConns := fv.Database.MaxConns
 	if maxConns == 0 {
 		maxConns = 10
 	}
 	return fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s pool_max_conns=%d",
-		fc.Database.Host, port, fc.Database.User, fc.Database.Password, dbName, ssl, maxConns,
+		fv.Database.Host, port, fv.Database.User, fv.Database.Password, dbName, ssl, maxConns,
 	)
 }
 
@@ -124,8 +129,8 @@ func execSQL(ctx context.Context, connDSN, sqlText string) error {
 	return nil
 }
 
-func ensureDatabase(ctx context.Context, fc fileConfig, adminDB, newDB string) error {
-	pool, err := pgxpool.New(ctx, dsn(fc, adminDB))
+func ensureDatabase(ctx context.Context, fv fileVersion, adminDB, newDB string) error {
+	pool, err := pgxpool.New(ctx, dsn(fv, adminDB))
 	if err != nil {
 		return err
 	}
@@ -137,19 +142,18 @@ func ensureDatabase(ctx context.Context, fc fileConfig, adminDB, newDB string) e
 		return err
 	}
 	if exists {
-		fmt.Printf("database %s already exists\n", newDB)
+		fmt.Printf("  database %s already exists\n", newDB)
 		return nil
 	}
-	// CREATE DATABASE cannot run inside a transaction block; use a single Exec.
 	if _, err := pool.Exec(ctx, "CREATE DATABASE "+quoteIdent(newDB)); err != nil {
 		return err
 	}
-	fmt.Printf("created database %s\n", newDB)
+	fmt.Printf("  created database %s\n", newDB)
 	return nil
 }
 
-func migrateAndSeed(ctx context.Context, fc fileConfig, dbName, migDir string) error {
-	store, err := postgres.New(ctx, dsn(fc, dbName))
+func migrateAndSeed(ctx context.Context, fv fileVersion, dbName, migDir string) error {
+	store, err := postgres.New(ctx, dsn(fv, dbName))
 	if err != nil {
 		return err
 	}

@@ -105,8 +105,8 @@ func main() {
 		"sign":           sign(map[string]string{}, secret),
 		"body":           map[string]string{},
 	}
-	st, body, err = call(http.MethodGet, "/v1/openapi/zlx/quota", quotaPayload)
-	check("GET /v1/openapi/zlx/quota", st, body, err)
+	st, body, err = call(http.MethodGet, "/v1/openapi/zlx/quotaX1", quotaPayload)
+	check("GET /v1/openapi/zlx/quotaX1", st, body, err)
 
 	if ok {
 		fmt.Println("\nAll routes responded successfully.")

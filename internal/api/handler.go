@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/datahub/relay/internal/application"
 	"github.com/datahub/relay/internal/common/appctx"
@@ -13,27 +14,39 @@ import (
 	"github.com/datahub/relay/internal/domain/model"
 )
 
-// Server holds the HTTP handlers and their dependencies.
+// VersionStack bundles the per-version dependencies (独立 orchestrator + 独立
+// 后台服务，各自连独立数据库/上游)。三版本对外接口完全一致，仅靠路由名区分。
+type VersionStack struct {
+	Orch  *application.QueryOrchestrator
+	Admin *admin.Service
+}
+
+// Server holds the HTTP handlers and their per-version dependencies.
 type Server struct {
-	orch   *application.QueryOrchestrator
-	admin  *admin.Service
-	spaDir string // optional dir holding the built SPA (web/admin/dist)
+	stacks  map[string]*VersionStack // version -> stack (x1/v9/v8)
+	control *admin.Service           // 后台登录 + JWT 校验的控制面 (= x1)
+	spaDir  string                   // optional dir holding the built SPA (web/admin/dist)
 }
 
-// NewServer wires the business orchestrator plus the admin console (DESIGN §16).
-// IP 准入自 v0.7 起交由阿里云 ECS 安全组，网关不再做 IP 白名单。
-func NewServer(orch *application.QueryOrchestrator, adminSvc *admin.Service, spaDir string) *Server {
-	return &Server{orch: orch, admin: adminSvc, spaDir: spaDir}
+// NewServer wires the per-version stacks plus the admin console (DESIGN §16).
+// control 为后台统一登录/鉴权的控制面 (x1 版本的 admin.Service)。
+func NewServer(stacks map[string]*VersionStack, control *admin.Service, spaDir string) *Server {
+	return &Server{stacks: stacks, control: control, spaDir: spaDir}
 }
 
-// Routes wires the public endpoints with edge middleware
-// (当前 x1 契约 + 旧版 v9 兼容 / DESIGN §5/§16). 网关前缀 /v1。
+// Routes wires the public endpoints with edge middleware (DESIGN §5/§16). 三版本
+// 对外统一为 x1 信封格式，仅靠路由名区分：querySrmx{X1,V9,V8} / quota{X1,V9,V8}。
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/openapi/zlx/querySrmxX1", s.handleQuery)
-	mux.HandleFunc("GET /v1/openapi/zlx/quota", s.handleQuota)
-	// 旧版 v9 下游契约 (income_cls.md): HTTP GET, account/key 验签。兼容老客户。
-	mux.HandleFunc("GET /yrzx/finan/net/10w/v9", s.handleQueryV9)
+	for _, v := range model.Versions {
+		st := s.stacks[v]
+		if st == nil {
+			continue
+		}
+		suffix := strings.ToUpper(v) // x1->X1, v9->V9, v8->V8
+		mux.HandleFunc("POST /v1/openapi/zlx/querySrmx"+suffix, s.handleQuery(st))
+		mux.HandleFunc("GET /v1/openapi/zlx/quota"+suffix, s.handleQuota(st))
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
@@ -50,29 +63,32 @@ type envelope struct {
 	Body           json.RawMessage `json:"body"`
 }
 
-// handleQuery serves POST /v1/openapi/zlx/querySrmxX1 (本服务 x1 契约, DESIGN §5.1).
-func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
-	seqNo := appctx.RequestID(r.Context())
+// handleQuery serves POST /v1/openapi/zlx/querySrmx{X1,V9,V8}: 统一 x1 信封格式,
+// 由对应版本的 orchestrator 调用各自上游 (DESIGN §5.1)。
+func (s *Server) handleQuery(st *VersionStack) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		seqNo := appctx.RequestID(r.Context())
 
-	raw, _ := io.ReadAll(r.Body)
-	var env envelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		writeJSON(w, mapping.Error(errs.BusiDataRequestErr, "请求体解析失败", seqNo, 0))
-		return
-	}
-
-	var cmd model.QueryCommand
-	if len(env.Body) > 0 {
-		if err := json.Unmarshal(env.Body, &cmd); err != nil {
+		raw, _ := io.ReadAll(r.Body)
+		var env envelope
+		if err := json.Unmarshal(raw, &env); err != nil {
 			writeJSON(w, mapping.Error(errs.BusiDataRequestErr, "请求体解析失败", seqNo, 0))
 			return
 		}
-	}
 
-	writeJSON(w, s.orch.Handle(r.Context(), signedFrom(&env), &cmd))
+		var cmd model.QueryCommand
+		if len(env.Body) > 0 {
+			if err := json.Unmarshal(env.Body, &cmd); err != nil {
+				writeJSON(w, mapping.Error(errs.BusiDataRequestErr, "请求体解析失败", seqNo, 0))
+				return
+			}
+		}
+
+		writeJSON(w, st.Orch.Handle(r.Context(), signedFrom(&env), &cmd))
+	}
 }
 
-// quotaResponse is本服务扩展的查询响应 (.doc 未定义, 内部/admin 使用). 无额度限制，
+// quotaResponse is本服务扩展的查询响应 (内部/admin 使用). 无额度限制，
 // serviceUsed = 累计成功查得数据的次数。
 type quotaResponse struct {
 	ErrorCode   string `json:"errorCode"`
@@ -81,25 +97,27 @@ type quotaResponse struct {
 	ServiceUsed int64  `json:"serviceUsed"` // 成功查得数据次数（累计）
 }
 
-// handleQuota serves GET /v1/openapi/zlx/quota (本服务扩展). 鉴权同主接口
-// (appKey + MD5 签名)，信封从请求体读取；返回累计成功查得数。
-func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
-	raw, _ := io.ReadAll(r.Body)
-	var env envelope
-	_ = json.Unmarshal(raw, &env)
+// handleQuota serves GET /v1/openapi/zlx/quota{X1,V9,V8} (本服务扩展). 鉴权同主接口
+// (appKey + MD5 签名)，信封从请求体读取；返回该版本下累计成功查得数。
+func (s *Server) handleQuota(st *VersionStack) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var env envelope
+		_ = json.Unmarshal(raw, &env)
 
-	view, _, err := s.orch.QuotaQuery(r.Context(), signedFrom(&env))
-	if err != nil {
-		ae := errs.AsAppError(err)
-		writeJSON(w, quotaResponse{ErrorCode: errs.ErrorCode(ae.Busi), ErrorMsg: ae.Msg})
-		return
+		view, _, err := st.Orch.QuotaQuery(r.Context(), signedFrom(&env))
+		if err != nil {
+			ae := errs.AsAppError(err)
+			writeJSON(w, quotaResponse{ErrorCode: errs.ErrorCode(ae.Busi), ErrorMsg: ae.Msg})
+			return
+		}
+		writeJSON(w, quotaResponse{
+			ErrorCode:   errs.ErrorCodeOK,
+			ErrorMsg:    "success",
+			Status:      view.Status,
+			ServiceUsed: view.Used,
+		})
 	}
-	writeJSON(w, quotaResponse{
-		ErrorCode:   errs.ErrorCodeOK,
-		ErrorMsg:    "success",
-		Status:      view.Status,
-		ServiceUsed: view.Used,
-	})
 }
 
 // signedFrom extracts the signature material from the request envelope.

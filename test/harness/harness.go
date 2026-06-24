@@ -1,8 +1,8 @@
 // Package harness provides shared helpers for the DataHub fixed test suite under
-// test/cases/*.go. It centralizes the downstream signing schemes (x1 lowercase
-// sorted-body MD5; v9 uppercase account+idCard+mobile+reqid+key MD5), an HTTP
-// client against the running relay, admin login, and the structured result
-// recorder that each case writes to $RESULT_DIR/<suite>.json.
+// test/cases/*.go. 三版本 (x1/v9/v8) 对外接口完全一致 (x1 信封格式: 小写 sorted-body
+// MD5 加签)，仅靠路由名区分。It centralizes the x1 signing scheme, an HTTP client
+// against the running relay, version-scoped admin helpers, and the structured
+// result recorder that each case writes to $RESULT_DIR/<suite>.json.
 package harness
 
 import (
@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -20,19 +19,33 @@ import (
 	"time"
 )
 
-// Primary test client credentials: the demo license seeded on a fresh DB
-// (memory seedDemo / postgres SeedDemo). v0.7 起取消 IP 白名单。
+// Primary test client credentials: the demo license seeded on a fresh store
+// (memory seedDemo / postgres SeedDemo) in EVERY version's独立 store.
 const (
 	UserName  = "Demo 商户"
 	AppKey    = "y89098io"
 	Secret    = "demo-app-secret"
 	AdminUser = "admin"
 	AdminPass = "admin12345"
-
-	X1Path    = "/v1/openapi/zlx/querySrmxX1"
-	QuotaPath = "/v1/openapi/zlx/quota"
-	V9Path    = "/yrzx/finan/net/10w/v9"
 )
+
+// Versions is the ordered list of service versions under test.
+var Versions = []string{"x1", "v9", "v8"}
+
+// QueryPath returns the public query route for a version (统一 x1 信封, POST)。
+func QueryPath(version string) string {
+	return "/v1/openapi/zlx/querySrmx" + strings.ToUpper(version)
+}
+
+// QuotaPath returns the per-version quota route (GET, 同主接口鉴权)。
+func QuotaPath(version string) string {
+	return "/v1/openapi/zlx/quota" + strings.ToUpper(version)
+}
+
+// AdminBase returns the version-scoped admin API prefix (/admin/api/{ver})。
+func AdminBase(version string) string {
+	return "/admin/api/" + version
+}
 
 // BaseURL is the relay address (override via RELAY_BASE_URL).
 func BaseURL() string {
@@ -60,12 +73,6 @@ func SignX1(params map[string]string, secret string) string {
 	sb.WriteString(secret)
 	sum := md5.Sum([]byte(sb.String()))
 	return hex.EncodeToString(sum[:])
-}
-
-// SignV9 builds the旧版 v9 request signature: MD5(account+idCard+mobile+reqid+key) 大写。
-func SignV9(account, idCard, mobile, reqid, key string) string {
-	sum := md5.Sum([]byte(account + idCard + mobile + reqid + key))
-	return strings.ToUpper(hex.EncodeToString(sum[:]))
 }
 
 // Call issues an HTTP request and returns (status, decoded-json-map, raw-body).
@@ -97,7 +104,7 @@ func Call(method, path string, body any, headers map[string]string) (int, map[st
 	return resp.StatusCode, m, string(raw)
 }
 
-// X1Result is a parsed x1 response.
+// X1Result is a parsed query response (统一 x1 信封, 三版本通用)。
 type X1Result struct {
 	HTTPStatus int
 	ErrorCode  string // head.errorCode
@@ -106,9 +113,10 @@ type X1Result struct {
 	Raw        string
 }
 
-// QueryX1 builds the信封, signs the body, optionally overrides envelope fields
-// (e.g. {"sign":"bad"} or {"appKey":""}), and returns the parsed response.
-func QueryX1(appKey, secret string, body map[string]string, overrides map[string]any) X1Result {
+// Query builds the信封, signs the body, optionally overrides envelope fields
+// (e.g. {"sign":"bad"} or {"appKey":""}), POSTs to the given version's route,
+// and returns the parsed response.
+func Query(version, appKey, secret string, body map[string]string, overrides map[string]any) X1Result {
 	payload := map[string]any{
 		"encryptionType": 1,
 		"appKey":         appKey,
@@ -118,7 +126,7 @@ func QueryX1(appKey, secret string, body map[string]string, overrides map[string
 	for k, v := range overrides {
 		payload[k] = v
 	}
-	st, m, raw := Call(http.MethodPost, X1Path, payload, nil)
+	st, m, raw := Call(http.MethodPost, QueryPath(version), payload, nil)
 	r := X1Result{HTTPStatus: st, Raw: raw}
 	if head, ok := m["head"].(map[string]any); ok {
 		r.ErrorCode, _ = head["errorCode"].(string)
@@ -132,47 +140,21 @@ func QueryX1(appKey, secret string, body map[string]string, overrides map[string
 	return r
 }
 
-// V9Result is a parsed v9 response.
-type V9Result struct {
-	HTTPStatus int
-	Code       string
-	Range      string
-	Verify     string
-	Raw        string
+// QueryX1 is a convenience wrapper for the x1 version (backwards-compatible).
+func QueryX1(appKey, secret string, body map[string]string, overrides map[string]any) X1Result {
+	return Query("x1", appKey, secret, body, overrides)
 }
 
-// QueryV9 issues GET /yrzx/finan/net/10w/v9 with the given params (verify is the
-// caller-supplied signature so bad-signature cases can be exercised).
-func QueryV9(account, idCard, name, mobile, reqid, verify string) V9Result {
-	q := url.Values{}
-	q.Set("account", account)
-	q.Set("idCard", idCard)
-	if name != "" {
-		q.Set("name", name)
-	}
-	q.Set("mobile", mobile)
-	q.Set("reqid", reqid)
-	q.Set("verify", verify)
-	st, m, raw := Call(http.MethodGet, V9Path+"?"+q.Encode(), nil, nil)
-	r := V9Result{HTTPStatus: st, Raw: raw}
-	r.Code, _ = m["code"].(string)
-	r.Verify, _ = m["verify"].(string)
-	if res, ok := m["result"].(map[string]any); ok {
-		r.Range, _ = res["range"].(string)
-	}
-	return r
-}
-
-// ServiceUsed reads the cumulative 成功查得数 via /quota for the demo appKey.
+// ServiceUsed reads the cumulative 成功查得数 via the version's /quota route.
 // Returns -1 when the field is absent (error path).
-func ServiceUsed(appKey, secret string) float64 {
+func ServiceUsed(version, appKey, secret string) float64 {
 	payload := map[string]any{
 		"encryptionType": 1,
 		"appKey":         appKey,
 		"sign":           SignX1(map[string]string{}, secret),
 		"body":           map[string]string{},
 	}
-	_, m, _ := Call(http.MethodGet, QuotaPath, payload, nil)
+	_, m, _ := Call(http.MethodGet, QuotaPath(version), payload, nil)
 	if u, ok := m["serviceUsed"].(float64); ok {
 		return u
 	}
@@ -195,7 +177,7 @@ func AuthHeader(token string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + token}
 }
 
-// ShortReqid builds a unique v9 reqid (≤20 chars) for idempotency-sensitive cases.
+// ShortReqid builds a unique reqid (≤20 chars) for idempotency-sensitive cases.
 func ShortReqid(prefix string) string {
 	r := prefix + strconv.FormatInt(time.Now().UnixNano(), 36)
 	if len(r) > 20 {

@@ -13,7 +13,10 @@ import (
 	"os"
 )
 
-const base = "http://localhost:8080"
+const (
+	base      = "http://localhost:8080"
+	adminBase = "/admin/api/x1" // 版本作用域：默认对 x1 后台做 smoke
+)
 
 var token string
 
@@ -61,7 +64,7 @@ func main() {
 	step("login(wrong)", st, m)
 
 	// 3. create user (name + mobile)
-	st, m = call("POST", "/admin/api/users", map[string]any{
+	st, m = call("POST", adminBase+"/users", map[string]any{
 		"name": "测试商户A", "mobile": "13812345678",
 	}, true)
 	step("createUser", st, m)
@@ -71,7 +74,7 @@ func main() {
 	}
 
 	// 4. list users
-	st, m = call("GET", "/admin/api/users", nil, true)
+	st, m = call("GET", adminBase+"/users", nil, true)
 	if arr, ok := m["users"].([]any); ok {
 		fmt.Printf("[%d] listUsers -> %d users\n", st, len(arr))
 	} else {
@@ -79,7 +82,7 @@ func main() {
 	}
 
 	// 4b. search users by mobile
-	st, m = call("GET", "/admin/api/users?q=1381234", nil, true)
+	st, m = call("GET", adminBase+"/users?q=1381234", nil, true)
 	if arr, ok := m["users"].([]any); ok {
 		fmt.Printf("[%d] searchUsers(q=1381234) -> %d users\n", st, len(arr))
 	} else {
@@ -87,17 +90,17 @@ func main() {
 	}
 
 	// 5. update user (suspend + change mobile)
-	st, m = call("PATCH", "/admin/api/users/"+licenseID, map[string]any{
+	st, m = call("PATCH", adminBase+"/users/"+licenseID, map[string]any{
 		"status": "SUSPENDED", "mobile": "13900009999",
 	}, true)
 	step("updateUser", st, m)
 
 	// 6. rotate secret
-	st, m = call("POST", "/admin/api/users/"+licenseID+"/rotate-secret", nil, true)
+	st, m = call("POST", adminBase+"/users/"+licenseID+"/rotate-secret", nil, true)
 	step("rotateSecret", st, m)
 
 	// 7. audits (after a doCheck call below would populate; list now)
-	st, m = call("GET", "/admin/api/audits?limit=10", nil, true)
+	st, m = call("GET", adminBase+"/audits?limit=10", nil, true)
 	if arr, ok := m["audits"].([]any); ok {
 		fmt.Printf("[%d] listAudits -> %d records\n", st, len(arr))
 	} else {
@@ -105,11 +108,11 @@ func main() {
 	}
 
 	// 9. unauthorized access (expect 401)
-	st, m = call("GET", "/admin/api/users", nil, false)
+	st, m = call("GET", adminBase+"/users", nil, false)
 	step("listUsers(no token)", st, m)
 
 	// 10. delete user
-	st, m = call("DELETE", "/admin/api/users/"+licenseID, nil, true)
+	st, m = call("DELETE", adminBase+"/users/"+licenseID, nil, true)
 	step("deleteUser", st, m)
 
 	fmt.Println("\nadmin smoke done.")

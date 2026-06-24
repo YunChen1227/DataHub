@@ -1,7 +1,7 @@
 //go:build ignore
 
-// 01_health_routes: /healthz 与四条业务路由（x1 / quota / v9）的可达性。仅验证
-// 路由已注册（非 404）且 relay 在线，不校验业务结果。
+// 01_health_routes: /healthz 与三版本业务路由 (querySrmx{X1,V9,V8} + quota{X1,V9,V8})
+// 的可达性。仅验证路由已注册（非 404）且 relay 在线，不校验业务结果。
 //
 // Run: go run test/cases/01_health_routes.go
 package main
@@ -13,28 +13,34 @@ import (
 )
 
 func main() {
-	rec := harness.NewRecorder("01_health_routes", "健康检查与路由可达性")
+	rec := harness.NewRecorder("01_health_routes", "健康检查与三版本路由可达性")
 	defer rec.Finish()
 
 	st, _, raw := harness.Call(http.MethodGet, "/healthz", nil, nil)
 	rec.Check("GET /healthz == 200 ok", "HTTP 200 + body 含 ok",
 		st == 200 && contains(raw, "ok"), itoa(st)+" "+raw)
 
-	// x1: POST，带最小信封；只要不是 404 即视为已注册（业务结果在其他用例覆盖）。
-	x := harness.QueryX1(harness.AppKey, harness.Secret,
-		map[string]string{"mobile": "13809091009", "idCard": "330129199109094312"}, nil)
-	rec.Check("POST querySrmxX1 已注册", "返回 head 信封(非404)",
-		x.HTTPStatus == 200 && x.ErrorCode != "", "status="+itoa(x.HTTPStatus)+" raw="+x.Raw)
+	for _, v := range harness.Versions {
+		// query: POST，带最小信封；只要不是 404 即视为已注册。
+		x := harness.Query(v, harness.AppKey, harness.Secret,
+			map[string]string{"mobile": "13809091009", "idCard": "330129199109094312"}, nil)
+		rec.Check("POST querySrmx"+up(v)+" 已注册", "返回 head 信封(非404)",
+			x.HTTPStatus == 200 && x.ErrorCode != "", "status="+itoa(x.HTTPStatus)+" raw="+x.Raw)
 
-	// quota: GET（带信封 body）。
-	used := harness.ServiceUsed(harness.AppKey, harness.Secret)
-	rec.Check("GET quota 已注册", "返回 serviceUsed 数值", used >= 0, ftoa(used))
+		// quota: GET（带信封 body）。
+		used := harness.ServiceUsed(v, harness.AppKey, harness.Secret)
+		rec.Check("GET quota"+up(v)+" 已注册", "返回 serviceUsed 数值", used >= 0, ftoa(used))
+	}
+}
 
-	// v9: GET，参数缺失也应返回 v9 错误码（非 404）。
-	v := harness.QueryV9(harness.AppKey, "330129199109094312", "张三", "13809091009",
-		harness.ShortReqid("h"), "x")
-	rec.Check("GET v9 已注册", "返回 code 字段(非404)", v.HTTPStatus == 200 && v.Code != "",
-		"status="+itoa(v.HTTPStatus)+" raw="+v.Raw)
+func up(v string) string {
+	b := []byte(v)
+	for i := range b {
+		if b[i] >= 'a' && b[i] <= 'z' {
+			b[i] -= 32
+		}
+	}
+	return string(b)
 }
 
 func contains(s, sub string) bool {

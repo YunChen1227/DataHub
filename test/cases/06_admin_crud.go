@@ -29,6 +29,7 @@ func main() {
 		return
 	}
 	auth := harness.AuthHeader(token)
+	adminBase := harness.AdminBase("x1")
 
 	// 2. 登录（错误密码）-> 401
 	stw, _, wr := harness.Call(http.MethodPost, "/admin/api/login",
@@ -36,11 +37,11 @@ func main() {
 	rec.Check("登录(错误密码)", "HTTP 401", stw == 401, "status="+itoa(stw)+" "+wr)
 
 	// 3. 无 token 访问 -> 401
-	stn, _, _ := harness.Call(http.MethodGet, "/admin/api/users", nil, nil)
+	stn, _, _ := harness.Call(http.MethodGet, adminBase+"/users", nil, nil)
 	rec.Check("无 token 访问用户列表", "HTTP 401", stn == 401, "status="+itoa(stn))
 
 	// 4. 建用户
-	st, m, cr := harness.Call(http.MethodPost, "/admin/api/users",
+	st, m, cr := harness.Call(http.MethodPost, adminBase+"/users",
 		map[string]any{"name": "admin-crud-临时", "mobile": "13800001111"}, auth)
 	user, _ := m["user"].(map[string]any)
 	licenseID, _ := user["licenseId"].(string)
@@ -50,15 +51,15 @@ func main() {
 	if licenseID == "" {
 		return
 	}
-	defer harness.Call(http.MethodDelete, "/admin/api/users/"+licenseID, nil, auth)
+	defer harness.Call(http.MethodDelete, adminBase+"/users/"+licenseID, nil, auth)
 
 	// 5. 查单个
-	stg, gm, gr := harness.Call(http.MethodGet, "/admin/api/users/"+licenseID, nil, auth)
+	stg, gm, gr := harness.Call(http.MethodGet, adminBase+"/users/"+licenseID, nil, auth)
 	gotKey, _ := gm["appKey"].(string)
 	rec.Check("查单个用户", "返回该用户 appKey", stg == 200 && gotKey == appKey, gr)
 
 	// 6. 列表
-	_, lm, lr := harness.Call(http.MethodGet, "/admin/api/users", nil, auth)
+	_, lm, lr := harness.Call(http.MethodGet, adminBase+"/users", nil, auth)
 	users, _ := lm["users"].([]any)
 	rec.Check("用户列表", "包含至少 1 个用户", len(users) > 0, lr)
 
@@ -66,7 +67,7 @@ func main() {
 	r := harness.QueryX1(appKey, secret1, base(), nil)
 	rec.Check("轮换前旧 secret 可用", "errorCode=0", r.ErrorCode == "0", r.Raw)
 
-	_, rm, rr := harness.Call(http.MethodPost, "/admin/api/users/"+licenseID+"/rotate-secret", nil, auth)
+	_, rm, rr := harness.Call(http.MethodPost, adminBase+"/users/"+licenseID+"/rotate-secret", nil, auth)
 	secret2, _ := rm["secret"].(string)
 	rec.Check("轮换密钥返回新 secret", "secret 非空且不同于旧值", secret2 != "" && secret2 != secret1, rr)
 
@@ -78,13 +79,13 @@ func main() {
 	}
 
 	// 8. 改：停用
-	stp, pm, pr := harness.Call(http.MethodPatch, "/admin/api/users/"+licenseID,
+	stp, pm, pr := harness.Call(http.MethodPatch, adminBase+"/users/"+licenseID,
 		map[string]any{"status": "SUSPENDED"}, auth)
 	gotStatus, _ := pm["status"].(string)
 	rec.Check("更新用户(停用)", "status=SUSPENDED", stp == 200 && gotStatus == "SUSPENDED", pr)
 
 	// 9. 审计：按 appKey 过滤 + PII 掩码（用 demo 主账户，确保有记录）
-	_, am, ar := harness.Call(http.MethodGet, "/admin/api/audits?appKey="+harness.AppKey+"&limit=200", nil, auth)
+	_, am, ar := harness.Call(http.MethodGet, adminBase+"/audits?appKey="+harness.AppKey+"&limit=200", nil, auth)
 	audits, _ := am["audits"].([]any)
 	masked := false
 	for _, a := range audits {
@@ -98,7 +99,7 @@ func main() {
 	rec.Check("审计 PII 掩码", "nameMask 含 *", masked, "未发现掩码记录(可能本次无 demo 流量)")
 
 	// 10. 删除
-	std, _, dr := harness.Call(http.MethodDelete, "/admin/api/users/"+licenseID, nil, auth)
+	std, _, dr := harness.Call(http.MethodDelete, adminBase+"/users/"+licenseID, nil, auth)
 	rec.Check("删除用户", "HTTP 200", std == 200, dr)
 }
 

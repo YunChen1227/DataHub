@@ -141,30 +141,17 @@ type RangeResult struct {
 	Range string `json:"range"`
 }
 
-// V9Request is the旧版 v9 下游入参 (income_cls.md §输入参数, HTTP GET). account 定位
-// 客户 license(=appKey), key=appSecret; verify=MD5(account+idCard+mobile+reqid+key).toUpperCase()。
-type V9Request struct {
-	Account string
-	IDCard  string
-	Name    string
-	Mobile  string
-	Reqid   string
-	Verify  string
-}
+// Versions is the canonical ordered list of service versions. 三版本对外接口
+// 完全一致 (x1 信封格式)，仅靠路由名区分，各自独立上游 + 独立数据库 + 独立
+// license/调用记录/统计。x1 同时充当后台登录的控制面 (admin 账号 + JWT)。
+var Versions = []string{"x1", "v9", "v8"}
 
-// V9Response is the旧版 v9 下游响应 (income_cls.md §返回参数).
-//   - code: 001 查得 / 999 查无 / 其余为错误码字典 (002/003/004/005/008/009/011/012/013/020)。
-//   - result 仅在查得时返回; verify 为响应签名 (是签名字段 code+uid)。
-type V9Response struct {
-	Code   string    `json:"code"`
-	Msg    string    `json:"msg"`
-	UID    string    `json:"uid"`
-	Reqid  string    `json:"reqid"`
-	Result *V9Result `json:"result,omitempty"`
-	Verify string    `json:"verify"`
-}
-
-// V9Result is the旧版 v9 二级节点 (income_cls.md §result二级节点): range 收入模型评分。
-type V9Result struct {
-	Range string `json:"range"`
+// ValidVersion reports whether v is one of the supported service versions.
+func ValidVersion(v string) bool {
+	for _, x := range Versions {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

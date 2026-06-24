@@ -7,28 +7,25 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
+# 三版本 (x1/v9/v8) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | querySrmxV9 | querySrmxV8
+#   GET  /v1/openapi/zlx/quotaX1     | quotaV9     | quotaV8
+# 每个版本各自独立：独立上游 + 独立数据库 + 独立 Redis 逻辑库 + 独立统计。
+#
 # 注：durations 支持 Go 风格字符串，如 4s / 10s / 5m / 8h。
 
 # HTTP 服务监听地址
 addr: ":8080"
 
 upstream:
-  # 当前唯一上游 provider：gama（保留字段便于未来扩展）
-  provider: "gama"
-  # 上游调用超时
+  # 所有版本共用的上游调用超时
   timeout: "4s"
-
-  # 上游：伽马分层分（伽马PDF /enol/api/v1/doCheck），本服务唯一上游。appId/appSecret 由商务分配。
-  gama:
-    baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"  # 测试: https://testenol.cn/...
-    appId: "REPLACE_WITH_GAMA_APP_ID"
-    appSecret: "REPLACE_WITH_GAMA_APP_SECRET"
-    apiKey: "gama_ctmz_layer_score"   # 固定产品编号
 
 billing:
   requeryInterval: "10s"   # PENDING 复查间隔
 
 admin:
+  # 后台统一登录账号 + JWT（控制面 = x1 版本库）
   bootstrapUser: "admin"
   bootstrapPass: "REPLACE_WITH_ADMIN_PASSWORD"
   jwtSecret: "REPLACE_WITH_ADMIN_JWT_SECRET"
@@ -39,25 +36,71 @@ admin:
 demo:
   appSecret: "REPLACE_WITH_DEMO_APP_SECRET"
 
-# 存储后端 (DESIGN §11): memory（开发/默认）| postgres（生产，PG + Redis）。
+# 存储后端 (DESIGN §11): memory（开发/默认）| postgres（生产，每版本独立 PG + Redis）。
 storage:
   driver: "memory"          # memory | postgres
   migrationsDir: "migrations"
 
-# PostgreSQL：license / 计费台账 / 审计 / 管理员 / IP 白名单（仅 driver=postgres 时使用）。
-database:
-  host: "REPLACE_WITH_PG_HOST"
-  port: 5432
-  name: "REPLACE_WITH_PG_DBNAME"
-  user: "REPLACE_WITH_PG_USER"
-  password: "REPLACE_WITH_PG_PASSWORD"
-  sslmode: "disable"        # disable | require（实例强制 SSL 时用 require）
-  maxConns: 10
-
-# Redis：双维度配额原子计数（仅 driver=postgres 时使用）。Aliyun 用 username+password。
-redis:
-  addr: "REPLACE_WITH_REDIS_HOST:6379"
-  username: "REPLACE_WITH_REDIS_USER"
-  password: "REPLACE_WITH_REDIS_PASSWORD"
-  db: 0
-  poolSize: 10
+# 每版本独立配置。memory 模式下 database/redis 可省略；postgres 模式必须各自独立。
+versions:
+  x1:
+    upstream:
+      kind: "gama"          # x1 对接上游 A
+      baseURL: "REPLACE_WITH_X1_UPSTREAM_DOCHECK_URL"
+      appId: "REPLACE_WITH_X1_UPSTREAM_APP_ID"
+      appSecret: "REPLACE_WITH_X1_UPSTREAM_APP_SECRET"
+      apiKey: "gama_ctmz_layer_score"
+    database:
+      host: "REPLACE_WITH_PG_HOST"
+      port: 5432
+      name: "datahub_x1_db"
+      user: "REPLACE_WITH_PG_USER"
+      password: "REPLACE_WITH_PG_PASSWORD"
+      sslmode: "disable"
+      maxConns: 10
+    redis:
+      addr: "REPLACE_WITH_REDIS_HOST:6379"
+      username: "REPLACE_WITH_REDIS_USER"
+      password: "REPLACE_WITH_REDIS_PASSWORD"
+      db: 0
+      poolSize: 10
+  v9:
+    upstream:
+      kind: "income"        # v9 对接上游 B（GET account/key 验签）
+      baseURL: "REPLACE_WITH_V9_UPSTREAM_URL"
+      account: "REPLACE_WITH_V9_UPSTREAM_ACCOUNT"
+      key: "REPLACE_WITH_V9_UPSTREAM_KEY"
+    database:
+      host: "REPLACE_WITH_PG_HOST"
+      port: 5432
+      name: "datahub_v9_db"
+      user: "REPLACE_WITH_PG_USER"
+      password: "REPLACE_WITH_PG_PASSWORD"
+      sslmode: "disable"
+      maxConns: 10
+    redis:
+      addr: "REPLACE_WITH_REDIS_HOST:6379"
+      username: "REPLACE_WITH_REDIS_USER"
+      password: "REPLACE_WITH_REDIS_PASSWORD"
+      db: 1
+      poolSize: 10
+  v8:
+    upstream:
+      kind: "income"        # v8 对接上游 C（GET account/key 验签）
+      baseURL: "REPLACE_WITH_V8_UPSTREAM_URL"
+      account: "REPLACE_WITH_V8_UPSTREAM_ACCOUNT"
+      key: "REPLACE_WITH_V8_UPSTREAM_KEY"
+    database:
+      host: "REPLACE_WITH_PG_HOST"
+      port: 5432
+      name: "datahub_v8_db"
+      user: "REPLACE_WITH_PG_USER"
+      password: "REPLACE_WITH_PG_PASSWORD"
+      sslmode: "disable"
+      maxConns: 10
+    redis:
+      addr: "REPLACE_WITH_REDIS_HOST:6379"
+      username: "REPLACE_WITH_REDIS_USER"
+      password: "REPLACE_WITH_REDIS_PASSWORD"
+      db: 2
+      poolSize: 10

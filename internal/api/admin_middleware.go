@@ -14,7 +14,7 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 			writeAdminError(w, http.StatusUnauthorized, "缺少或非法的令牌")
 			return
 		}
-		if _, err := s.admin.VerifyToken(token); err != nil {
+		if _, err := s.control.VerifyToken(token); err != nil {
 			writeAdminError(w, http.StatusUnauthorized, "令牌无效或已过期")
 			return
 		}

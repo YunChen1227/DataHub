@@ -51,16 +51,32 @@ function Wait-Health([string]$url, [int]$tries = 40) {
 
 $anyFail = $false
 try {
-    $mockExe  = Join-Path $resultDir "mock_gama.exe"
-    $relayExe = Join-Path $resultDir "relay.exe"
-    Write-Host "building mock + relay ..."
+    $mockExe   = Join-Path $resultDir "mock_gama.exe"
+    $incomeExe = Join-Path $resultDir "mock_income.exe"
+    $relayExe  = Join-Path $resultDir "relay.exe"
+    Write-Host "building mocks + relay ..."
     go build -o $mockExe ./scripts/mock_gama.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_gama failed" }
+    go build -o $incomeExe ./scripts/mock_income.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_income failed" }
     go build -o $relayExe ./cmd/relay
     if ($LASTEXITCODE -ne 0) { throw "go build relay failed" }
 
+    # postgres 模式：在启动 relay 前重建三个版本库 (datahub_x1_db/v9_db/v8_db)。
+    $cfgText = Get-Content -Raw -Path (Join-Path $repo $ConfigFile)
+    if ($cfgText -match 'driver:\s*"?postgres"?') {
+        Write-Host "postgres mode: recreating three version databases ..."
+        go run ./scripts/recreate_databases.go
+        if ($LASTEXITCODE -ne 0) { throw "recreate_databases failed" }
+    } else {
+        Write-Host "memory mode: skipping database recreate."
+    }
+
     $mock = Start-Process -FilePath $mockExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_gama.log") -RedirectStandardError (Join-Path $resultDir "mock_gama.err.log")
     [void]$procs.Add($mock)
+
+    $income = Start-Process -FilePath $incomeExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_income.log") -RedirectStandardError (Join-Path $resultDir "mock_income.err.log")
+    [void]$procs.Add($income)
 
     $relay = Start-Process -FilePath $relayExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "relay.log") -RedirectStandardError (Join-Path $resultDir "relay.err.log")
     [void]$procs.Add($relay)

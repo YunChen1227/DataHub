@@ -8,10 +8,11 @@ import (
 	"github.com/datahub/relay/internal/domain/port"
 )
 
-// Provider identifiers for the upstream Router (DESIGN §6). 当前唯一 gama;
-// Router 抽象保留以便未来扩展。
+// Provider identifiers for the upstream Router (DESIGN §6). 每个版本 stack 持有
+// 一个单 provider 的 Router：x1→gama(伽马), v9/v8→income(经济能力)。
 const (
-	ProviderGama = "gama"
+	ProviderGama   = "gama"
+	ProviderIncome = "income"
 )
 
 // Router selects the active data provider and delegates port.UpstreamPort calls

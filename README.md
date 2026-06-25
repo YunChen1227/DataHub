@@ -96,42 +96,40 @@ cp config.example.yaml config.aliyun.prod.yaml
 | `config.yaml` | ❌ 忽略 | 通用本地/部署配置（默认路径） |
 | `config.local.mem.yaml` | ❌ 忽略 | 本地 memory + mock gama |
 | `config.aliyun.e2e.yaml` | ❌ 忽略 | 阿里云 PG `dev_db` + Redis db0 + mock gama（e2e） |
-| `config.aliyun.prod.yaml` | ❌ 忽略 | **生产**：阿里云 PG `prod_db` + Redis db1 + 真实伽马 |
+| `config.aliyun.prod.yaml` | ❌ 忽略 | **生产（Ubuntu 部署用此文件）**：三版本独立 PG + Redis + 真实上游 |
 
-生产环境关键配置（完整字段见 `config.example.yaml`）：
+生产环境关键配置（完整字段见 `config.example.yaml` / 本地 `config.aliyun.prod.yaml`）：
 
 ```yaml
 addr: ":8080"                    # 监听地址；前面通常有 Nginx/SLB 做 HTTPS 终结
 
 storage:
-  driver: "postgres"           # 生产必须为 postgres
+  driver: "postgres"             # 生产必须为 postgres
   migrationsDir: "migrations"    # 相对 relay 工作目录；启动时自动跑 DDL
 
-database:
-  host: "<RDS 内网地址>"
-  port: 5432
-  name: "prod_db"                # 生产库名（与 dev_db 同实例隔离）
-  user: "<PG 用户名>"
-  password: "<PG 密码>"
-  sslmode: "disable"             # RDS 强制 SSL 时改为 require
-
-redis:
-  addr: "<Redis 内网地址>:6379"
-  username: "<Redis 用户名>"     # 阿里云 Redis 通常需要
-  password: "<Redis 密码>"
-  db: 1                          # 生产固定 db1（dev/e2e 用 db0）
-
-upstream:
-  provider: "gama"
-  gama:
-    baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"
-    appId: "<伽马 appId>"
-    appSecret: "<伽马 appSecret>"
-    apiKey: "gama_ctmz_layer_score"
+# 三版本各自独立：独立 PG 库 + 独立 Redis 逻辑库 + 独立上游
+versions:
+  x1:
+    upstream:
+      kind: "gama"
+      baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"
+      appId: "<x1 伽马 appId>"
+      appSecret: "<x1 伽马 appSecret>"
+      apiKey: "gama_ctmz_layer_score"
+    database: { host: "<RDS>", name: "datahub_x1_prod_db", user: "...", password: "..." }
+    redis:    { addr: "<Redis>:6379", db: 3, password: "..." }
+  v9:
+    upstream: { kind: "income", baseURL: "...", account: "...", key: "..." }
+    database: { host: "<RDS>", name: "datahub_v9_prod_db", ... }
+    redis:    { db: 4, ... }
+  v8:
+    upstream: { kind: "income", baseURL: "...", account: "...", key: "..." }
+    database: { host: "<RDS>", name: "datahub_v8_prod_db", ... }
+    redis:    { db: 5, ... }
 
 admin:
   bootstrapUser: "admin"
-  bootstrapPass: "<强密码>"       # 首次启动写入 admin_user 表
+  bootstrapPass: "<强密码>"       # 首次启动写入 x1 库 admin_user 表
   jwtSecret: "<随机长字符串>"     # JWT 签名密钥，务必更换
   spaDir: "web/admin/dist"       # 管理后台静态资源目录
 ```
@@ -141,34 +139,39 @@ admin:
 | 配置路径 | 说明 |
 |---|---|
 | `storage.driver` | 必须为 `postgres` |
-| `database.host` / `user` / `password` / `name` | PostgreSQL 连接（`name=prod_db`） |
-| `redis.addr` / `password` | Redis 连接（`db=1`） |
-| `upstream.gama.baseURL` / `appId` / `appSecret` | 伽马上游（唯一上游） |
+| `versions.x1.database.*` / `versions.v9.database.*` / `versions.v8.database.*` | 三版本各自 PG 库 |
+| `versions.*.redis.*` | 三版本各自 Redis 逻辑库（db3/4/5） |
+| `versions.x1.upstream.*` | x1 伽马上游凭证 |
+| `versions.v9/v8.upstream.*` | v9/v8 经济能力上游凭证 |
 | `admin.bootstrapPass` / `jwtSecret` | 管理后台登录与 JWT（**禁止使用示例占位符**） |
 
 可选：`billing.requeryInterval`（默认 10s）、`admin.tokenTTL`（默认 8h）、`addr`（默认 `:8080`）。
 
-### 2. 初始化数据库（首次部署）
+### 2. 初始化数据库（首次部署，Ubuntu）
 
-relay 启动时会自动执行 `migrations/*.sql` 建表；首次需在 RDS 上创建 `prod_db`：
+relay 启动时会自动执行 `migrations/*.sql` 建表；**首次**需创建三个生产库并迁移：
 
 ```bash
-# 方式 A：手动在 RDS 控制台 / psql 执行
-CREATE DATABASE prod_db;
+cd /workspace/DataHub   # 或你的部署目录，下同
 
-# 方式 B：使用仓库脚本（需已有 config.aliyun.e2e.yaml 连同一 RDS 实例）
-CONFIG_FILE=config.aliyun.e2e.yaml go run ./scripts/recreate_databases.go
-# 会重建 dev_db + prod_db 并跑 migrations + SeedDemo（会清空已有表，慎用）
+# 按 config.aliyun.prod.yaml 创建 datahub_x1/v9/v8_prod_db + 迁移 + SeedDemo
+# ⚠️ 会 DROP 旧表后重建，生产已有数据时慎用
+CONFIG_FILE=config.aliyun.prod.yaml go run ./scripts/recreate_databases.go
 ```
 
-仅清空某库旧表、让 relay 下次启动重跑 migrations 时，可执行 [`scripts/recreate_schema.sql`](scripts/recreate_schema.sql)。
+仅清空某库旧表、让 relay 下次启动重跑 migrations 时，可对该库执行 [`scripts/recreate_schema.sql`](scripts/recreate_schema.sql)。
 
-### 3. 构建
+### 3. 构建（Ubuntu）
 
 在**仓库根目录**执行（管理后台需先构建，否则 `/admin/` 不可用）：
 
 ```bash
-# Go 依赖
+cd /workspace/DataHub
+
+# 依赖：Go 1.25+、Node.js 18+（仅构建 SPA 时需要）
+sudo apt update
+sudo apt install -y golang-go nodejs npm   # 若尚未安装；或用官方/ nvm 安装较新版本
+
 go mod download
 
 # 管理后台 SPA → web/admin/dist
@@ -177,56 +180,88 @@ npm install
 npm run build
 cd ../..
 
-# 编译 relay 二进制（Linux 生产机示例）
+# 编译 relay 二进制
 go build -o relay ./cmd/relay
+chmod +x relay
 ```
 
-Windows 本地验证：`go build -o relay.exe ./cmd/relay`。
+部署目录内需包含（相对 `relay` 工作目录）：
 
-部署时需一并带上（相对 relay 工作目录）：
-
+- `relay` — 可执行文件
+- `config.aliyun.prod.yaml` — 生产配置（含真实凭证，勿提交 git）
 - `migrations/` — 启动时自动迁移
-- `web/admin/dist/` — 管理后台静态文件（或由 `admin.spaDir` 指向绝对路径）
+- `web/admin/dist/` — 管理后台静态文件
 
-### 4. 启动生产服务
+### 4. 启动生产服务（Ubuntu）
+
+**前台调试（SSH 里临时跑）：**
 
 ```bash
-# Linux / macOS（在含 relay 二进制、migrations/、web/admin/dist/ 的目录下）
-export CONFIG_FILE=config.aliyun.prod.yaml   # 或 /etc/datahub/config.yaml
+cd /workspace/DataHub
+export CONFIG_FILE=/workspace/DataHub/config.aliyun.prod.yaml
 ./relay
-
-# 可选：调试日志
-LOG_LEVEL=debug CONFIG_FILE=config.aliyun.prod.yaml ./relay
 ```
 
-PowerShell：
+**后台运行（简单方式）：**
 
-```powershell
-$env:CONFIG_FILE = "config.aliyun.prod.yaml"
-.\relay.exe
+```bash
+cd /workspace/DataHub
+nohup env CONFIG_FILE=/workspace/DataHub/config.aliyun.prod.yaml ./relay \
+  >> /var/log/datahub/relay.log 2>&1 &
 ```
 
-启动后 relay 会依次：连接 PG → 自动迁移 → 连接 Redis → 注册伽马上游 → 创建/校验管理员账号 → 监听 HTTP。
+**推荐：systemd 托管（开机自启）：**
+
+```bash
+sudo tee /etc/systemd/system/datahub.service <<'EOF'
+[Unit]
+Description=DataHub relay
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/workspace/DataHub
+Environment=CONFIG_FILE=/workspace/DataHub/config.aliyun.prod.yaml
+ExecStart=/workspace/DataHub/relay
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable datahub
+sudo systemctl start datahub
+sudo systemctl status datahub
+```
+
+查看日志：`journalctl -u datahub -f`
+
+可选调试：`LOG_LEVEL=debug CONFIG_FILE=config.aliyun.prod.yaml ./relay`
+
+启动后 relay 会依次：连接三版本 PG → 自动迁移 → 连接三版本 Redis → 装配 x1/v9/v8 上游 → 创建/校验管理员账号 → 监听 HTTP。
 
 **健康检查：**
 
 ```bash
-curl http://<host>:8080/healthz
-# 管理后台（内网访问）：http://<host>:8080/admin/
+curl http://127.0.0.1:8080/healthz          # 应返回 ok
+curl http://127.0.0.1:8080/admin/          # 管理后台（建议仅内网访问）
 ```
 
 **网络与安全（v0.7）：**
 
 - 网关不做 IP 白名单；生产访问控制由**阿里云 ECS 安全组** / SLB 等网络层负责。
 - 对外 HTTPS 在 Nginx/SLB 侧终结；relay 默认 HTTP 监听 `:8080`。
-- 管理后台 `/admin/` 应仅限内网或 VPN 访问。
+- 管理后台 `/admin/` 应仅限内网或 VPN 访问；ECS 安全组勿对公网开放 8080（除非有 SLB/Nginx 反代）。
 
 ### 5. 环境与隔离
 
 | 环境 | 配置文件 | PG 库 | Redis DB |
 |---|---|---|---|
-| 开发/e2e | `config.aliyun.e2e.yaml` | `dev_db` | 0 |
-| **生产** | `config.aliyun.prod.yaml` | `prod_db` | 1 |
+| 开发/e2e | `config.aliyun.e2e.yaml` | `datahub_x1_db` / `v9_db` / `v8_db` | 0 / 1 / 2 |
+| **生产（Ubuntu）** | `config.aliyun.prod.yaml` | `datahub_x1_prod_db` / `v9_prod_db` / `v8_prod_db` | 3 / 4 / 5 |
 
 `storage.driver`：`memory`（开发默认）| `postgres`（**生产必须**）。
 

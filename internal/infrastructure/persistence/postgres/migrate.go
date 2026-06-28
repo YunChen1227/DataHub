@@ -103,10 +103,6 @@ func SeedDemo(ctx context.Context, s *Store) error {
 	if _, err := s.pool.Exec(ctx, insLicense); err != nil {
 		return err
 	}
-	const insQuota = `INSERT INTO quota (license_id, dim) VALUES ('LIC-DEMO-0001','SERVICE')
-		ON CONFLICT (license_id, dim) DO NOTHING`
-	if _, err := s.pool.Exec(ctx, insQuota); err != nil {
-		return err
-	}
+	// 计数行 (license, route, dim) 由首次累加时 UPSERT 按需创建，无需预插。
 	return nil
 }

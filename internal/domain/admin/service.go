@@ -27,19 +27,22 @@ type Config struct {
 	TokenTTL  time.Duration
 }
 
-// Service coordinates the admin repositories.
+// Service coordinates the admin repositories. route 标记本后台服务的路由作用域
+// (x1/v9/v8/zlf/blk)：用户列表/CRUD 作用于该路由所属域的共享 license，但统计
+// (成功查得数/调用次数) 与操作日志按 route 独立 (共享 license 的 v8/v9 互不影响)。
 type Service struct {
+	route  string
 	admins port.AdminUserRepository
 	users  port.UserAdminRepository
 	audits port.AuditRepository
 	cfg    Config
 }
 
-func New(admins port.AdminUserRepository, users port.UserAdminRepository, audits port.AuditRepository, cfg Config) *Service {
+func New(route string, admins port.AdminUserRepository, users port.UserAdminRepository, audits port.AuditRepository, cfg Config) *Service {
 	if cfg.TokenTTL <= 0 {
 		cfg.TokenTTL = 8 * time.Hour
 	}
-	return &Service{admins: admins, users: users, audits: audits, cfg: cfg}
+	return &Service{route: route, admins: admins, users: users, audits: audits, cfg: cfg}
 }
 
 // --- §16.1 auth ---
@@ -100,20 +103,20 @@ type CreateUserResult struct {
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]*model.UserDetail, error) {
-	return s.users.ListUsers(ctx)
+	return s.users.ListUsers(ctx, s.route)
 }
 
 // SearchUsers filters users by uuid(appKey)/名称/手机号 substring.
 func (s *Service) SearchUsers(ctx context.Context, keyword string) ([]*model.UserDetail, error) {
 	keyword = strings.TrimSpace(keyword)
 	if keyword == "" {
-		return s.users.ListUsers(ctx)
+		return s.users.ListUsers(ctx, s.route)
 	}
-	return s.users.SearchUsers(ctx, keyword)
+	return s.users.SearchUsers(ctx, keyword, s.route)
 }
 
 func (s *Service) GetUser(ctx context.Context, licenseID string) (*model.UserDetail, error) {
-	u, err := s.users.GetUser(ctx, licenseID)
+	u, err := s.users.GetUser(ctx, licenseID, s.route)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +153,7 @@ type UpdateUserInput struct {
 }
 
 func (s *Service) UpdateUser(ctx context.Context, licenseID string, in UpdateUserInput) (*model.UserDetail, error) {
-	cur, err := s.users.GetUser(ctx, licenseID)
+	cur, err := s.users.GetUser(ctx, licenseID, s.route)
 	if err != nil {
 		return nil, err
 	}
@@ -168,11 +171,11 @@ func (s *Service) UpdateUser(ctx context.Context, licenseID string, in UpdateUse
 	if err := s.users.UpdateUser(ctx, licenseID, status, mobile); err != nil {
 		return nil, err
 	}
-	return s.users.GetUser(ctx, licenseID)
+	return s.users.GetUser(ctx, licenseID, s.route)
 }
 
 func (s *Service) DeleteUser(ctx context.Context, licenseID string) error {
-	cur, err := s.users.GetUser(ctx, licenseID)
+	cur, err := s.users.GetUser(ctx, licenseID, s.route)
 	if err != nil {
 		return err
 	}
@@ -184,7 +187,7 @@ func (s *Service) DeleteUser(ctx context.Context, licenseID string) error {
 
 // RotateSecret regenerates the user's secret and returns the new plaintext once.
 func (s *Service) RotateSecret(ctx context.Context, licenseID string) (string, error) {
-	cur, err := s.users.GetUser(ctx, licenseID)
+	cur, err := s.users.GetUser(ctx, licenseID, s.route)
 	if err != nil {
 		return "", err
 	}
@@ -204,5 +207,7 @@ func (s *Service) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model
 	if f.Limit <= 0 || f.Limit > 500 {
 		f.Limit = 100
 	}
+	// 按本后台服务的路由作用域过滤：共享 license 的 v8/v9 操作日志互不混淆。
+	f.Version = s.route
 	return s.audits.ListAudits(ctx, f)
 }

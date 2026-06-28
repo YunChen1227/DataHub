@@ -11,8 +11,10 @@ import (
 // Provider identifiers for the upstream Router (DESIGN §6). 每个版本 stack 持有
 // 一个单 provider 的 Router：x1→gama(伽马), v9/v8→income(经济能力)。
 const (
-	ProviderGama   = "gama"
-	ProviderIncome = "income"
+	ProviderGama      = "gama"
+	ProviderIncome    = "income"
+	ProviderRental    = "rental"
+	ProviderBlacklist = "blacklist"
 )
 
 // Router selects the active data provider and delegates port.UpstreamPort calls

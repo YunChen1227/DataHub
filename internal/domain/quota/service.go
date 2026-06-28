@@ -11,9 +11,11 @@ import (
 	"github.com/datahub/relay/internal/domain/port"
 )
 
-// ReserveToken is the handle returned by Begin and consumed by Settle.
+// ReserveToken is the handle returned by Begin and consumed by Settle. Route
+// 标记路由作用域，使共享 license 的 v8/v9 统计相互独立。
 type ReserveToken struct {
 	LicenseID string
+	Route     string
 	LedgerID  int64
 	Reqid     string
 }
@@ -28,14 +30,18 @@ func New(quota port.QuotaRepository, ledger port.LedgerRepository) *Service {
 	return &Service{quota: quota, ledger: ledger}
 }
 
-// ServiceQuotaView powers the /quota route (DESIGN §5.2). 无额度限制，仅返回
-// 累计成功查得数 (used = 查得数据次数)。
-func (s *Service) ServiceQuotaView(ctx context.Context, lic *model.LicenseView) (*model.ServiceQuotaView, error) {
-	used, err := s.quota.ServiceUsed(ctx, lic.LicenseID)
+// ServiceQuotaView powers the /quota route (DESIGN §5.2). 无额度限制，按路由
+// 独立返回累计成功查得数 (used) 与累计调用上游次数 (calls)。
+func (s *Service) ServiceQuotaView(ctx context.Context, lic *model.LicenseView, route string) (*model.ServiceQuotaView, error) {
+	used, err := s.quota.ServiceUsed(ctx, lic.LicenseID, route)
 	if err != nil {
 		return nil, errs.Wrap(errs.BusiDataRequestErr, "查询失败", err)
 	}
-	return &model.ServiceQuotaView{Status: lic.Status, Used: used}, nil
+	calls, err := s.quota.TotalCalls(ctx, lic.LicenseID, route)
+	if err != nil {
+		return nil, errs.Wrap(errs.BusiDataRequestErr, "查询失败", err)
+	}
+	return &model.ServiceQuotaView{Status: lic.Status, Used: used, Calls: calls}, nil
 }
 
 // Begin is the §7.3 step 1: idempotency check + open a PENDING ledger.
@@ -44,8 +50,9 @@ func (s *Service) ServiceQuotaView(ctx context.Context, lic *model.LicenseView) 
 //   - Otherwise it writes a PENDING ledger and returns a settlement token.
 //
 // 无额度限制：不再做任何上游预留，仅驱动台账 PENDING→BILLED/UNBILLED 状态机与幂等。
-func (s *Service) Begin(ctx context.Context, lic *model.LicenseView, reqid, tradeNo, requestID string) (*ReserveToken, *model.Ledger, error) {
-	if existing, err := s.ledger.FindByReqid(ctx, lic.AppKey, reqid); err == nil && existing != nil {
+// route 标记路由作用域 (共享 license 的 v8/v9 幂等/统计相互独立)。
+func (s *Service) Begin(ctx context.Context, lic *model.LicenseView, route, reqid, tradeNo, requestID string) (*ReserveToken, *model.Ledger, error) {
+	if existing, err := s.ledger.FindByReqid(ctx, lic.AppKey, route, reqid); err == nil && existing != nil {
 		if existing.State == model.StateBilled {
 			return nil, existing, nil
 		}
@@ -55,6 +62,7 @@ func (s *Service) Begin(ctx context.Context, lic *model.LicenseView, reqid, trad
 
 	l := &model.Ledger{
 		AppKey:    lic.AppKey,
+		Version:   route,
 		TradeNo:   tradeNo,
 		Reqid:     reqid,
 		RequestID: requestID,
@@ -63,19 +71,28 @@ func (s *Service) Begin(ctx context.Context, lic *model.LicenseView, reqid, trad
 	if err := s.ledger.Append(ctx, l); err != nil {
 		return nil, nil, errs.Wrap(errs.BusiDataRequestErr, "台账写入失败", err)
 	}
-	return &ReserveToken{LicenseID: lic.LicenseID, LedgerID: l.ID, Reqid: reqid}, nil, nil
+	return &ReserveToken{LicenseID: lic.LicenseID, Route: route, LedgerID: l.ID, Reqid: reqid}, nil, nil
 }
 
 // Settle is the §7.3 step 2 terminal settlement based on the确定结论.
+//   - d.Result != nil → 上游已应答 (查得/查无, = CalledUpstream) → 累计调用次数。
 //   - Resolved → ledger BILLED; 查得数据(Returned) 时累计成功查得数。
 //   - Unresolved → ledger UNBILLED。
+//
+// 计数按 token.Route 独立 (共享 license 的 v8/v9 互不影响)。每个台账仅结算一次
+// (同步路径或复查 worker)，故计数不会重复。
 func (s *Service) Settle(ctx context.Context, token *ReserveToken, d *model.BillingDecision) error {
 	if token == nil || d == nil {
 		return errs.New(errs.BusiDataRequestErr, "无效结算上下文")
 	}
+	if d.Result != nil {
+		if err := s.quota.IncTotalCalls(ctx, token.LicenseID, token.Route); err != nil {
+			return errs.Wrap(errs.BusiDataRequestErr, "调用次数累计失败", err)
+		}
+	}
 	if d.Resolved {
 		if d.Returned {
-			if err := s.quota.IncServiceUsed(ctx, token.LicenseID); err != nil {
+			if err := s.quota.IncServiceUsed(ctx, token.LicenseID, token.Route); err != nil {
 				return errs.Wrap(errs.BusiDataRequestErr, "成功查得数累计失败", err)
 			}
 		}

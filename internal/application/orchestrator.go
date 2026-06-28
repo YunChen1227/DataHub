@@ -19,8 +19,10 @@ import (
 	"github.com/datahub/relay/internal/domain/quota"
 )
 
-// QueryOrchestrator implements the §4 sequence.
+// QueryOrchestrator implements the §4 sequence. route 标记本编排器服务的路由
+// (x1/v9/v8/zlf/blk)，用于把统计/台账/审计按路由作用域隔离 (共享 license 的 v8/v9)。
 type QueryOrchestrator struct {
+	route    string
 	auth     *auth.Service
 	quota    *quota.Service
 	billing  *billing.Service
@@ -29,11 +31,11 @@ type QueryOrchestrator struct {
 	log      *slog.Logger
 }
 
-func NewQueryOrchestrator(a *auth.Service, q *quota.Service, b *billing.Service, up port.UpstreamPort, audit port.AuditRepository, log *slog.Logger) *QueryOrchestrator {
+func NewQueryOrchestrator(route string, a *auth.Service, q *quota.Service, b *billing.Service, up port.UpstreamPort, audit port.AuditRepository, log *slog.Logger) *QueryOrchestrator {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &QueryOrchestrator{auth: a, quota: q, billing: b, upstream: up, audit: audit, log: log}
+	return &QueryOrchestrator{route: route, auth: a, quota: q, billing: b, upstream: up, audit: audit, log: log}
 }
 
 // Handle runs the full request lifecycle and returns a ready-to-serialize
@@ -49,6 +51,7 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 
 	rec := &model.AuditRecord{
 		RequestID:  requestID,
+		Version:    o.route,
 		AppKey:     signed.AppKey,
 		ClientIP:   clientIP,
 		NameMask:   mask.Name(cmd.Name),
@@ -112,7 +115,7 @@ type queryOutcome struct {
 // 调用(+按 reqid 复查)、结算。It updates the audit record's flow fields and applies
 // settlement; wire-format mapping is left to the caller.
 func (o *QueryOrchestrator) runCore(ctx context.Context, lic *model.LicenseView, upReq *model.UpstreamRequest, requestID string, rec *model.AuditRecord, log *slog.Logger) queryOutcome {
-	token, existing, err := o.quota.Begin(ctx, lic, upReq.Reqid, "", requestID)
+	token, existing, err := o.quota.Begin(ctx, lic, o.route, upReq.Reqid, "", requestID)
 	if err != nil {
 		ae := errs.AsAppError(err)
 		rec.ErrMsg = ae.Error()
@@ -202,7 +205,7 @@ func (o *QueryOrchestrator) QuotaQuery(ctx context.Context, signed *model.Signed
 	if err != nil {
 		return nil, nil, err
 	}
-	view, err := o.quota.ServiceQuotaView(ctx, lic)
+	view, err := o.quota.ServiceQuotaView(ctx, lic, o.route)
 	if err != nil {
 		return nil, lic, err
 	}

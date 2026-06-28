@@ -34,19 +34,19 @@ func (s *Store) PutAdmin(_ context.Context, a *model.AdminUser) error {
 
 // --- port.UserAdminRepository (DESIGN §16.2) ---
 
-func (s *Store) ListUsers(_ context.Context) ([]*model.UserDetail, error) {
+func (s *Store) ListUsers(_ context.Context, route string) ([]*model.UserDetail, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]*model.UserDetail, 0, len(s.licenses))
 	for id := range s.licenses {
-		out = append(out, s.userDetailLocked(id))
+		out = append(out, s.userDetailLocked(id, route))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
 
 // SearchUsers matches appKey / name / mobile by case-insensitive substring.
-func (s *Store) SearchUsers(_ context.Context, keyword string) ([]*model.UserDetail, error) {
+func (s *Store) SearchUsers(_ context.Context, keyword, route string) ([]*model.UserDetail, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	kw := strings.ToLower(strings.TrimSpace(keyword))
@@ -58,19 +58,19 @@ func (s *Store) SearchUsers(_ context.Context, keyword string) ([]*model.UserDet
 			!strings.Contains(strings.ToLower(rec.mobile), kw) {
 			continue
 		}
-		out = append(out, s.userDetailLocked(id))
+		out = append(out, s.userDetailLocked(id, route))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
 
-func (s *Store) GetUser(_ context.Context, licenseID string) (*model.UserDetail, error) {
+func (s *Store) GetUser(_ context.Context, licenseID, route string) (*model.UserDetail, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.licenses[licenseID] == nil {
 		return nil, nil
 	}
-	return s.userDetailLocked(licenseID), nil
+	return s.userDetailLocked(licenseID, route), nil
 }
 
 func (s *Store) CreateUser(_ context.Context, d *model.UserDetail, secret string) error {
@@ -98,7 +98,7 @@ func (s *Store) CreateUser(_ context.Context, d *model.UserDetail, secret string
 		createdAt:       now,
 	}
 	s.appKeyIndex[d.AppKey] = d.LicenseID
-	s.quotas[d.LicenseID] = &quotaRow{}
+	// 计数行 (licenseID|route) 由首次累加时按需创建。
 	return nil
 }
 
@@ -121,7 +121,12 @@ func (s *Store) DeleteUser(_ context.Context, licenseID string) error {
 		delete(s.appKeyIndex, rec.view.AppKey)
 	}
 	delete(s.licenses, licenseID)
-	delete(s.quotas, licenseID)
+	// 删除该 license 的所有路由计数行 (licenseID|route)。
+	for k := range s.quotas {
+		if strings.HasPrefix(k, licenseID+"|") {
+			delete(s.quotas, k)
+		}
+	}
 	return nil
 }
 
@@ -135,13 +140,13 @@ func (s *Store) RotateSecret(_ context.Context, licenseID, secret string) error 
 	return nil
 }
 
-// userDetailLocked builds a UserDetail; caller MUST hold s.mu.
-func (s *Store) userDetailLocked(licenseID string) *model.UserDetail {
+// userDetailLocked builds a UserDetail with route-scoped 计数; caller MUST hold s.mu.
+func (s *Store) userDetailLocked(licenseID, route string) *model.UserDetail {
 	rec := s.licenses[licenseID]
 	if rec == nil {
 		return nil
 	}
-	q := s.quotas[licenseID]
+	q := s.quotas[quotaKey(licenseID, route)]
 	if q == nil {
 		q = &quotaRow{}
 	}
@@ -153,6 +158,7 @@ func (s *Store) userDetailLocked(licenseID string) *model.UserDetail {
 		Status:          rec.view.Status,
 		ClientUUID:      rec.view.ClientUUID,
 		ServiceUsed:     q.serviceUsed,
+		TotalCalls:      q.totalCalls,
 		SecretCreatedAt: rec.secretCreatedAt,
 		ValidTo:         rec.validTo,
 		CreatedAt:       rec.createdAt,
@@ -179,6 +185,9 @@ func (s *Store) ListAudits(_ context.Context, f model.AuditFilter) ([]*model.Aud
 	// newest first.
 	for i := len(s.audits) - 1; i >= 0; i-- {
 		a := s.audits[i]
+		if f.Version != "" && a.Version != f.Version {
+			continue
+		}
 		if f.AppKey != "" && a.AppKey != f.AppKey {
 			continue
 		}

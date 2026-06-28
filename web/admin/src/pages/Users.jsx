@@ -140,7 +140,7 @@ export default function Users() {
             <thead>
               <tr>
                 <th>uuid</th><th>名称</th><th>手机号</th><th>状态</th>
-                <th>成功查得数</th>
+                <th>调用次数</th><th>成功查得数</th>
                 <th>密钥创建时间</th><th>过期日期</th><th>创建时间</th><th>操作</th>
               </tr>
             </thead>
@@ -151,6 +151,7 @@ export default function Users() {
                   <td>{u.name || '-'}</td>
                   <td>{maskMobile(u.mobile)}</td>
                   <td><span className={'badge ' + u.status}>{u.status}</span></td>
+                  <td><strong>{u.totalCalls}</strong></td>
                   <td><strong>{u.serviceUsed}</strong></td>
                   <td className="muted">{fmtDate(u.secretCreatedAt)}</td>
                   <td className="muted">{fmtDate(u.validTo)}</td>
@@ -163,7 +164,7 @@ export default function Users() {
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan="9" className="muted">暂无用户</td></tr>
+                <tr><td colSpan="10" className="muted">暂无用户</td></tr>
               )}
             </tbody>
           </table>
@@ -187,7 +188,11 @@ export default function Users() {
               <input value={editing.mobile || ''} onChange={(e) => setEditing({ ...editing, mobile: e.target.value })} placeholder="13800001234" />
             </div>
             <div className="field">
-              <label>成功查得数</label>
+              <label>调用次数（当前路由）</label>
+              <input type="number" value={editing.totalCalls} disabled readOnly />
+            </div>
+            <div className="field">
+              <label>成功查得数（当前路由）</label>
               <input type="number" value={editing.serviceUsed} disabled readOnly />
             </div>
             <div className="row-actions" style={{ marginTop: 12 }}>

@@ -11,11 +11,13 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// Durable is the PostgreSQL mirror the quota repo reads 成功查得数 from and
-// write-throughs mutations to (implemented by persistence/postgres.Store).
+// Durable is the PostgreSQL mirror the quota repo reads per-route 计数 from and
+// write-throughs mutations to (implemented by persistence/postgres.Store)。
 type Durable interface {
-	ServiceUsedCount(ctx context.Context, licenseID string) (svcUsed int64, err error)
-	AddServiceUsed(ctx context.Context, licenseID string, delta int64) error
+	ServiceUsedCount(ctx context.Context, licenseID, route string) (svcUsed int64, err error)
+	AddServiceUsed(ctx context.Context, licenseID, route string, delta int64) error
+	TotalCallsCount(ctx context.Context, licenseID, route string) (calls int64, err error)
+	AddTotalCalls(ctx context.Context, licenseID, route string, delta int64) error
 }
 
 // Options configures the Redis connection.
@@ -53,46 +55,80 @@ func New(ctx context.Context, opts Options, pg Durable) (*Quota, error) {
 // Close releases the Redis client.
 func (q *Quota) Close() { _ = q.rdb.Close() }
 
-func kSvcUsed(lid string) string { return "quota:" + lid + ":svc_used" }
+// 计数 key 按 (license, route) 独立：共享 license 的 v8/v9 互不干扰。
+func kSvcUsed(lid, route string) string  { return "quota:" + lid + ":" + route + ":svc_used" }
+func kCallTotal(lid, route string) string { return "quota:" + lid + ":" + route + ":call_total" }
 
-// ensure lazily seeds the Redis 成功查得数 counter from the durable PG mirror
-// (SETNX so a flushed Redis is rehydrated and concurrent processes don't clobber).
-func (q *Quota) ensure(ctx context.Context, licenseID string) error {
-	if _, ok := q.seeded.Load(licenseID); ok {
+func seedKey(lid, route string) string { return lid + "|" + route }
+
+// ensure lazily seeds both Redis 计数器 (成功查得数 + 调用次数) from the durable PG
+// mirror (SETNX so a flushed Redis is rehydrated and concurrent processes don't clobber)。
+func (q *Quota) ensure(ctx context.Context, licenseID, route string) error {
+	if _, ok := q.seeded.Load(seedKey(licenseID, route)); ok {
 		return nil
 	}
-	svcUsed, err := q.pg.ServiceUsedCount(ctx, licenseID)
+	svcUsed, err := q.pg.ServiceUsedCount(ctx, licenseID, route)
 	if err != nil {
 		return err
 	}
-	if err := q.rdb.SetNX(ctx, kSvcUsed(licenseID), svcUsed, 0).Err(); err != nil {
+	if err := q.rdb.SetNX(ctx, kSvcUsed(licenseID, route), svcUsed, 0).Err(); err != nil {
 		return err
 	}
-	q.seeded.Store(licenseID, struct{}{})
+	calls, err := q.pg.TotalCallsCount(ctx, licenseID, route)
+	if err != nil {
+		return err
+	}
+	if err := q.rdb.SetNX(ctx, kCallTotal(licenseID, route), calls, 0).Err(); err != nil {
+		return err
+	}
+	q.seeded.Store(seedKey(licenseID, route), struct{}{})
 	return nil
 }
 
-// ServiceUsed returns the cumulative 成功查得数 (Redis counter, PG-mirrored).
-func (q *Quota) ServiceUsed(ctx context.Context, licenseID string) (int64, error) {
-	if err := q.ensure(ctx, licenseID); err != nil {
-		return 0, err
-	}
-	used, err := q.rdb.Get(ctx, kSvcUsed(licenseID)).Int64()
+func (q *Quota) getCounter(ctx context.Context, key string) (int64, error) {
+	v, err := q.rdb.Get(ctx, key).Int64()
 	if err == goredis.Nil {
 		return 0, nil
 	} else if err != nil {
 		return 0, err
 	}
-	return used, nil
+	return v, nil
 }
 
-// IncServiceUsed increments 成功查得数 by 1 (Redis) and mirrors to PG.
-func (q *Quota) IncServiceUsed(ctx context.Context, licenseID string) error {
-	if err := q.ensure(ctx, licenseID); err != nil {
+// ServiceUsed returns the cumulative 成功查得数 for (license, route) (Redis, PG-mirrored).
+func (q *Quota) ServiceUsed(ctx context.Context, licenseID, route string) (int64, error) {
+	if err := q.ensure(ctx, licenseID, route); err != nil {
+		return 0, err
+	}
+	return q.getCounter(ctx, kSvcUsed(licenseID, route))
+}
+
+// IncServiceUsed increments 成功查得数 by 1 for (license, route) (Redis) and mirrors to PG.
+func (q *Quota) IncServiceUsed(ctx context.Context, licenseID, route string) error {
+	if err := q.ensure(ctx, licenseID, route); err != nil {
 		return err
 	}
-	if err := q.rdb.Incr(ctx, kSvcUsed(licenseID)).Err(); err != nil {
+	if err := q.rdb.Incr(ctx, kSvcUsed(licenseID, route)).Err(); err != nil {
 		return err
 	}
-	return q.pg.AddServiceUsed(ctx, licenseID, 1)
+	return q.pg.AddServiceUsed(ctx, licenseID, route, 1)
+}
+
+// TotalCalls returns the cumulative 调用次数 for (license, route) (Redis, PG-mirrored).
+func (q *Quota) TotalCalls(ctx context.Context, licenseID, route string) (int64, error) {
+	if err := q.ensure(ctx, licenseID, route); err != nil {
+		return 0, err
+	}
+	return q.getCounter(ctx, kCallTotal(licenseID, route))
+}
+
+// IncTotalCalls increments 调用次数 by 1 for (license, route) (Redis) and mirrors to PG.
+func (q *Quota) IncTotalCalls(ctx context.Context, licenseID, route string) error {
+	if err := q.ensure(ctx, licenseID, route); err != nil {
+		return err
+	}
+	if err := q.rdb.Incr(ctx, kCallTotal(licenseID, route)).Err(); err != nil {
+		return err
+	}
+	return q.pg.AddTotalCalls(ctx, licenseID, route, 1)
 }

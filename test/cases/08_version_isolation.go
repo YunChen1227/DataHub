@@ -1,7 +1,8 @@
 //go:build ignore
 
-// 08_version_isolation: 验证三版本「数据库 + 后台 + 调用记录」完全独立、互不干扰。
-//   - 在 v9 后台建的用户只在 v9 可见/可鉴权，x1、v8 后台与路由均看不到。
+// 08_version_isolation: 验证按「域」隔离 + v8/v9 共享 license。
+//   - 在 v9 后台建的用户：v9 与 v8 (同属 v8v9 域，共享 license) 都可见/可鉴权；
+//     x1 等其它域看不到。
 //   - 用未知版本路径访问后台 -> 404。
 //
 // Run: go run test/cases/08_version_isolation.go
@@ -19,7 +20,7 @@ func base() map[string]string {
 }
 
 func main() {
-	rec := harness.NewRecorder("08_version_isolation", "三版本数据库/后台/统计隔离")
+	rec := harness.NewRecorder("08_version_isolation", "域隔离 + v8/v9 共享 license")
 	defer rec.Finish()
 
 	token, raw := harness.AdminLogin()
@@ -47,17 +48,21 @@ func main() {
 	rec.Check("v9 新用户可查得", "errorCode=0 & body.code=001",
 		rv9.ErrorCode == "0" && rv9.BodyCode == "001", rv9.Raw)
 
-	// 3. 同一 appKey 在 x1 / v8 路由应查无账户 -> 505004（数据库独立）。
+	// 3. 同一 appKey 在 x1 路由应查无账户 -> 505004（不同域，license 隔离）；
+	//    但在 v8 路由可成功鉴权查得（v8/v9 同域共享 license）。
 	rx1 := harness.Query("x1", appKey, secret, base(), nil)
-	rec.Check("x1 看不到 v9 用户", "errorCode=505004", rx1.ErrorCode == "505004", rx1.Raw)
+	rec.Check("x1(不同域)看不到 v9 用户", "errorCode=505004", rx1.ErrorCode == "505004", rx1.Raw)
 	rv8 := harness.Query("v8", appKey, secret, base(), nil)
-	rec.Check("v8 看不到 v9 用户", "errorCode=505004", rv8.ErrorCode == "505004", rv8.Raw)
+	rec.Check("v8(同域)可用 v9 创建的 license 查得", "errorCode=0 & body.code=001",
+		rv8.ErrorCode == "0" && rv8.BodyCode == "001", rv8.Raw)
 
-	// 4. 该用户只在 v9 后台可查到，x1 后台查不到。
+	// 4. 该用户在 v9 与 v8 后台都可查到（共享 license），x1 后台查不到（不同域）。
 	stG, _, _ := harness.Call(http.MethodGet, harness.AdminBase("v9")+"/users/"+licenseID, nil, auth)
 	rec.Check("v9 后台可查到该用户", "HTTP 200", stG == 200, "status不为200")
+	stV8, _, _ := harness.Call(http.MethodGet, harness.AdminBase("v8")+"/users/"+licenseID, nil, auth)
+	rec.Check("v8 后台可查到该用户(共享 license)", "HTTP 200", stV8 == 200, "status不为200")
 	stX, _, _ := harness.Call(http.MethodGet, harness.AdminBase("x1")+"/users/"+licenseID, nil, auth)
-	rec.Check("x1 后台查不到 v9 用户", "HTTP 404", stX == 404, "status不为404")
+	rec.Check("x1 后台查不到 v9 用户(不同域)", "HTTP 404", stX == 404, "status不为404")
 
 	// 5. 未知版本路径 -> 404。
 	stU, _, ur := harness.Call(http.MethodGet, "/admin/api/v7/users", nil, auth)

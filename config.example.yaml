@@ -7,10 +7,15 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 三版本 (x1/v9/v8) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | querySrmxV9 | querySrmxV8
-#   GET  /v1/openapi/zlx/quotaX1     | quotaV9     | quotaV8
-# 每个版本各自独立：独立上游 + 独立数据库 + 独立 Redis 逻辑库 + 独立统计。
+# 各版本 (x1/v9/v8/zlf/blk) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | querySrmxV9 | querySrmxV8 | querySrmxZLF | querySrmxBLK
+#   GET  /v1/openapi/zlx/quotaX1     | quotaV9     | quotaV8     | quotaZLF     | quotaBLK
+# 存储按「域」划分：x1 / v8v9 / zlf / blk 四个域，各域独占一套 DB + Redis 逻辑库。
+# v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
+# 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
+# 每条路由各自对接独立上游。
+# zlf 转接租赁分V2-D (守信 shouxin168) 上游：AES 加密 biz_data + form 提交。
+# blk 转接黑名单因子V35 (应诺尔 enol，与 x1/gama 同端点)：apiKey=blackIntV35、encryptionType=2 (PII 走 MD5)。
 #
 # 注：durations 支持 Go 风格字符串，如 4s / 10s / 5m / 8h。
 
@@ -36,12 +41,14 @@ admin:
 demo:
   appSecret: "REPLACE_WITH_DEMO_APP_SECRET"
 
-# 存储后端 (DESIGN §11): memory（开发/默认）| postgres（生产，每版本独立 PG + Redis）。
+# 存储后端 (DESIGN §11): memory（开发/默认）| postgres（生产，每个域独立 PG + Redis）。
 storage:
   driver: "memory"          # memory | postgres
   migrationsDir: "migrations"
 
-# 每版本独立配置。memory 模式下 database/redis 可省略；postgres 模式必须各自独立。
+# 按路由配置上游；存储按「域」装配：每个域用其 owner 路由的 database/redis 开库。
+# 域 owner：x1→x1, v8v9→v9, zlf→zlf, blk→blk。v8 与 v9 共用 v8v9 域库（同一套
+# license），故 v8 无需单列 database/redis。memory 模式下 database/redis 可全省略。
 versions:
   x1:
     upstream:
@@ -64,6 +71,7 @@ versions:
       password: "REPLACE_WITH_REDIS_PASSWORD"
       db: 0
       poolSize: 10
+  # v9 是 v8v9 域的 owner：其 database/redis 即整个 v8v9 域的存储（v8 复用）。
   v9:
     upstream:
       kind: "income"        # v9 对接上游 B（GET account/key 验签）
@@ -73,7 +81,7 @@ versions:
     database:
       host: "REPLACE_WITH_PG_HOST"
       port: 5432
-      name: "datahub_v9_db"
+      name: "datahub_v8v9_db"
       user: "REPLACE_WITH_PG_USER"
       password: "REPLACE_WITH_PG_PASSWORD"
       sslmode: "disable"
@@ -84,16 +92,35 @@ versions:
       password: "REPLACE_WITH_REDIS_PASSWORD"
       db: 1
       poolSize: 10
+  # v8 与 v9 同属 v8v9 域，共用 v9 的库/Redis（同一套 license）。仅配上游；
+  # database/redis 不单列，主程序按域 owner(v9) 装配存储。
   v8:
     upstream:
       kind: "income"        # v8 对接上游 C（GET account/key 验签）
       baseURL: "REPLACE_WITH_V8_UPSTREAM_URL"
       account: "REPLACE_WITH_V8_UPSTREAM_ACCOUNT"
       key: "REPLACE_WITH_V8_UPSTREAM_KEY"
+  zlf:
+    upstream:
+      kind: "rental"        # zlf 对接租赁分V2-D（AES 加密 biz_data + form POST）
+      baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
+      institutionId: "REPLACE_WITH_RENTAL_INSTITUTION_ID"
+      aesKey: "REPLACE_WITH_RENTAL_AES_KEY"   # AES/ECB/PKCS5Padding 密钥（16/24/32 字节）
+      service: "buer_unique_service"          # 可省，默认值
+      mode: "mode_rent_score_v2_d"            # 可省，默认值
+      # 授权书：固定本地文件，服务启动时上传 OSS 一次并缓存 licenseUrl 复用
+      licenseFile: "REPLACE_WITH_LOCAL_AUTH_FILE_PATH"   # 如 ./config/approve.pdf
+      licenseType: 1                          # 0:图片(jpg/jpeg/png/bmp) 1:pdf
+      oss:
+        endpoint: "oss-cn-shanghai.aliyuncs.com"
+        accessKeyId: "REPLACE_WITH_OSS_ACCESS_KEY_ID"
+        accessKeySecret: "REPLACE_WITH_OSS_ACCESS_KEY_SECRET"
+        bucket: "shouwei"
+        objectPrefix: "approve_files/"        # 必须以 approve_files/ 开头
     database:
       host: "REPLACE_WITH_PG_HOST"
       port: 5432
-      name: "datahub_v8_db"
+      name: "datahub_zlf_db"
       user: "REPLACE_WITH_PG_USER"
       password: "REPLACE_WITH_PG_PASSWORD"
       sslmode: "disable"
@@ -102,5 +129,27 @@ versions:
       addr: "REPLACE_WITH_REDIS_HOST:6379"
       username: "REPLACE_WITH_REDIS_USER"
       password: "REPLACE_WITH_REDIS_PASSWORD"
-      db: 2
+      db: 3
+      poolSize: 10
+  blk:
+    upstream:
+      kind: "blacklist"     # blk 对接黑名单因子V35（应诺尔 enol，同 gama 端点 + MD5 信封）
+      baseURL: "REPLACE_WITH_BLK_UPSTREAM_DOCHECK_URL"
+      appId: "REPLACE_WITH_BLK_UPSTREAM_APP_ID"
+      appSecret: "REPLACE_WITH_BLK_UPSTREAM_APP_SECRET"
+      apiKey: "blackIntV35"   # 黑名单因子V35 固定产品码
+      encryptionType: 2       # 2=MD5：name/idCard/mobile 取 MD5 摘要后入 body 加签
+    database:
+      host: "REPLACE_WITH_PG_HOST"
+      port: 5432
+      name: "datahub_blk_db"
+      user: "REPLACE_WITH_PG_USER"
+      password: "REPLACE_WITH_PG_PASSWORD"
+      sslmode: "disable"
+      maxConns: 10
+    redis:
+      addr: "REPLACE_WITH_REDIS_HOST:6379"
+      username: "REPLACE_WITH_REDIS_USER"
+      password: "REPLACE_WITH_REDIS_PASSWORD"
+      db: 4
       poolSize: 10

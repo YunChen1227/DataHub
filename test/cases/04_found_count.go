@@ -1,8 +1,8 @@
 //go:build ignore
 
-// 04_found_count: 验证"只统计成功查得数、无额度限制"且三版本统计互相独立。
+// 04_found_count: 验证"只统计成功查得数、无额度限制"且各版本统计互相独立。
 // 对每个版本各自读 /quota 前值 -> 发 N 次成功 + M 次查无 -> 读后值，断言该版本
-// serviceUsed 增量恰为 N（查无不计）；并断言只对 x1 发流量时，v9/v8 计数不变（隔离）。
+// serviceUsed 增量恰为 N（查无不计）；并断言只对 x1 发流量时，其他版本计数不变。
 //
 // Run: go run test/cases/04_found_count.go
 package main
@@ -26,9 +26,11 @@ func main() {
 	rec := harness.NewRecorder("04_found_count", "成功查得数统计 + 无额度限制 + 版本隔离")
 	defer rec.Finish()
 
-	// 记录三版本初始计数，用于稍后验证隔离。
+	// 记录其他版本初始计数，用于稍后验证隔离。
 	v9Before := harness.ServiceUsed("v9", harness.AppKey, harness.Secret)
 	v8Before := harness.ServiceUsed("v8", harness.AppKey, harness.Secret)
+	zlfBefore := harness.ServiceUsed("zlf", harness.AppKey, harness.Secret)
+	blkBefore := harness.ServiceUsed("blk", harness.AppKey, harness.Secret)
 
 	// 仅对 x1 发起流量，逐版本独立计数。
 	before := harness.ServiceUsed("x1", harness.AppKey, harness.Secret)
@@ -62,11 +64,17 @@ func main() {
 		delta == float64(nSuccess), fmt.Sprintf("delta=%v (want %d)", delta, nSuccess))
 	rec.Check("无额度限制(无 1001/1006)", "全程不出现 505005/505006", noLimit, "出现了余额/上限拦截码")
 
-	// 版本隔离：对 x1 的流量不应影响 v9/v8 的成功查得数。
+	// 版本隔离：对 x1 的流量不应影响其他版本的成功查得数。
 	v9After := harness.ServiceUsed("v9", harness.AppKey, harness.Secret)
 	v8After := harness.ServiceUsed("v8", harness.AppKey, harness.Secret)
+	zlfAfter := harness.ServiceUsed("zlf", harness.AppKey, harness.Secret)
+	blkAfter := harness.ServiceUsed("blk", harness.AppKey, harness.Secret)
 	rec.Check("v9 计数不受 x1 流量影响", "delta == 0",
 		v9After == v9Before, fmt.Sprintf("before=%v after=%v", v9Before, v9After))
 	rec.Check("v8 计数不受 x1 流量影响", "delta == 0",
 		v8After == v8Before, fmt.Sprintf("before=%v after=%v", v8Before, v8After))
+	rec.Check("zlf 计数不受 x1 流量影响", "delta == 0",
+		zlfAfter == zlfBefore, fmt.Sprintf("before=%v after=%v", zlfBefore, zlfAfter))
+	rec.Check("blk 计数不受 x1 流量影响", "delta == 0",
+		blkAfter == blkBefore, fmt.Sprintf("before=%v after=%v", blkBefore, blkAfter))
 }

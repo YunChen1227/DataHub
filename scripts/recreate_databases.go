@@ -1,9 +1,10 @@
 //go:build ignore
 
-// Create/recreate + migrate + seed the three per-version databases on the Aliyun
-// RDS instance (datahub_x1_db / datahub_v9_db / datahub_v8_db, or whatever names
-// the config's versions.*.database.name specify). Each version is fully isolated.
-// Usage:
+// Create/recreate + migrate + seed the per-domain databases on the Aliyun RDS
+// instance (datahub_x1_db / datahub_v8v9_db / datahub_zlf_db / datahub_blk_db, or
+// whatever names the config's versions.*.database.name specify). 存储按「域」隔离：
+// v8/v9 共用 v8v9 域库——v8 在 config 中不单列 database，故此处自动跳过，v8v9 域库
+// 由 owner 路由 v9 创建。Usage:
 //
 //	CONFIG_FILE=config.aliyun.e2e.yaml go run ./scripts/recreate_databases.go
 package main
@@ -41,7 +42,7 @@ type fileConfig struct {
 }
 
 // versionOrder keeps a deterministic processing order matching model.Versions.
-var versionOrder = []string{"x1", "v9", "v8"}
+var versionOrder = []string{"x1", "v9", "v8", "zlf", "blk"}
 
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

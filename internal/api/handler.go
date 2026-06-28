@@ -34,8 +34,8 @@ func NewServer(stacks map[string]*VersionStack, control *admin.Service, spaDir s
 	return &Server{stacks: stacks, control: control, spaDir: spaDir}
 }
 
-// Routes wires the public endpoints with edge middleware (DESIGN §5/§16). 三版本
-// 对外统一为 x1 信封格式，仅靠路由名区分：querySrmx{X1,V9,V8} / quota{X1,V9,V8}。
+// Routes wires the public endpoints with edge middleware (DESIGN §5/§16). 各版本
+// 对外统一为 x1 信封格式，仅靠路由名区分：querySrmx{X1,V9,V8,ZLF,BLK} / quota{...}。
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	for _, v := range model.Versions {
@@ -88,13 +88,14 @@ func (s *Server) handleQuery(st *VersionStack) http.HandlerFunc {
 	}
 }
 
-// quotaResponse is本服务扩展的查询响应 (内部/admin 使用). 无额度限制，
-// serviceUsed = 累计成功查得数据的次数。
+// quotaResponse is本服务扩展的查询响应 (内部/admin 使用). 无额度限制，按路由独立统计：
+// serviceUsed = 累计成功查得数据次数, totalCalls = 累计调用上游次数。
 type quotaResponse struct {
 	ErrorCode   string `json:"errorCode"`
 	ErrorMsg    string `json:"errorMsg"`
 	Status      string `json:"status,omitempty"`
 	ServiceUsed int64  `json:"serviceUsed"` // 成功查得数据次数（累计）
+	TotalCalls  int64  `json:"totalCalls"`  // 调用上游次数（累计）
 }
 
 // handleQuota serves GET /v1/openapi/zlx/quota{X1,V9,V8} (本服务扩展). 鉴权同主接口
@@ -116,6 +117,7 @@ func (s *Server) handleQuota(st *VersionStack) http.HandlerFunc {
 			ErrorMsg:    "success",
 			Status:      view.Status,
 			ServiceUsed: view.Used,
+			TotalCalls:  view.Calls,
 		})
 	}
 }

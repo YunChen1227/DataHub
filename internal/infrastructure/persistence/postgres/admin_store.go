@@ -34,24 +34,24 @@ func (s *Store) PutAdmin(ctx context.Context, a *model.AdminUser) error {
 
 // --- port.UserAdminRepository (DESIGN §16.2) ---
 
-func (s *Store) ListUsers(ctx context.Context) ([]*model.UserDetail, error) {
+func (s *Store) ListUsers(ctx context.Context, route string) ([]*model.UserDetail, error) {
 	const q = `SELECT license_id FROM license ORDER BY created_at DESC`
-	return s.usersByQuery(ctx, q)
+	return s.usersByQuery(ctx, route, q)
 }
 
 // SearchUsers matches appKey / name / mobile by case-insensitive substring.
-func (s *Store) SearchUsers(ctx context.Context, keyword string) ([]*model.UserDetail, error) {
+func (s *Store) SearchUsers(ctx context.Context, keyword, route string) ([]*model.UserDetail, error) {
 	if keyword == "" {
-		return s.ListUsers(ctx)
+		return s.ListUsers(ctx, route)
 	}
 	const q = `SELECT license_id FROM license
 	             WHERE app_key ILIKE $1 OR name ILIKE $1 OR mobile ILIKE $1
 	             ORDER BY created_at DESC`
-	return s.usersByQuery(ctx, q, "%"+keyword+"%")
+	return s.usersByQuery(ctx, route, q, "%"+keyword+"%")
 }
 
-// usersByQuery runs an id-selecting query then hydrates each UserDetail.
-func (s *Store) usersByQuery(ctx context.Context, q string, args ...any) ([]*model.UserDetail, error) {
+// usersByQuery runs an id-selecting query then hydrates each UserDetail for route.
+func (s *Store) usersByQuery(ctx context.Context, route, q string, args ...any) ([]*model.UserDetail, error) {
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func (s *Store) usersByQuery(ctx context.Context, q string, args ...any) ([]*mod
 	}
 	out := make([]*model.UserDetail, 0, len(ids))
 	for _, id := range ids {
-		d, err := s.GetUser(ctx, id)
+		d, err := s.GetUser(ctx, id, route)
 		if err != nil {
 			return nil, err
 		}
@@ -82,7 +82,7 @@ func (s *Store) usersByQuery(ctx context.Context, q string, args ...any) ([]*mod
 	return out, nil
 }
 
-func (s *Store) GetUser(ctx context.Context, licenseID string) (*model.UserDetail, error) {
+func (s *Store) GetUser(ctx context.Context, licenseID, route string) (*model.UserDetail, error) {
 	const q = `SELECT license_id, app_key, COALESCE(name,''), COALESCE(mobile,''), status,
 	             client_uuid, secret_created_at, valid_to, created_at
 	             FROM license WHERE license_id=$1`
@@ -96,11 +96,12 @@ func (s *Store) GetUser(ctx context.Context, licenseID string) (*model.UserDetai
 	if err != nil {
 		return nil, err
 	}
-	used, err := s.ServiceUsedCount(ctx, licenseID)
-	if err != nil {
+	if d.ServiceUsed, err = s.ServiceUsedCount(ctx, licenseID, route); err != nil {
 		return nil, err
 	}
-	d.ServiceUsed = used
+	if d.TotalCalls, err = s.TotalCallsCount(ctx, licenseID, route); err != nil {
+		return nil, err
+	}
 	return d, nil
 }
 
@@ -120,10 +121,7 @@ func (s *Store) CreateUser(ctx context.Context, d *model.UserDetail, secret stri
 		d.LicenseID, d.AppKey, secret, d.ClientUUID, d.Name, d.Mobile, d.Status); err != nil {
 		return err
 	}
-	// 成功查得数计数行（dim='SERVICE'）；v0.6 起无额度上限。
-	if _, err := tx.Exec(ctx, `INSERT INTO quota (license_id, dim) VALUES ($1,'SERVICE')`, d.LicenseID); err != nil {
-		return err
-	}
+	// 计数行 (license, route, dim) 由首次累加时 UPSERT 按需创建，无需在此预插。
 	return tx.Commit(ctx)
 }
 
@@ -160,20 +158,20 @@ func (s *Store) RotateSecret(ctx context.Context, licenseID, secret string) erro
 
 func (s *Store) AppendAudit(ctx context.Context, rec *model.AuditRecord) error {
 	const q = `INSERT INTO audit_log
-		(request_id, app_key, trade_no, reqid, client_ip, called_upstream, found_data,
+		(request_id, version, app_key, trade_no, reqid, client_ip, called_upstream, found_data,
 		 busi_code, busi_msg, upstream_code, upstream_uid, upstream_logid, billed,
 		 latency_ms, name_mask, id_card_mask, mobile_mask, err_msg)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		RETURNING id, created_at`
 	return s.pool.QueryRow(ctx, q,
-		rec.RequestID, rec.AppKey, rec.TradeNo, rec.Reqid, rec.ClientIP, rec.CalledUpstream, rec.FoundData,
+		rec.RequestID, rec.Version, rec.AppKey, rec.TradeNo, rec.Reqid, rec.ClientIP, rec.CalledUpstream, rec.FoundData,
 		rec.BusiCode, rec.BusiMsg, rec.UpstreamCode, rec.UpstreamUID, rec.UpstreamLogID, rec.Billed,
 		rec.LatencyMs, rec.NameMask, rec.IDCardMask, rec.MobileMask, rec.ErrMsg,
 	).Scan(&rec.ID, &rec.CreatedAt)
 }
 
 func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.AuditRecord, error) {
-	q := `SELECT id, request_id, app_key, COALESCE(trade_no,''), COALESCE(reqid,''),
+	q := `SELECT id, request_id, COALESCE(version,''), app_key, COALESCE(trade_no,''), COALESCE(reqid,''),
 		COALESCE(client_ip,''), called_upstream, found_data, COALESCE(busi_code,0),
 		COALESCE(busi_msg,''), COALESCE(upstream_code,''), COALESCE(upstream_uid,''),
 		COALESCE(upstream_logid,''), billed, COALESCE(latency_ms,0),
@@ -182,6 +180,11 @@ func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.A
 		FROM audit_log WHERE 1=1`
 	args := []any{}
 	n := 0
+	if f.Version != "" {
+		n++
+		q += " AND version=$" + itoa(n)
+		args = append(args, f.Version)
+	}
 	if f.AppKey != "" {
 		n++
 		q += " AND app_key=$" + itoa(n)
@@ -216,7 +219,7 @@ func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.A
 	var out []*model.AuditRecord
 	for rows.Next() {
 		var r model.AuditRecord
-		if err := rows.Scan(&r.ID, &r.RequestID, &r.AppKey, &r.TradeNo, &r.Reqid,
+		if err := rows.Scan(&r.ID, &r.RequestID, &r.Version, &r.AppKey, &r.TradeNo, &r.Reqid,
 			&r.ClientIP, &r.CalledUpstream, &r.FoundData, &r.BusiCode,
 			&r.BusiMsg, &r.UpstreamCode, &r.UpstreamUID, &r.UpstreamLogID, &r.Billed, &r.LatencyMs,
 			&r.NameMask, &r.IDCardMask, &r.MobileMask, &r.ErrMsg, &r.CreatedAt); err != nil {

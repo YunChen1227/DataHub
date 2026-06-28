@@ -1,8 +1,16 @@
 # 经济能力查询转接服务 — 设计文档（DESIGN.md）
 
-> 版本：v0.7（服务版本 **x1**）
+> 版本：v0.8（服务版本 **x1**）
 > 角色定位：本服务是一个**接口转接（API Relay / Gateway）网关**。对外为客户（商户）提供经济能力查询 API（当前版本 **x1**：`POST /v1/openapi/zlx/querySrmxX1`）；对内调用**上游数据源**（伽马分层分）获取评分后回传。
-> 在此基础上提供 **License 鉴权** 与 **成功查得数统计**（无额度限制）能力。
+> 在此基础上提供 **License 鉴权** 与 **每路由独立的调用统计**（无额度限制）能力。
+
+> **v0.8 变更（重要：License 域 + 每路由独立统计）**：
+> - **「路由」与「license 域」解耦**。路由（version）= 对外接口 + 上游，共 5 条：`x1 / v9 / v8 / zlf / blk`；license 域 = 存储边界（独占一套 DB + Redis + license 表），共 4 个：`x1 / v8v9 / zlf / blk`。映射 `model.RouteDomain`：`v8`、`v9` → `v8v9` 域，其余路由各自成域。
+> - **每个用户按路由独立申请 license，但 v8/v9 共用一个**：因此一个商户最多有 **4 个 license**（`x1`、`v8v9`、`zlf`、`blk`）。`v8v9` 域内 license 表只有一行——同一套 `appKey/appSecret/状态` 同时在 `v8` 与 `v9` 两条路由鉴权通过；在任一路由后台对该 license 增删改/轮换密钥，对另一路由同步生效。
+> - **统计/台账/审计按路由独立**：`quota` 主键改为 `(license_id, route, dim)`；`billing_ledger`、`audit_log` 增加 `version`(=route) 列。共享 license 的 `v8`、`v9` **调用次数 / 成功查得数 / 操作日志各自独立**，互不影响。
+> - **新增「调用次数」统计（totalCalls）**：`dim='CALL'`，在 `quota.Settle` 中当上游已应答（`decision.Result != nil`，即查得或查无，= CalledUpstream）时 +1；按路由独立。原「成功查得数」（`dim='SERVICE'`，仅 busiCode=10）保留。`GET /quota{X1..}` 与管理后台同时返回 `serviceUsed` 与 `totalCalls`。
+> - **存储装配按域**：每个域用其 owner 路由的 `database/redis` 开一套库（owner：`x1→x1, v8v9→v9, zlf→zlf, blk→blk`）；`v8` 在 config 中不再单列 `database/redis`，复用 `v9`(v8v9 域 owner) 的库/Redis。
+> - 后台「版本切换」5 个标签（x1/v9/v8/zlf/blk）：`v8`、`v9` 标签展示同一份用户（共享 license），但统计列与操作记录各自独立。
 
 > **v0.7 变更（重要）**：
 > - **彻底移除维度②**（上游配额 / 上游调用计数 / 对账作业）。后台只保留单一统计「成功查得数」。删除内容：`QuotaRepository` 的预留/提交/释放、Redis 双维度计数、`billing_ledger.counted_upstream`、`quota.total/reserved` 列与 `UPSTREAM` 行、`ReconciliationJob`、管理端 `serviceTotal/upstreamTotal` 字段。台账状态机（PENDING→BILLED/UNBILLED）与异步复查 worker（RequeryWorker）保留，仅用于幂等与成功查得数结算；**当前伽马 `Requery` 为 stub**，复查 worker 对伽马上游暂无实际效果。
@@ -269,7 +277,7 @@ sequenceDiagram
 
 ## 6. 上游对接（Provider 侧）
 
-> 唯一上游：**伽马分层分**（《伽马分层分_定制版》PDF，代码中的 `gama`）。保留 `upstream.Router` 抽象以便未来扩展，但当前仅注册伽马一个 provider。
+> 上游按版本路由：`x1 → gama`（伽马分层分）、`v9/v8 → income`（经济能力）、`zlf → rental`（租赁分V2-D / 守信）、`blk → blacklist`（黑名单因子V35 / 应诺尔）。`upstream.Router` 为每个版本持有一个单 provider 路由；下文 §6~§6.3 以伽马为例，§6.4 描述租赁分V2-D，§6.5 描述黑名单因子V35。
 
 - **URL**：`POST https://{域名}/enol/api/v1/doCheck`
 - **请求信封**：`appId`（商务分配）、`sign`、`apiKey`（固定 `gama_ctmz_layer_score`）、`encryptionType`(1=明文)、`body{name?, idCard, mobile}`
@@ -300,6 +308,33 @@ sequenceDiagram
 | 超时/上游未决 | 1007 | ❌ 不计（台账可能保持 PENDING） |
 | 幂等重放（已有 BILLED） | 10 或 1000 | ❌ 不重复计数 |
 
+### 6.4 租赁分V2-D 上游（rental，zlf 版本）
+
+> 上游：**租赁分V2-D / 守信**（`shouxin168`，代码中的 `rental`）。对外 zlf 版本契约与 x1 完全一致，仅此上游对接方式不同。
+
+- **URL**：生产 `POST https://shouwei.shouxin168.com/api/lightning/product/query`；测试 `http://sit-shouwei.shouxin168.com/sandbox/lightning/product/query`（需上游加服务器 IP 白名单）。
+- **传输**：`POST`，`Content-Type: application/x-www-form-urlencoded`，表单字段 `institution_id`（机构号）+ `biz_data`。
+- **biz_data**：业务数据 JSON 经 **AES/ECB/PKCS5Padding** 加密后 **Base64** 编码。明文字段：`name`/`phone`/`ident_number`（必传）、`service`（默认 `buer_unique_service`）、`mode`（默认 `mode_rent_score_v2_d`）、`licenseUrl`/`licenseType`（授权书 OSS 地址与类型，0图片/1pdf）、`encryption`（可选）。
+- **授权书**：调用方**不需要**传授权书；本服务用**固定本地文件**（`upstream.licenseFile`）在启动时上传 OSS（`approve_files/` 前缀）一次，缓存 `licenseUrl` 供所有查询复用。
+- **出参**：外层 `resp_code`/`resp_data`/`resp_msg`/`resp_order`/`timestamp`；主体 `score1`（float，500-700：[500-550]高、(550-590]中、(590-700]低）。
+- **归一化**：`resp_code SW0000 → UpstreamResult.Code "001"`（查得，`Range = score1` 字符串）、`SW0002 → "999"`（查无）、其余 SW*（`SW0001`认证失败、`SW003x`签名/验签/解密、`SW004x`未开通/限额/余额、`SW0017/SW0018`参数、`SW10xx`格式、`SW9999`系统）→ 视为上游侧错误：不计费，交由 re-query/对账兜底。
+- **字段映射**：客户 `mobile → phone`、`idCard → ident_number`、`name → name`；`institution_id`/`aesKey`/`oss.*`/`licenseFile`/`licenseType` 为我方与上游凭证，存于服务端安全配置（YAML）。
+- **计数口径**：与 §6.3 一致——仅 `SW0000`（归一 001 → busiCode 10）计入成功查得数。
+
+### 6.5 黑名单因子V35 上游（blacklist，blk 版本）
+
+> 上游：**黑名单因子V35 / 应诺尔**（`enol`，代码中的 `blacklist`）。**与 gama 同一 enol 端点 + 同一 MD5 信封**，是 `GamaClient` 的近亲；对外 blk 版本契约与 x1 完全一致，仅此上游对接方式不同。
+
+- **URL**：`POST https://{域名}/enol/api/v1/doCheck`（测试 `testenol.cn`、生产 `api.enolfax.com`；需上游加服务器 IP 白名单）。与 gama 同端点。
+- **请求信封**：`appId`（商务分配）、`sign`、`apiKey`（**固定 `blackIntV35`**）、`encryptionType`(**`2`=MD5**)、`body{name, idCard, mobile, tradeNo?}`。
+- **关键差异（PII MD5）**：`encryptionType=2` 时，body 的 `name/idCard/mobile` 传 **MD5 小写 hex 摘要值**（由本服务内部计算，调用方仍传明文）；`tradeNo` 保持明文且可选（当前不注入）。
+- **签名**：`sign = MD5(body 非空业务参数按键 ASCII 升序拼接 key+value … + secret)`（小写 hex；复用 `signGama`，对**实际发送的值**即 MD5 后的值加签；`appId/sign/apiKey/encryptionType` 不参与）。
+- **出参**：外层 `code`(0 成功)/`msg`/`seqNo`；主体 `data.busiCode`/`data.busiMsg`/`data.result`。`result` 为**富对象**：`whether_hit`(0/1)、`hit_grade`(0-5)、`hit_type[]`（P1-P8 共 8 个场景，每个含 `m1/m3/m6`）。
+- **归一化**：`data.busiCode 10 → UpstreamResult.Code "001"`（查得，`Range = json.Marshal(result)` 紧凑 JSON 字符串）、`1000 → "999"`（查无）、其余 busiCode（1001–1009，我方在应诺尔侧的账户/参数/系统问题）→ 视为上游侧错误：不计费，交由 re-query/对账兜底。
+- **富对象 → 单字符串**：下游 `result.range` 只有单字符串，故将上游 `result` 整体 `json.Marshal` 为紧凑 JSON 字符串写入 `UpstreamResult.Range`，经下游 `result.range` 原样透出，客户自行 `JSON.parse`。
+- **字段映射**：客户 `mobile → mobile`、`idCard → idCard`、`name → name`（`encryptionType=2` 时取 MD5 后入 body）；`appId/secret/apiKey/encryptionType` 为我方与上游凭证/约定，存于服务端安全配置（YAML）。
+- **计数口径**：与 §6.3 一致——上游对 `1000`（未查得）亦计费，但本服务统一**仅 `busiCode=10`（归一 001）计入成功查得数**，`1000→999` 不计。`billing`/`quota` 共享逻辑无需改动。
+
 ---
 
 ## 7. License 与成功查得数设计（v0.7 现行）
@@ -320,22 +355,30 @@ License (表 license)
 ├── rate_limit        JSONB（schema 预留，代码未读取）
 ├── created_at / updated_at
 
-Quota (表 quota, dim='SERVICE' 唯一)
+Quota (表 quota, 主键 (license_id, route, dim))
 ├── license_id
-├── used_or_committed 累计成功查得数
+├── route             路由名 (x1/v9/v8/zlf/blk)，使共享 license 的 v8/v9 计数独立
+├── dim               SERVICE(成功查得数) | CALL(调用次数)
+├── used_or_committed 该 (license,route,dim) 的累计计数
 └── updated_at
 ```
 
 - **无额度上限**：不做任何次数拦截。
+- **按路由独立计数**：`v8v9` 域内 `v8`、`v9` 共用一行 license，但 quota 行按 `route` 分开（计数互不影响）。计数行由首次累加时 UPSERT 按需创建。
 - **Active()**：代码仅判断 `status == "ACTIVE"`，**未**按 `valid_to` 日期自动过期。
 
-### 7.2 成功查得数（serviceUsed）语义
-| 项 | 说明 |
-|---|---|
-| 计的是什么 | 客户调用本服务且**查得数据**（busiCode=10）的累计次数 |
-| 计数时机 | `Settle` 时 `Returned=true` → `IncServiceUsed` |
-| 存储 | memory 内存计数；生产 Redis `quota:{licenseId}:svc_used` + PG `quota` 表镜像 |
-| 查询 | `GET /v1/openapi/zlx/quota` 返回 `{errorCode, errorMsg, status, serviceUsed}` |
+### 7.2 调用统计语义（按路由独立）
+两个统计口径，均按 `(license, route)` 独立累计；共享 license 的 v8/v9 互不影响：
+
+| 统计 | dim | 计的是什么 | 计数时机 |
+|---|---|---|---|
+| 成功查得数 serviceUsed | SERVICE | 客户调用且**查得数据**（busiCode=10）的累计次数 | `Settle` 时 `Returned=true` → `IncServiceUsed` |
+| 调用次数 totalCalls | CALL | **成功调用到上游**（上游已应答查得或查无，= CalledUpstream）的累计次数 | `Settle` 时 `decision.Result != nil` → `IncTotalCalls` |
+
+- 鉴权失败 / 参数非法 / 上游连不上（PENDING 未决）**不计** totalCalls；上游应答的查无（999）**计** totalCalls 但不计 serviceUsed。
+- 每个台账仅结算一次（同步路径或复查 worker），故计数不重复。
+- 存储：memory 内存计数；生产 Redis `quota:{licenseId}:{route}:svc_used` / `:call_total` + PG `quota` 表镜像。
+- 查询：`GET /v1/openapi/zlx/quota{X1..}` 返回 `{errorCode, errorMsg, status, serviceUsed, totalCalls}`。
 
 ### 7.3 台账状态机（幂等 + 结算）
 
@@ -487,21 +530,22 @@ requestId = ts(Base36) + "-" + clientShort(≤8) + "-" + bodyHash + "-" + core
 - `rate_limit`：schema 预留，**代码未读取**。
 
 ### 11.2 quota 表
-`license_id, dim('SERVICE'), used_or_committed, updated_at`
+`license_id, route, dim('SERVICE'|'CALL'), used_or_committed, updated_at`，主键 `(license_id, route, dim)`（迁移 `0003_per_route_stats.sql`）。
 
-- 仅 **SERVICE** 维度一行；`used_or_committed` = 累计成功查得数。
-- 生产环境 Redis 为热计数，PG 为持久镜像（`persistence/redis/quota.go`）。
+- 计数按 `(license, route, dim)` 独立：`dim='SERVICE'` = 累计成功查得数（busiCode=10），`dim='CALL'` = 累计调用次数（CalledUpstream）。共享 license 的 v8/v9 行按 `route` 分开。
+- 计数行由首次累加时 UPSERT 按需创建（建用户时不预插）。
+- 生产环境 Redis 为热计数（`quota:{licenseId}:{route}:svc_used` / `:call_total`），PG 为持久镜像（`persistence/redis/quota.go`）。
 
 ### 11.3 billing_ledger 表（追加写）
-`id, app_key, trade_no, reqid, request_id, upstream_logid, upstream_uid, upstream_code, busi_code, state(PENDING|BILLED|UNBILLED), counted_service(bool), created_at, settled_at`
+`id, app_key, version, trade_no, reqid, request_id, upstream_logid, upstream_uid, upstream_code, busi_code, state(PENDING|BILLED|UNBILLED), counted_service(bool), created_at, settled_at`
 
-- 唯一索引：`(app_key, reqid)`；普通索引：`request_id`、`state`。
+- `version` = 产生该台账的路由（x1/v9/v8/zlf/blk）；唯一索引改为 `(app_key, version, reqid)`，使共享 license 的 v8/v9 幂等键互不冲突；普通索引：`request_id`、`state`。
 - `counted_service`：是否计入成功查得数（与 `Returned` 一致）。
 - **无** `counted_upstream` 列（v0.7 已删）。
 
 ### 11.4 admin_user / audit_log（`migrations/0002_admin.sql`）
 - `admin_user`：管理员账号（username 唯一，password_hash 加盐 SHA-256）。
-- `audit_log`：每次请求追加写；`app_key`、脱敏入参、`client_ip`（仅记录，**不用于拦截**）、上下游 metadata。
+- `audit_log`：每次请求追加写；`version`(=route)、`app_key`、脱敏入参、`client_ip`（仅记录，**不用于拦截**）、上下游 metadata。后台按 `version` 作用域过滤（共享 license 的 v8/v9 操作日志各自独立）。
 
 ### 11.5 环境与隔离
 | 环境 | 配置文件 | PG 库 | Redis DB |
@@ -580,7 +624,7 @@ requestId = ts(Base36) + "-" + clientShort(≤8) + "-" + bodyHash + "-" + core
 3. **存储**：`storage.driver=memory`（开发）或 `postgres`+`redis`（生产/e2e）。
 4. **密钥**：为用户生成 `appKey` + `secret`；`secret` **仅创建/轮换响应返回一次**；DB 列 `app_secret_enc`（当前明文，生产应加密）。
 5. **审计**：每次下游请求追加 `audit_log`（上游是否调用、是否查得、busiCode、脱敏入参、client_ip 等）。
-6. **无额度配置**：仅展示 `serviceUsed`（累计成功查得数）。
+6. **无额度配置**：仅展示 `serviceUsed`（累计成功查得数）与 `totalCalls`（累计调用次数），均为当前路由作用域。
 
 ### 16.1 管理员鉴权与会话
 - **登录**：`POST /admin/api/login`，体 `{username, password}` → `{token, expireAt}`。
@@ -612,10 +656,11 @@ requestId = ts(Base36) + "-" + clientShort(≤8) + "-" + bodyHash + "-" + core
 ```text
 admin_user(id, username, password_hash, role, created_at)
 
-audit_log(id, request_id, app_key, trade_no, reqid, client_ip,
+audit_log(id, request_id, version, app_key, trade_no, reqid, client_ip,
           called_upstream, found_data, busi_code, busi_msg,
           upstream_code, upstream_uid, upstream_logid, billed,
           latency_ms, name_mask, id_card_mask, mobile_mask, err_msg, created_at)
+-- version(=route) 列由 0003 增加；后台按路由作用域过滤操作日志（共享 license 的 v8/v9 不混淆）
 
 license 扩展字段（0001）: name, mobile, secret_created_at
 -- 无 ip_whitelist 列（v0.7 已删）

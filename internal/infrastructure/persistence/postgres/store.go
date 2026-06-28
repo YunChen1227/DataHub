@@ -70,14 +70,14 @@ func (s *Store) GetAppSecret(ctx context.Context, licenseID string) (string, err
 
 // --- port.LedgerRepository ---
 
-const ledgerCols = `id, app_key, COALESCE(trade_no,''), reqid, request_id,
+const ledgerCols = `id, app_key, COALESCE(version,''), COALESCE(trade_no,''), reqid, request_id,
 	COALESCE(upstream_code,''), COALESCE(busi_code,0), COALESCE(upstream_uid,''),
 	COALESCE(upstream_logid,''), state, counted_service`
 
 func scanLedger(row pgx.Row) (*model.Ledger, error) {
 	var l model.Ledger
 	var state string
-	err := row.Scan(&l.ID, &l.AppKey, &l.TradeNo, &l.Reqid, &l.RequestID,
+	err := row.Scan(&l.ID, &l.AppKey, &l.Version, &l.TradeNo, &l.Reqid, &l.RequestID,
 		&l.UpstreamCode, &l.BusiCode, &l.UpstreamUID, &l.UpstreamLogID,
 		&state, &l.CountedService)
 	if err != nil {
@@ -87,9 +87,9 @@ func scanLedger(row pgx.Row) (*model.Ledger, error) {
 	return &l, nil
 }
 
-func (s *Store) FindByReqid(ctx context.Context, appKey, reqid string) (*model.Ledger, error) {
-	q := `SELECT ` + ledgerCols + ` FROM billing_ledger WHERE app_key=$1 AND reqid=$2`
-	l, err := scanLedger(s.pool.QueryRow(ctx, q, appKey, reqid))
+func (s *Store) FindByReqid(ctx context.Context, appKey, route, reqid string) (*model.Ledger, error) {
+	q := `SELECT ` + ledgerCols + ` FROM billing_ledger WHERE app_key=$1 AND version=$2 AND reqid=$3`
+	l, err := scanLedger(s.pool.QueryRow(ctx, q, appKey, route, reqid))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -101,11 +101,11 @@ func (s *Store) FindByReqid(ctx context.Context, appKey, reqid string) (*model.L
 
 func (s *Store) Append(ctx context.Context, l *model.Ledger) error {
 	const q = `INSERT INTO billing_ledger
-		(app_key, trade_no, reqid, request_id, upstream_code, busi_code,
+		(app_key, version, trade_no, reqid, request_id, upstream_code, busi_code,
 		 upstream_uid, upstream_logid, state, counted_service)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`
 	return s.pool.QueryRow(ctx, q,
-		l.AppKey, l.TradeNo, l.Reqid, l.RequestID, l.UpstreamCode, l.BusiCode,
+		l.AppKey, l.Version, l.TradeNo, l.Reqid, l.RequestID, l.UpstreamCode, l.BusiCode,
 		l.UpstreamUID, l.UpstreamLogID, string(l.State), l.CountedService,
 	).Scan(&l.ID)
 }
@@ -141,23 +141,45 @@ func (s *Store) ListByState(ctx context.Context, state model.BillingState, limit
 	return out, rows.Err()
 }
 
-// --- 成功查得数 durable mirror (read by Redis quota repo + admin views) ---
+// --- per-route 计数 durable mirror (read by Redis quota repo + admin views) ---
+// 计数按 (license_id, route, dim) 独立；dim='SERVICE'(成功查得数) / 'CALL'(调用次数)。
+// 累加用 UPSERT，行按需创建 (无需建用户时预插)。
 
-// ServiceUsedCount reads the cumulative 成功查得数 for a license (dim='SERVICE').
-func (s *Store) ServiceUsedCount(ctx context.Context, licenseID string) (int64, error) {
-	const q = `SELECT COALESCE(used_or_committed,0) FROM quota WHERE license_id=$1 AND dim='SERVICE'`
-	var used int64
-	err := s.pool.QueryRow(ctx, q, licenseID).Scan(&used)
+func (s *Store) countOf(ctx context.Context, licenseID, route, dim string) (int64, error) {
+	const q = `SELECT COALESCE(used_or_committed,0) FROM quota WHERE license_id=$1 AND route=$2 AND dim=$3`
+	var n int64
+	err := s.pool.QueryRow(ctx, q, licenseID, route, dim).Scan(&n)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
-	return used, err
+	return n, err
 }
 
-// AddServiceUsed write-throughs a 成功查得数 delta to the durable quota row.
-func (s *Store) AddServiceUsed(ctx context.Context, licenseID string, delta int64) error {
-	const q = `UPDATE quota SET used_or_committed = GREATEST(used_or_committed + $2, 0), updated_at=now()
-	             WHERE license_id=$1 AND dim='SERVICE'`
-	_, err := s.pool.Exec(ctx, q, licenseID, delta)
+func (s *Store) addCount(ctx context.Context, licenseID, route, dim string, delta int64) error {
+	const q = `INSERT INTO quota (license_id, route, dim, used_or_committed, updated_at)
+		VALUES ($1,$2,$3,GREATEST($4,0),now())
+		ON CONFLICT (license_id, route, dim)
+		DO UPDATE SET used_or_committed = GREATEST(quota.used_or_committed + $4, 0), updated_at=now()`
+	_, err := s.pool.Exec(ctx, q, licenseID, route, dim, delta)
 	return err
+}
+
+// ServiceUsedCount reads the cumulative 成功查得数 for (license, route).
+func (s *Store) ServiceUsedCount(ctx context.Context, licenseID, route string) (int64, error) {
+	return s.countOf(ctx, licenseID, route, "SERVICE")
+}
+
+// AddServiceUsed write-throughs a 成功查得数 delta for (license, route).
+func (s *Store) AddServiceUsed(ctx context.Context, licenseID, route string, delta int64) error {
+	return s.addCount(ctx, licenseID, route, "SERVICE", delta)
+}
+
+// TotalCallsCount reads the cumulative 调用次数 for (license, route).
+func (s *Store) TotalCallsCount(ctx context.Context, licenseID, route string) (int64, error) {
+	return s.countOf(ctx, licenseID, route, "CALL")
+}
+
+// AddTotalCalls write-throughs a 调用次数 delta for (license, route).
+func (s *Store) AddTotalCalls(ctx context.Context, licenseID, route string, delta int64) error {
+	return s.addCount(ctx, licenseID, route, "CALL", delta)
 }

@@ -1,6 +1,7 @@
 # DataHub fixed test-suite entrypoint (Windows / PowerShell).
 #
-# Flow: make result dir test_res/<date> -> build + start mock gama(:9112) + relay(:8080,
+# Flow: make result dir test_res/<date> -> build + start mock gama(:9112) +
+# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + relay(:8080,
 # live Aliyun PG+Redis) -> wait /healthz -> (optional) start real-gama relay(:8090)
 # -> run test/cases/*.go in order -> aggregate REPORT.md -> stop services.
 #
@@ -51,18 +52,24 @@ function Wait-Health([string]$url, [int]$tries = 40) {
 
 $anyFail = $false
 try {
-    $mockExe   = Join-Path $resultDir "mock_gama.exe"
-    $incomeExe = Join-Path $resultDir "mock_income.exe"
-    $relayExe  = Join-Path $resultDir "relay.exe"
+    $mockExe      = Join-Path $resultDir "mock_gama.exe"
+    $incomeExe    = Join-Path $resultDir "mock_income.exe"
+    $rentalExe    = Join-Path $resultDir "mock_rental.exe"
+    $blacklistExe = Join-Path $resultDir "mock_blacklist.exe"
+    $relayExe     = Join-Path $resultDir "relay.exe"
     Write-Host "building mocks + relay ..."
     go build -o $mockExe ./scripts/mock_gama.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_gama failed" }
     go build -o $incomeExe ./scripts/mock_income.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_income failed" }
+    go build -o $rentalExe ./scripts/mock_rental.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_rental failed" }
+    go build -o $blacklistExe ./scripts/mock_blacklist.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_blacklist failed" }
     go build -o $relayExe ./cmd/relay
     if ($LASTEXITCODE -ne 0) { throw "go build relay failed" }
 
-    # postgres 模式：在启动 relay 前重建三个版本库 (datahub_x1_db/v9_db/v8_db)。
+    # postgres 模式：在启动 relay 前重建各版本库 (datahub_*_db)。
     $cfgText = Get-Content -Raw -Path (Join-Path $repo $ConfigFile)
     if ($cfgText -match 'driver:\s*"?postgres"?') {
         Write-Host "postgres mode: recreating three version databases ..."
@@ -77,6 +84,12 @@ try {
 
     $income = Start-Process -FilePath $incomeExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_income.log") -RedirectStandardError (Join-Path $resultDir "mock_income.err.log")
     [void]$procs.Add($income)
+
+    $rental = Start-Process -FilePath $rentalExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_rental.log") -RedirectStandardError (Join-Path $resultDir "mock_rental.err.log")
+    [void]$procs.Add($rental)
+
+    $blacklist = Start-Process -FilePath $blacklistExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_blacklist.log") -RedirectStandardError (Join-Path $resultDir "mock_blacklist.err.log")
+    [void]$procs.Add($blacklist)
 
     $relay = Start-Process -FilePath $relayExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "relay.log") -RedirectStandardError (Join-Path $resultDir "relay.err.log")
     [void]$procs.Add($relay)

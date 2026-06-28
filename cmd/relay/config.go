@@ -10,17 +10,36 @@ import (
 )
 
 // upstreamConfig holds a single version's upstream endpoint + 我方在该上游侧的
-// 凭证。kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8)。
+// 凭证。kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8) |
+// rental(租赁分V2-D, zlf)。
 type upstreamConfig struct {
-	kind    string // gama | income
+	kind    string // gama | income | rental
 	baseURL string
-	// gama (伽马) 凭证
-	appID     string
-	appSecret string
-	apiKey    string
+	// gama (伽马) / blacklist (黑名单因子V35) 凭证 (同为应诺尔 enol 端点)
+	appID          string
+	appSecret      string
+	apiKey         string
+	encryptionType int // blacklist: 2=MD5(默认); gama 固定明文
 	// income (经济能力) 凭证
 	account string
 	key     string
+	// rental (租赁分V2-D / 守信) 凭证 + 授权书
+	institutionID string
+	aesKey        string
+	service       string
+	mode          string
+	oss           ossConfig
+	licenseFile   string // 固定授权书本地文件, 启动时上传 OSS
+	licenseType   int    // 0:图片 1:pdf
+}
+
+// ossConfig holds aliyun OSS 凭证 for uploading the租赁分授权书 (rental 专用)。
+type ossConfig struct {
+	endpoint        string
+	accessKeyID     string
+	accessKeySecret string
+	bucket          string
+	objectPrefix    string
 }
 
 // dbConfig is a single version's PostgreSQL connection (独立数据库)。
@@ -106,13 +125,31 @@ func (d *duration) UnmarshalYAML(value *yaml.Node) error {
 
 // fileUpstream mirrors a version's upstream YAML block.
 type fileUpstream struct {
-	Kind      string `yaml:"kind"`
-	BaseURL   string `yaml:"baseURL"`
-	AppID     string `yaml:"appId"`
-	AppSecret string `yaml:"appSecret"`
-	APIKey    string `yaml:"apiKey"`
-	Account   string `yaml:"account"`
-	Key       string `yaml:"key"`
+	Kind           string `yaml:"kind"`
+	BaseURL        string `yaml:"baseURL"`
+	AppID          string `yaml:"appId"`
+	AppSecret      string `yaml:"appSecret"`
+	APIKey         string `yaml:"apiKey"`
+	EncryptionType int    `yaml:"encryptionType"`
+	Account        string `yaml:"account"`
+	Key            string `yaml:"key"`
+	// rental (租赁分V2-D) 专用
+	InstitutionID string  `yaml:"institutionId"`
+	AESKey        string  `yaml:"aesKey"`
+	Service       string  `yaml:"service"`
+	Mode          string  `yaml:"mode"`
+	OSS           fileOSS `yaml:"oss"`
+	LicenseFile   string  `yaml:"licenseFile"`
+	LicenseType   int     `yaml:"licenseType"`
+}
+
+// fileOSS mirrors the rental upstream's oss YAML block.
+type fileOSS struct {
+	Endpoint        string `yaml:"endpoint"`
+	AccessKeyID     string `yaml:"accessKeyId"`
+	AccessKeySecret string `yaml:"accessKeySecret"`
+	Bucket          string `yaml:"bucket"`
+	ObjectPrefix    string `yaml:"objectPrefix"`
 }
 
 // fileDatabase mirrors a version's database YAML block.
@@ -216,13 +253,28 @@ func loadConfig() (config, error) {
 		}
 		cfg.versions[v] = versionConfig{
 			upstream: upstreamConfig{
-				kind:      def(fv.Upstream.Kind, defaultKind(v)),
-				baseURL:   fv.Upstream.BaseURL,
-				appID:     fv.Upstream.AppID,
-				appSecret: fv.Upstream.AppSecret,
-				apiKey:    def(fv.Upstream.APIKey, "gama_ctmz_layer_score"),
-				account:   fv.Upstream.Account,
-				key:       fv.Upstream.Key,
+				kind:           def(fv.Upstream.Kind, defaultKind(v)),
+				baseURL:        fv.Upstream.BaseURL,
+				appID:          fv.Upstream.AppID,
+				appSecret:      fv.Upstream.AppSecret,
+				apiKey:         fv.Upstream.APIKey, // 空值由各 client 自行默认 (gama/blacklist)
+				encryptionType: fv.Upstream.EncryptionType,
+				account:        fv.Upstream.Account,
+				key:            fv.Upstream.Key,
+
+				institutionID: fv.Upstream.InstitutionID,
+				aesKey:        fv.Upstream.AESKey,
+				service:       fv.Upstream.Service,
+				mode:          fv.Upstream.Mode,
+				oss: ossConfig{
+					endpoint:        fv.Upstream.OSS.Endpoint,
+					accessKeyID:     fv.Upstream.OSS.AccessKeyID,
+					accessKeySecret: fv.Upstream.OSS.AccessKeySecret,
+					bucket:          fv.Upstream.OSS.Bucket,
+					objectPrefix:    def(fv.Upstream.OSS.ObjectPrefix, "approve_files/"),
+				},
+				licenseFile: fv.Upstream.LicenseFile,
+				licenseType: fv.Upstream.LicenseType,
 			},
 			db: dbConfig{
 				host:     fv.Database.Host,
@@ -245,12 +297,19 @@ func loadConfig() (config, error) {
 	return cfg, nil
 }
 
-// defaultKind picks the upstream client family by version: x1→gama, others→income.
+// defaultKind picks the upstream client family by version: x1→gama, zlf→rental,
+// blk→blacklist, others→income.
 func defaultKind(version string) string {
-	if version == "x1" {
+	switch version {
+	case "x1":
 		return "gama"
+	case "zlf":
+		return "rental"
+	case "blk":
+		return "blacklist"
+	default:
+		return "income"
 	}
-	return "income"
 }
 
 func def(v, fallback string) string {

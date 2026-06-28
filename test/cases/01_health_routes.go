@@ -1,6 +1,6 @@
 //go:build ignore
 
-// 01_health_routes: /healthz 与三版本业务路由 (querySrmx{X1,V9,V8} + quota{X1,V9,V8})
+// 01_health_routes: /healthz 与五版本业务路由 (querySrmx{X1,V9,V8,ZLF,BLK} + quota)
 // 的可达性。仅验证路由已注册（非 404）且 relay 在线，不校验业务结果。
 //
 // Run: go run test/cases/01_health_routes.go
@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	rec := harness.NewRecorder("01_health_routes", "健康检查与三版本路由可达性")
+	rec := harness.NewRecorder("01_health_routes", "健康检查与五版本路由可达性")
 	defer rec.Finish()
 
 	st, _, raw := harness.Call(http.MethodGet, "/healthz", nil, nil)

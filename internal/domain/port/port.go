@@ -14,19 +14,25 @@ type LicenseRepository interface {
 	FindByAppKey(ctx context.Context, appKey string) (*model.LicenseView, error)
 }
 
-// QuotaRepository tracks the 成功查得数 statistic (DESIGN §7). v0.6 起取消额度
-// 限制，仅累计查得次数；ServiceUsed/IncServiceUsed 必须原子，避免并发漏计。
+// QuotaRepository tracks per-route 统计 (DESIGN §7). 无额度限制，仅累计计数。
+// 计数按 (licenseID, route) 独立：共享同一 license 的 v8/v9 各自独立统计。
+// 所有累加必须原子，避免并发漏计。route = 路由名 (x1/v9/v8/zlf/blk)。
 type QuotaRepository interface {
-	// ServiceUsed returns the cumulative 成功查得数 (busiCode 10) for the license.
-	ServiceUsed(ctx context.Context, licenseID string) (used int64, err error)
-	// IncServiceUsed increments the 成功查得数 by 1.
-	IncServiceUsed(ctx context.Context, licenseID string) error
+	// ServiceUsed returns the cumulative 成功查得数 (busiCode 10) for (license, route).
+	ServiceUsed(ctx context.Context, licenseID, route string) (used int64, err error)
+	// IncServiceUsed increments the 成功查得数 by 1 for (license, route).
+	IncServiceUsed(ctx context.Context, licenseID, route string) error
+	// TotalCalls returns the cumulative 调用上游次数 (CalledUpstream) for (license, route).
+	TotalCalls(ctx context.Context, licenseID, route string) (calls int64, err error)
+	// IncTotalCalls increments the 调用上游次数 by 1 for (license, route).
+	IncTotalCalls(ctx context.Context, licenseID, route string) error
 }
 
 // LedgerRepository is the append-only billing台账 store (DESIGN §11.3).
 type LedgerRepository interface {
-	// FindByReqid returns the ledger for (appID, reqid) or (nil, nil) if absent.
-	FindByReqid(ctx context.Context, appID, reqid string) (*model.Ledger, error)
+	// FindByReqid returns the ledger for (appKey, route, reqid) or (nil, nil) if
+	// absent. route 隔离共享 license 的 v8/v9 幂等键。
+	FindByReqid(ctx context.Context, appKey, route, reqid string) (*model.Ledger, error)
 	// Append inserts a new PENDING ledger and back-fills the assigned ID.
 	Append(ctx context.Context, l *model.Ledger) error
 	// UpdateState settles a ledger to BILLED/UNBILLED with the 成功查得 flag.
@@ -66,10 +72,12 @@ type AdminUserRepository interface {
 // UserAdminRepository manages普通用户 (license) lifecycle + bound secret for the
 // admin console (DESIGN §16.2). v0.7 起携带手机号；IP 准入交由阿里云 ECS 安全组。
 type UserAdminRepository interface {
-	ListUsers(ctx context.Context) ([]*model.UserDetail, error)
+	// route 决定统计 (成功查得数/调用次数) 的作用域：共享 license 的 v8/v9 列表相同，
+	// 但各用户的统计随 route 不同。license 本身 (CRUD) 与 route 无关。
+	ListUsers(ctx context.Context, route string) ([]*model.UserDetail, error)
 	// SearchUsers 按关键字匹配 appKey / 名称 / 手机号 (任一包含即命中)。
-	SearchUsers(ctx context.Context, keyword string) ([]*model.UserDetail, error)
-	GetUser(ctx context.Context, licenseID string) (*model.UserDetail, error)
+	SearchUsers(ctx context.Context, keyword, route string) ([]*model.UserDetail, error)
+	GetUser(ctx context.Context, licenseID, route string) (*model.UserDetail, error)
 	// CreateUser persists a new license + quota + bound secret (plaintext secret
 	// is passed in; the adapter is responsible for at-rest encryption, §11.4).
 	CreateUser(ctx context.Context, d *model.UserDetail, secret string) error

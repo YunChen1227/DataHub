@@ -9,7 +9,13 @@ const TABS = [
   { id: 'audits', label: '操作记录' },
 ]
 
-const VERSION_LABELS = { x1: 'X1', v9: 'V9', v8: 'V8' }
+const VERSION_LABELS = { x1: 'X1', v9: 'V9', v8: 'V8', zlf: 'ZLF', blk: 'BLK' }
+
+// 共享 license 的路由：v8/v9 同属 v8v9 域，license 互通但统计/日志各自独立。
+const SHARED_LICENSE_HINT = {
+  v8: '（与 V9 共用同一套 license / appKey / secret，统计与日志各自独立）',
+  v9: '（与 V8 共用同一套 license / appKey / secret，统计与日志各自独立）',
+}
 
 export default function App() {
   const [authed, setAuthed] = useState(!!getToken())
@@ -51,7 +57,7 @@ export default function App() {
               key={v}
               className={'btn small' + (version === v ? '' : ' ghost')}
               onClick={() => switchVersion(v)}
-              title={'切换到 ' + VERSION_LABELS[v] + ' 版本（数据相互隔离）'}
+              title={'切换到 ' + VERSION_LABELS[v] + ' 路由' + (SHARED_LICENSE_HINT[v] || '（统计与日志独立）')}
             >
               {VERSION_LABELS[v]}
             </button>

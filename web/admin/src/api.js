@@ -1,9 +1,11 @@
 // Admin API client (DESIGN §16): fetch wrapper with Bearer JWT.
-// 三版本 (x1/v9/v8) 数据完全隔离：登录走统一控制面 /admin/api/login，用户/审计
-// 等数据请求带版本前缀 /admin/api/{ver}/...，仅在所选版本作用域内操作。
+// 登录走统一控制面 /admin/api/login；用户/审计等数据请求带路由前缀
+// /admin/api/{ver}/...。各路由统计(调用次数/成功查得数)与操作日志按路由独立；
+// 但 license 按「域」共享：v8 与 v9 同属 v8v9 域，共用同一套 license/appKey/secret
+// （在任一标签下创建/编辑/删除/轮换，对另一标签同步生效），仅统计与日志各自独立。
 const BASE = '/admin/api'
 
-export const VERSIONS = ['x1', 'v9', 'v8']
+export const VERSIONS = ['x1', 'v9', 'v8', 'zlf', 'blk']
 
 let token = localStorage.getItem('adminToken') || ''
 let version = localStorage.getItem('adminVersion') || 'x1'

@@ -4,12 +4,19 @@
 - **对外（下游，x1）**：`POST /v1/openapi/zlx/querySrmxX1`，网关信封 `appKey/sign/encryptionType/body` + **MD5 加签**，
   响应 `head{errorCode,logId,time,errorMsg,timestamp} / body{code,msg,uid,reqid,verify,result{range}}`；在此基础上提供 **License 鉴权** 与 **成功查得数统计**（无额度限制）。
 - **对外（下游，旧版 v9 兼容）**：`GET /yrzx/finan/net/10w/v9`（`docs/income_cls.md`：`account/key` 验签，响应 `code/msg/uid/result.range/verify`），供老客户使用；与 x1 **共用同一上游/鉴权(account=appKey、key=appSecret)/统计口径**，仅对外协议不同。
+- **对外（下游，zlf=租赁分V2-D）**：`POST /v1/openapi/zlx/querySrmxZLF`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；`result.range` 透出上游 `score1`（500-700，[500-550]高 /(550-590]中 /(590-700]低）。详见 [`docs/API_接口文档与使用手册_zlf.md`](docs/API_接口文档与使用手册_zlf.md)。
+- **对外（下游，blk=黑名单因子V35）**：`POST /v1/openapi/zlx/querySrmxBLK`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；上游富对象结果（`whether_hit`/`hit_grade`/`hit_type[P1-P8 的 m1/m3/m6]`）整体 **JSON 序列化为字符串**经 `result.range` 透出，客户自行解析。详见 [`docs/API_接口文档与使用手册_blk.md`](docs/API_接口文档与使用手册_blk.md)。
 
 > **额度策略（v0.6+）**：已**取消额度限制**——不限制客户调用次数；系统仅**统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。维度②（上游配额/调用计数/对账作业）已在 v0.7 **彻底移除**。
 
 > **IP 准入（v0.7）**：网关**不再**做全局/每用户 IP 白名单校验；来源 IP 仅写入审计日志。生产环境由**阿里云 ECS 安全组**等网络层控制访问。
 
-- **对内（上游，唯一）**：**伽马分层分**（《伽马分层分_定制版》PDF：`POST /enol/api/v1/doCheck`，MD5 加签信封），产出"经济能力评分"。保留 `upstream.Router` 抽象以便未来扩展，当前仅注册伽马。
+- **对内（上游，按版本路由）**：每个版本各自对接一个上游，归一化为统一的 `UpstreamResult`（`001`查得 /`999`查无）：
+  - `x1` → **伽马分层分**（`gama`，《伽马分层分_定制版》PDF：`POST /enol/api/v1/doCheck`，MD5 加签 JSON 信封）。
+  - `v9/v8` → **经济能力**（`income`，`docs/income_cls.md`：GET + `account/key` 验签）。
+  - `zlf` → **租赁分V2-D / 守信**（`rental`，`POST .../api/lightning/product/query`：业务数据 **AES/ECB/PKCS5Padding + Base64** 成 `biz_data`，与 `institution_id` 一起 **form** 提交；授权书由本服务启动时上传 OSS 一次并缓存 `licenseUrl` 复用）。
+  - `blk` → **黑名单因子V35 / 应诺尔**（`blacklist`，与 `gama` 同 `POST /enol/api/v1/doCheck` 端点 + 同 MD5 信封；`apiKey=blackIntV35`、`encryptionType=2`：`name/idCard/mobile` 由本服务取 **MD5** 摘要后入 body 加签；响应富对象 `result` 序列化为 JSON 字符串透出 `result.range`）。
+  保留 `upstream.Router` 抽象，每版本一个单 provider 路由。
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，架构图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
@@ -107,7 +114,7 @@ storage:
   driver: "postgres"             # 生产必须为 postgres
   migrationsDir: "migrations"    # 相对 relay 工作目录；启动时自动跑 DDL
 
-# 三版本各自独立：独立 PG 库 + 独立 Redis 逻辑库 + 独立上游
+# 各版本各自独立：独立 PG 库 + 独立 Redis 逻辑库 + 独立上游
 versions:
   x1:
     upstream:
@@ -126,6 +133,29 @@ versions:
     upstream: { kind: "income", baseURL: "...", account: "...", key: "..." }
     database: { host: "<RDS>", name: "datahub_v8_prod_db", ... }
     redis:    { db: 5, ... }
+  zlf:                              # 租赁分V2-D（守信）：AES + form + 授权书 OSS
+    upstream:
+      kind: "rental"
+      baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
+      institutionId: "<机构号>"
+      aesKey: "<AES 密钥 16/24/32 字节>"
+      service: "buer_unique_service"
+      mode: "mode_rent_score_v2_d"
+      licenseFile: "./config/approve.pdf"   # 固定授权书，启动上传 OSS 缓存 licenseUrl
+      licenseType: 1                          # 0:图片 1:pdf
+      oss: { endpoint: "oss-cn-shanghai.aliyuncs.com", accessKeyId: "...", accessKeySecret: "...", bucket: "shouwei", objectPrefix: "approve_files/" }
+    database: { host: "<RDS>", name: "datahub_zlf_prod_db", ... }
+    redis:    { db: 6, ... }
+  blk:                              # 黑名单因子V35（应诺尔）：同 gama 端点 + MD5 信封
+    upstream:
+      kind: "blacklist"
+      baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"
+      appId: "<应诺尔分配 appId>"
+      appSecret: "<应诺尔分配 secret>"
+      apiKey: "blackIntV35"         # 固定产品码
+      encryptionType: 2             # 2=MD5：name/idCard/mobile 取摘要后入 body 加签
+    database: { host: "<RDS>", name: "datahub_blk_prod_db", ... }
+    redis:    { db: 7, ... }
 
 admin:
   bootstrapUser: "admin"
@@ -139,10 +169,12 @@ admin:
 | 配置路径 | 说明 |
 |---|---|
 | `storage.driver` | 必须为 `postgres` |
-| `versions.x1.database.*` / `versions.v9.database.*` / `versions.v8.database.*` | 三版本各自 PG 库 |
-| `versions.*.redis.*` | 三版本各自 Redis 逻辑库（db3/4/5） |
+| `versions.{x1,v9,v8,zlf,blk}.database.*` | 各版本各自 PG 库（postgres 模式下每个版本均必填 `database.name`） |
+| `versions.*.redis.*` | 各版本各自 Redis 逻辑库（db3/4/5/6/7） |
 | `versions.x1.upstream.*` | x1 伽马上游凭证 |
 | `versions.v9/v8.upstream.*` | v9/v8 经济能力上游凭证 |
+| `versions.zlf.upstream.*` | 租赁分V2-D 凭证：`institutionId`/`aesKey`/`oss.*`/`licenseFile`/`licenseType` |
+| `versions.blk.upstream.*` | 黑名单因子V35 凭证：`appId`/`appSecret`/`apiKey`(blackIntV35)/`encryptionType`(2) |
 | `admin.bootstrapPass` / `jwtSecret` | 管理后台登录与 JWT（**禁止使用示例占位符**） |
 
 可选：`billing.requeryInterval`（默认 10s）、`admin.tokenTTL`（默认 8h）、`addr`（默认 `:8080`）。

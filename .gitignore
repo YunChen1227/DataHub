@@ -22,3 +22,10 @@ config.gama.real.yaml
 
 # Test suite result output (dated subdirs: test_res/YYYY-MM-DD/)
 test_res/
+
+# Browser-saved pages (often embed third-party secrets / huge asset folders)
+docs/*_files/
+docs/租赁分*
+
+# Accidental local build/copy artifacts
+tmp-*.js

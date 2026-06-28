@@ -18,6 +18,7 @@ import (
 
 type quotaRow struct {
 	serviceUsed int64 // 累计成功查得数（busiCode 10）
+	totalCalls  int64 // 累计调用上游次数（CalledUpstream）
 }
 
 // licenseRec is the store-internal aggregate for a普通用户 (DESIGN §7.1/§16.2).
@@ -38,9 +39,9 @@ type Store struct {
 
 	licenses    map[string]*licenseRec // licenseID -> rec
 	appKeyIndex map[string]string      // appKey -> licenseID
-	quotas      map[string]*quotaRow   // licenseID -> quota
+	quotas      map[string]*quotaRow   // licenseID|route -> quota (按路由独立计数)
 
-	ledgerByReqid map[string]*model.Ledger // appKey|reqid
+	ledgerByReqid map[string]*model.Ledger // appKey|version|reqid
 	ledgerByID    map[int64]*model.Ledger
 
 	audits []*model.AuditRecord
@@ -78,7 +79,21 @@ func (s *Store) SeedLicense(lic *model.LicenseView, secret, name, mobile string)
 		createdAt:       now,
 	}
 	s.appKeyIndex[lic.AppKey] = lic.LicenseID
-	s.quotas[lic.LicenseID] = &quotaRow{}
+	// 计数行 (licenseID|route) 由首次累加时按需创建。
+}
+
+// quotaKey scopes a counter row by (licenseID, route).
+func quotaKey(licenseID, route string) string { return licenseID + "|" + route }
+
+// quotaRowLocked returns (creating if needed) the counter row; caller holds s.mu.
+func (s *Store) quotaRowLocked(licenseID, route string) *quotaRow {
+	k := quotaKey(licenseID, route)
+	q := s.quotas[k]
+	if q == nil {
+		q = &quotaRow{}
+		s.quotas[k] = q
+	}
+	return q
 }
 
 // --- port.LicenseRepository ---
@@ -110,31 +125,46 @@ func (s *Store) GetAppSecret(_ context.Context, licenseID string) (string, error
 
 // --- port.QuotaRepository ---
 
-func (s *Store) ServiceUsed(_ context.Context, licenseID string) (int64, error) {
+func (s *Store) ServiceUsed(_ context.Context, licenseID, route string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	q := s.quotas[licenseID]
-	if q == nil {
-		return 0, nil
+	if q := s.quotas[quotaKey(licenseID, route)]; q != nil {
+		return q.serviceUsed, nil
 	}
-	return q.serviceUsed, nil
+	return 0, nil
 }
 
-func (s *Store) IncServiceUsed(_ context.Context, licenseID string) error {
+func (s *Store) IncServiceUsed(_ context.Context, licenseID, route string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if q := s.quotas[licenseID]; q != nil {
-		q.serviceUsed++
+	s.quotaRowLocked(licenseID, route).serviceUsed++
+	return nil
+}
+
+func (s *Store) TotalCalls(_ context.Context, licenseID, route string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if q := s.quotas[quotaKey(licenseID, route)]; q != nil {
+		return q.totalCalls, nil
 	}
+	return 0, nil
+}
+
+func (s *Store) IncTotalCalls(_ context.Context, licenseID, route string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.quotaRowLocked(licenseID, route).totalCalls++
 	return nil
 }
 
 // --- port.LedgerRepository ---
 
-func (s *Store) FindByReqid(_ context.Context, appKey, reqid string) (*model.Ledger, error) {
+func ledgerKey(appKey, version, reqid string) string { return appKey + "|" + version + "|" + reqid }
+
+func (s *Store) FindByReqid(_ context.Context, appKey, route, reqid string) (*model.Ledger, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l, ok := s.ledgerByReqid[appKey+"|"+reqid]
+	l, ok := s.ledgerByReqid[ledgerKey(appKey, route, reqid)]
 	if !ok {
 		return nil, nil
 	}
@@ -149,7 +179,7 @@ func (s *Store) Append(_ context.Context, l *model.Ledger) error {
 	l.ID = s.seq
 	stored := *l
 	s.ledgerByID[l.ID] = &stored
-	s.ledgerByReqid[l.AppKey+"|"+l.Reqid] = &stored
+	s.ledgerByReqid[ledgerKey(l.AppKey, l.Version, l.Reqid)] = &stored
 	return nil
 }
 

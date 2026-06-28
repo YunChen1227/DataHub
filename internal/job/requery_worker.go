@@ -88,7 +88,7 @@ func (w *RequeryWorker) resolve(ctx context.Context, l *model.Ledger) {
 	}
 
 	decision := w.billing.FromRequery(rr)
-	token := &quota.ReserveToken{LicenseID: lic.LicenseID, LedgerID: l.ID, Reqid: l.Reqid}
+	token := &quota.ReserveToken{LicenseID: lic.LicenseID, Route: l.Version, LedgerID: l.ID, Reqid: l.Reqid}
 	if err := w.quota.Settle(ctx, token, decision); err != nil {
 		log.Error("settle from requery failed", "err", err)
 		return

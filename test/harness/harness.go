@@ -1,7 +1,7 @@
 // Package harness provides shared helpers for the DataHub fixed test suite under
-// test/cases/*.go. 三版本 (x1/v9/v8) 对外接口完全一致 (x1 信封格式: 小写 sorted-body
-// MD5 加签)，仅靠路由名区分。It centralizes the x1 signing scheme, an HTTP client
-// against the running relay, version-scoped admin helpers, and the structured
+// test/cases/*.go. 各版本 (x1/v9/v8/zlf/blk) 对外接口完全一致 (x1 信封格式:
+// 小写 sorted-body MD5 加签)，仅靠路由名区分。It centralizes the x1 signing scheme,
+// an HTTP client against the running relay, version-scoped admin helpers, and the
 // result recorder that each case writes to $RESULT_DIR/<suite>.json.
 package harness
 
@@ -20,7 +20,9 @@ import (
 )
 
 // Primary test client credentials: the demo license seeded on a fresh store
-// (memory seedDemo / postgres SeedDemo) in EVERY version's独立 store.
+// (memory seedDemo / postgres SeedDemo) in EVERY 域 store (x1/v8v9/zlf/blk)。
+// v8 与 v9 共用 v8v9 域库，故同一 demo license 在两条路由上均可鉴权，但调用
+// 次数/成功查得数/操作日志按各自路由独立统计。
 const (
 	UserName  = "Demo 商户"
 	AppKey    = "y89098io"
@@ -30,7 +32,7 @@ const (
 )
 
 // Versions is the ordered list of service versions under test.
-var Versions = []string{"x1", "v9", "v8"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk"}
 
 // QueryPath returns the public query route for a version (统一 x1 信封, POST)。
 func QueryPath(version string) string {
@@ -156,6 +158,22 @@ func ServiceUsed(version, appKey, secret string) float64 {
 	}
 	_, m, _ := Call(http.MethodGet, QuotaPath(version), payload, nil)
 	if u, ok := m["serviceUsed"].(float64); ok {
+		return u
+	}
+	return -1
+}
+
+// TotalCalls reads the cumulative 调用上游次数 via the version's /quota route.
+// Returns -1 when the field is absent (error path). 计数按路由独立。
+func TotalCalls(version, appKey, secret string) float64 {
+	payload := map[string]any{
+		"encryptionType": 1,
+		"appKey":         appKey,
+		"sign":           SignX1(map[string]string{}, secret),
+		"body":           map[string]string{},
+	}
+	_, m, _ := Call(http.MethodGet, QuotaPath(version), payload, nil)
+	if u, ok := m["totalCalls"].(float64); ok {
 		return u
 	}
 	return -1

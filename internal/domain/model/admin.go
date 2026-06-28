@@ -22,7 +22,8 @@ type UserDetail struct {
 	Mobile          string    `json:"mobile"` // 联系手机号 (前端脱敏展示)
 	Status          string    `json:"status"`
 	ClientUUID      string    `json:"clientUuid"`
-	ServiceUsed     int64     `json:"serviceUsed"`     // 累计成功查得数
+	ServiceUsed     int64     `json:"serviceUsed"`     // 累计成功查得数 (当前路由作用域)
+	TotalCalls      int64     `json:"totalCalls"`      // 累计调用上游次数 (当前路由作用域)
 	SecretCreatedAt time.Time `json:"secretCreatedAt"` // 当前密钥创建/轮换时间
 	ValidTo         time.Time `json:"validTo"`         // 授权过期日期
 	CreatedAt       time.Time `json:"createdAt"`
@@ -34,6 +35,7 @@ type UserDetail struct {
 type AuditRecord struct {
 	ID             int64     `json:"id"`
 	RequestID      string    `json:"requestId"`
+	Version        string    `json:"version"` // 路由名 (x1/v9/v8/zlf/blk)，区分共享 license 的 v8/v9
 	AppKey         string    `json:"appKey"`
 	TradeNo        string    `json:"tradeNo"`
 	Reqid          string    `json:"reqid"`
@@ -57,6 +59,7 @@ type AuditRecord struct {
 // AuditFilter narrows an audit query (DESIGN §16.3). AppKeys (任一匹配) 支持按
 // uuid/名称/手机号检索时先解析出的多个 appKey；AppKey 仍保留精确匹配入口。
 type AuditFilter struct {
+	Version  string // 路由作用域 (由 admin.Service 注入，区分共享 license 的 v8/v9)
 	AppKey   string
 	AppKeys  []string
 	BusiCode *int

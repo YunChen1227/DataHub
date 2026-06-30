@@ -40,6 +40,7 @@ admin:
 # 开发期预置 demo license 的绑定 secret（生产由管理后台为每个用户生成）
 demo:
   appSecret: "REPLACE_WITH_DEMO_APP_SECRET"
+  seed: true                # postgres 生产环境建议 false（不注入 y89098io demo 账户）
 
 # 存储后端 (DESIGN §11): memory（开发/默认）| postgres（生产，每个域独立 PG + Redis）。
 storage:

@@ -87,6 +87,7 @@ type config struct {
 	upstreamTimeout time.Duration
 	requeryInterval time.Duration
 	demoAppSecret   string
+	demoSeed        bool // 是否在 postgres 启动时注入 demo license（生产应 false）
 
 	// admin console (DESIGN §16). 后台登录/JWT 走统一控制面 (x1)。
 	adminUser      string
@@ -197,6 +198,7 @@ type fileConfig struct {
 	} `yaml:"admin"`
 	Demo struct {
 		AppSecret string `yaml:"appSecret"`
+		Seed      *bool  `yaml:"seed"` // 默认 true；生产 postgres 建议 false
 	} `yaml:"demo"`
 	Storage struct {
 		Driver        string `yaml:"driver"`
@@ -232,6 +234,7 @@ func loadConfig() (config, error) {
 		upstreamTimeout: durOr(fc.Upstream.Timeout, 4*time.Second),
 		requeryInterval: durOr(fc.Billing.RequeryInterval, 10*time.Second),
 		demoAppSecret:   def(fc.Demo.AppSecret, "demo-app-secret"),
+		demoSeed:        demoSeedOr(fc.Demo.Seed, true),
 
 		adminUser:      def(fc.Admin.BootstrapUser, "admin"),
 		adminPass:      fc.Admin.BootstrapPass,
@@ -317,6 +320,13 @@ func def(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+func demoSeedOr(v *bool, fallback bool) bool {
+	if v == nil {
+		return fallback
+	}
+	return *v
 }
 
 func intOr(v, fallback int) int {

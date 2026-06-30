@@ -95,11 +95,13 @@ func splitStatements(sqlText string) []string {
 
 // SeedDemo inserts the dev demo license (appKey y89098io) idempotently so the
 // e2e/admin flows have a known client. Mirrors memory.seedDemo.
+// 不用 ON CONFLICT，避免旧库/迁移后约束名不一致导致 42P10。
 func SeedDemo(ctx context.Context, s *Store) error {
 	const insLicense = `INSERT INTO license
 		(license_id, app_key, app_secret_enc, client_uuid, name, mobile, status, valid_from, valid_to, secret_created_at)
-		VALUES ('LIC-DEMO-0001','y89098io','demo-app-secret','demo-client-uuid','Demo 商户','13800001234','ACTIVE', now(), now() + interval '3650 days', now())
-		ON CONFLICT (license_id) DO NOTHING`
+		SELECT 'LIC-DEMO-0001','y89098io','demo-app-secret','demo-client-uuid','Demo 商户','13800001234','ACTIVE',
+			now(), now() + interval '3650 days', now()
+		WHERE NOT EXISTS (SELECT 1 FROM license WHERE license_id = 'LIC-DEMO-0001')`
 	if _, err := s.pool.Exec(ctx, insLicense); err != nil {
 		return err
 	}

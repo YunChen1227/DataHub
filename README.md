@@ -64,10 +64,41 @@ test/                      # 固定测试套件（run.ps1 + cases/*.go）
 
 > 本项目**不使用** `config.json`，运行时配置全部为 **YAML**，通过环境变量 `CONFIG_FILE` 指定路径（默认 `./config.yaml`）。
 
+### Go 模块镜像（国内 / 阿里云 ECS）
+
+在**国内服务器**（如阿里云 ECS）上，`go mod download` 默认走 `proxy.golang.org`，常会超时（`dial tcp ...:443: i/o timeout`）。需改用国内镜像：
+
+```bash
+# 临时生效（当前 shell）
+export GOPROXY=https://mirrors.aliyun.com/goproxy/,direct
+export GOSUMDB=sum.golang.google.cn
+
+go mod download
+```
+
+长期生效（写入 `~/.bashrc` 后 `source ~/.bashrc`）：
+
+```bash
+cat >> ~/.bashrc <<'EOF'
+export GOPROXY=https://mirrors.aliyun.com/goproxy/,direct
+export GOSUMDB=sum.golang.google.cn
+EOF
+source ~/.bashrc
+```
+
+说明：
+
+| 变量 | 含义 |
+|---|---|
+| `GOPROXY=...,direct` | 优先走阿里云 Go 模块镜像；镜像没有的再直连源站 |
+| `GOSUMDB=sum.golang.google.cn` | 校验和数据库也用国内源 |
+
+若仍超时，可换备用镜像：`export GOPROXY=https://goproxy.cn,direct`。仅在内网可信环境且校验和源不可达时，可临时 `export GOSUMDB=off`（不推荐长期使用）。
+
 ## 运行（开发）
 
 ```bash
-# 安装 Go 依赖
+# 安装 Go 依赖（国内 ECS 请先设置 GOPROXY，见上文「Go 模块镜像」）
 go mod download
 
 # 默认：无 config.yaml 时使用 memory 适配器
@@ -203,6 +234,10 @@ cd /workspace/DataHub
 # 依赖：Go 1.25+、Node.js 18+（仅构建 SPA 时需要）
 sudo apt update
 sudo apt install -y golang-go nodejs npm   # 若尚未安装；或用官方/ nvm 安装较新版本
+
+# 国内 ECS：Go 模块走阿里云镜像（见上文「Go 模块镜像」）
+export GOPROXY=https://mirrors.aliyun.com/goproxy/,direct
+export GOSUMDB=sum.golang.google.cn
 
 go mod download
 

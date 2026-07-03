@@ -1,7 +1,7 @@
 # 经济能力查询服务 · API 接口文档与使用手册（V9 / V8）
 
 > 面向接入方（客户）技术与运维人员的对外接口说明。  
-> 版本：V9 / V8 ｜ 通信：HTTPS + JSON ｜ 编码：UTF-8
+> 版本：V9 / V8 ｜ 通信：HTTP + JSON ｜ 编码：UTF-8
 
 > 说明：V9 与 V8 为两套相互独立的服务版本，**接口格式、鉴权、加签、返回码完全一致**，
 > 仅**请求路径名不同**（`querySrmxV9` / `querySrmxV8`、`quotaV9` / `quotaV8`）。
@@ -15,7 +15,9 @@
 本文档适用于接入本平台「经济能力查询服务」V9 / V8 版本的第三方产品技术开发人员与日常运维人员。
 
 ### 1.2 接入须知
-1. 正式访问域名在接入时由我方商务提供。
+1. 正式服务地址（任选其一，两域名等价）：
+   - `http://aiszcloud.cn:8080`
+   - `http://aiszcloud.com.cn:8080`
 2. 接入前需先申请开通账户，由我方分配 **`appKey`** 与 **`appSecret`**（加签密钥）。
 3. 商务会告知贵方开通的版本（V9 或 V8），请使用对应版本的请求路径。
 
@@ -24,7 +26,7 @@
 | 项目 | 说明 |
 |---|---|
 | 请求方式 | `POST`（成功查得数查询为 `GET`） |
-| 通信协议 | HTTPS |
+| 通信协议 | HTTP |
 | 数据格式 | 请求体与响应体均为 JSON |
 | 字符编码 | UTF-8 |
 | 超时时间 | 4 秒（建议客户端读超时 ≥ 5 秒） |
@@ -148,7 +150,7 @@ func sign(body map[string]string, appSecret string) string {
 |---|---|
 | 路径（V9） | `POST /v1/openapi/zlx/querySrmxV9` |
 | 路径（V8） | `POST /v1/openapi/zlx/querySrmxV8` |
-| 完整地址 | `https://{网关域名}/v1/openapi/zlx/querySrmxV9`（或 `...querySrmxV8`） |
+| 完整地址 | `http://aiszcloud.cn:8080/v1/openapi/zlx/querySrmxV9`（V8 为 `http://aiszcloud.cn:8080/v1/openapi/zlx/querySrmxV8`；域名亦可使用 `http://aiszcloud.com.cn:8080`，路径相同） |
 | 鉴权 | appKey + MD5 签名（见第二章） |
 
 > 请按贵方开通的版本选用对应路径；两者请求/响应结构完全一致。
@@ -249,6 +251,8 @@ func sign(body map[string]string, appSecret string) string {
 |---|---|
 | 路径（V9） | `GET /v1/openapi/zlx/quotaV9` |
 | 路径（V8） | `GET /v1/openapi/zlx/quotaV8` |
+| 完整地址（V9） | `http://aiszcloud.cn:8080/v1/openapi/zlx/quotaV9`（或 `http://aiszcloud.com.cn:8080/v1/openapi/zlx/quotaV9`） |
+| 完整地址（V8） | `http://aiszcloud.cn:8080/v1/openapi/zlx/quotaV8`（或 `http://aiszcloud.com.cn:8080/v1/openapi/zlx/quotaV8`） |
 | 鉴权 | 与主接口一致（请求体中携带 `appKey` + `sign` 信封；`body` 可为 `{}`，此时 `sign = MD5(appSecret)`） |
 
 #### 响应示例
@@ -275,6 +279,7 @@ func sign(body map[string]string, appSecret string) string {
 | 项目 | 内容 |
 |---|---|
 | 路径 | `GET /healthz` |
+| 完整地址 | `http://aiszcloud.cn:8080/healthz`（或 `http://aiszcloud.com.cn:8080/healthz`） |
 | 鉴权 | 无 |
 | 响应 | HTTP 200，纯文本 `ok` |
 
@@ -316,7 +321,7 @@ func sign(body map[string]string, appSecret string) string {
 ## 六、使用手册（接入与最佳实践）
 
 ### 6.1 接入流程
-1. 向商务申请账户，获取 `appKey`、`appSecret`、正式/测试域名，并确认开通的版本（V9 或 V8）。
+1. 向商务申请账户，获取 `appKey`、`appSecret`，并确认开通的版本（V9 或 V8）；服务地址见 [1.2 接入须知](#12-接入须知)。
 2. 按第二章实现加签，先在测试环境联调，再切正式环境。
 3. 上线后通过成功查得数查询接口（3.2）监控调用量。
 
@@ -337,7 +342,7 @@ func sign(body map[string]string, appSecret string) string {
 > 任何异常排查请一并提供响应中的 `head.logId`，便于我方全链路定位。
 
 ### 6.4 联调自检清单
-- [ ] 域名、`appKey`、`appSecret`、环境、版本路径（V9/V8）匹配无误
+- [ ] 服务地址（`aiszcloud.cn:8080` 或 `aiszcloud.com.cn:8080`）、`appKey`、`appSecret`、环境、版本路径（V9/V8）匹配无误
 - [ ] 待签名串严格按 ASCII 升序拼接、剔除空值、UTF-8、MD5 小写
 - [ ] 能正确解析 `head.errorCode` 与 `body.code` 两级状态
 - [ ] 已实现超时重试（依赖幂等，不重复计费）

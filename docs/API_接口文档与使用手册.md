@@ -1,7 +1,7 @@
 # 经济能力查询服务 · API 接口文档与使用手册
 
 > 面向接入方（客户）技术与运维人员的对外接口说明。  
-> 版本：x1 ｜ 通信：HTTPS + JSON ｜ 编码：UTF-8
+> 版本：x1 ｜ 通信：HTTP + JSON ｜ 编码：UTF-8
 
 ---
 
@@ -11,7 +11,9 @@
 本文档适用于接入本平台「经济能力查询服务」的第三方产品技术开发人员与日常运维人员。
 
 ### 1.2 接入须知
-1. 正式访问域名在接入时由我方商务提供。
+1. 正式服务地址（任选其一，两域名等价）：
+   - `http://aiszcloud.cn:8080`
+   - `http://aiszcloud.com.cn:8080`
 2. 接入前需先申请开通账户，由我方分配 **`appKey`** 与 **`appSecret`**（加签密钥）。
 
 ### 1.3 接口说明
@@ -19,7 +21,7 @@
 | 项目 | 说明 |
 |---|---|
 | 请求方式 | `POST`（配额查询为 `GET`） |
-| 通信协议 | HTTPS |
+| 通信协议 | HTTP |
 | 数据格式 | 请求体与响应体均为 JSON |
 | 字符编码 | UTF-8 |
 | 超时时间 | 4 秒（建议客户端读超时 ≥ 5 秒） |
@@ -142,7 +144,7 @@ func sign(body map[string]string, appSecret string) string {
 | 项目 | 内容 |
 |---|---|
 | 路径 | `POST /v1/openapi/zlx/querySrmxX1` |
-| 完整地址 | `https://{网关域名}/v1/openapi/zlx/querySrmxX1` |
+| 完整地址 | `http://aiszcloud.cn:8080/v1/openapi/zlx/querySrmxX1`（或 `http://aiszcloud.com.cn:8080/v1/openapi/zlx/querySrmxX1`） |
 | 鉴权 | appKey + MD5 签名（见第二章） |
 
 #### 3.1.1 请求 `body` 参数
@@ -240,6 +242,7 @@ func sign(body map[string]string, appSecret string) string {
 | 项目 | 内容 |
 |---|---|
 | 路径 | `GET /v1/openapi/zlx/quotaX1` |
+| 完整地址 | `http://aiszcloud.cn:8080/v1/openapi/zlx/quotaX1`（或 `http://aiszcloud.com.cn:8080/v1/openapi/zlx/quotaX1`） |
 | 鉴权 | 与主接口一致（请求体中携带 `appKey` + `sign` 信封；`body` 可为 `{}`，此时 `sign = MD5(appSecret)`） |
 
 #### 响应示例
@@ -266,6 +269,7 @@ func sign(body map[string]string, appSecret string) string {
 | 项目 | 内容 |
 |---|---|
 | 路径 | `GET /healthz` |
+| 完整地址 | `http://aiszcloud.cn:8080/healthz`（或 `http://aiszcloud.com.cn:8080/healthz`） |
 | 鉴权 | 无 |
 | 响应 | HTTP 200，纯文本 `ok` |
 
@@ -306,7 +310,7 @@ func sign(body map[string]string, appSecret string) string {
 ## 六、使用手册（接入与最佳实践）
 
 ### 6.1 接入流程
-1. 向商务申请账户，获取 `appKey`、`appSecret`、正式/测试域名。
+1. 向商务申请账户，获取 `appKey`、`appSecret`；服务地址见 [1.2 接入须知](#12-接入须知)。
 2. 按第二章实现加签，先在测试环境联调，再切正式环境。
 3. 上线后通过成功查得数查询接口（3.2）监控调用量。
 
@@ -327,7 +331,7 @@ func sign(body map[string]string, appSecret string) string {
 > 任何异常排查请一并提供响应中的 `head.logId`，便于我方全链路定位。
 
 ### 6.4 联调自检清单
-- [ ] 域名、`appKey`、`appSecret`、环境匹配无误
+- [ ] 服务地址（`aiszcloud.cn:8080` 或 `aiszcloud.com.cn:8080`）、`appKey`、`appSecret`、环境匹配无误
 - [ ] 待签名串严格按 ASCII 升序拼接、剔除空值、UTF-8、MD5 小写
 - [ ] 能正确解析 `head.errorCode` 与 `body.code` 两级状态
 - [ ] 已实现超时重试（依赖幂等，不重复计费）

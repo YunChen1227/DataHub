@@ -128,14 +128,12 @@ func dsn(fv fileVersion, dbName string) string {
 func ensureDatabase(ctx context.Context, fv fileVersion, bootstrapDB, newDB string) error {
 	// 直接连一个已存在的库 (bootstrap)，通过 pg_database catalog 判断目标库是否存在，
 	// 不存在则 CREATE。不去 ping 目标库本身——RDS 上连不存在的库会长时间挂起超时。
-	pool, err := pgxpool.New(ctx, dsn(fv, bootstrapDB))
+	// ECS→RDS 网络偶发抖动，故对 bootstrap 连接做有限重试。
+	pool, err := connectWithRetry(ctx, dsn(fv, bootstrapDB), bootstrapDB, 5)
 	if err != nil {
-		return fmt.Errorf("connect bootstrap db %s: %w", bootstrapDB, err)
+		return err
 	}
 	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		return fmt.Errorf("ping bootstrap db %s: %w", bootstrapDB, err)
-	}
 
 	var exists bool
 	if err := pool.QueryRow(ctx,
@@ -153,6 +151,36 @@ func ensureDatabase(ctx context.Context, fv fileVersion, bootstrapDB, newDB stri
 	}
 	fmt.Printf("  created database %s\n", newDB)
 	return nil
+}
+
+// connectWithRetry opens a pool and pings it, retrying transient failures with
+// backoff (ECS→RDS 偶发 dial timeout)。
+func connectWithRetry(ctx context.Context, dsn, label string, tries int) (*pgxpool.Pool, error) {
+	var lastErr error
+	for i := 1; i <= tries; i++ {
+		pool, err := pgxpool.New(ctx, dsn)
+		if err != nil {
+			lastErr = fmt.Errorf("connect %s: %w", label, err)
+		} else {
+			pingCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err = pool.Ping(pingCtx)
+			cancel()
+			if err == nil {
+				return pool, nil
+			}
+			pool.Close()
+			lastErr = fmt.Errorf("ping %s: %w", label, err)
+		}
+		fmt.Printf("  connect attempt %d/%d failed: %v\n", i, tries, lastErr)
+		if i < tries {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(i) * 2 * time.Second):
+			}
+		}
+	}
+	return nil, lastErr
 }
 
 func quoteIdent(name string) string {

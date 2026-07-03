@@ -19,7 +19,7 @@
 </style></head>
 <body><h1 id="经济能力查询服务-·-api-接口文档与使用手册">经济能力查询服务 · API 接口文档与使用手册</h1>
 <blockquote>
-<p>面向接入方（客户）技术与运维人员的对外接口说明。<br>版本：x1 ｜ 通信：HTTPS + JSON ｜ 编码：UTF-8</p>
+<p>面向接入方（客户）技术与运维人员的对外接口说明。<br>版本：x1 ｜ 通信：HTTP + JSON ｜ 编码：UTF-8</p>
 </blockquote>
 <hr>
 <h2 id="一、接入必读">一、接入必读</h2>
@@ -27,7 +27,7 @@
 <p>本文档适用于接入本平台「经济能力查询服务」的第三方产品技术开发人员与日常运维人员。</p>
 <h3 id="12-接入须知">1.2 接入须知</h3>
 <ol>
-<li>正式访问域名在接入时由我方商务提供。</li>
+<li>正式服务地址（任选其一，两域名等价）：<ul><li><code>http://aiszcloud.cn:8080</code></li><li><code>http://aiszcloud.com.cn:8080</code></li></ul></li>
 <li>接入前需先申请开通账户，由我方分配 <strong><code>appKey</code></strong> 与 **<code>appSecret</code>**（加签密钥）。</li>
 </ol>
 <h3 id="13-接口说明">1.3 接口说明</h3>
@@ -44,7 +44,7 @@
 </tr>
 <tr>
 <td>通信协议</td>
-<td>HTTPS</td>
+<td>HTTP</td>
 </tr>
 <tr>
 <td>数据格式</td>
@@ -209,7 +209,7 @@ def sign(body_params: dict, app_secret: str) -&gt; str:
 </tr>
 <tr>
 <td>完整地址</td>
-<td><code>https://{网关域名}/v1/openapi/zlx/querySrmxX1</code></td>
+<td><code>http://aiszcloud.cn:8080/v1/openapi/zlx/querySrmxX1</code>（或 <code>http://aiszcloud.com.cn:8080/v1/openapi/zlx/querySrmxX1</code>）</td>
 </tr>
 <tr>
 <td>鉴权</td>
@@ -398,6 +398,10 @@ def sign(body_params: dict, app_secret: str) -&gt; str:
 <td><code>GET /v1/openapi/zlx/quotaX1</code></td>
 </tr>
 <tr>
+<td>完整地址</td>
+<td><code>http://aiszcloud.cn:8080/v1/openapi/zlx/quotaX1</code>（或 <code>http://aiszcloud.com.cn:8080/v1/openapi/zlx/quotaX1</code>）</td>
+</tr>
+<tr>
 <td>鉴权</td>
 <td>与主接口一致（请求体中携带 <code>appKey</code> + <code>sign</code> 信封；<code>body</code> 可为 <code>{}</code>，此时 <code>sign = MD5(appSecret)</code>）</td>
 </tr>
@@ -441,6 +445,10 @@ def sign(body_params: dict, app_secret: str) -&gt; str:
 <tbody><tr>
 <td>路径</td>
 <td><code>GET /healthz</code></td>
+</tr>
+<tr>
+<td>完整地址</td>
+<td><code>http://aiszcloud.cn:8080/healthz</code>（或 <code>http://aiszcloud.com.cn:8080/healthz</code>）</td>
 </tr>
 <tr>
 <td>鉴权</td>
@@ -530,7 +538,7 @@ def sign(body_params: dict, app_secret: str) -&gt; str:
 <h2 id="六、使用手册（接入与最佳实践）">六、使用手册（接入与最佳实践）</h2>
 <h3 id="61-接入流程">6.1 接入流程</h3>
 <ol>
-<li>向商务申请账户，获取 <code>appKey</code>、<code>appSecret</code>、正式/测试域名。</li>
+<li>向商务申请账户，获取 <code>appKey</code>、<code>appSecret</code>；服务地址见 1.2 接入须知。</li>
 <li>按第二章实现加签，先在测试环境联调，再切正式环境。</li>
 <li>上线后通过成功查得数查询接口（3.2）监控调用量。</li>
 </ol>
@@ -570,7 +578,7 @@ def sign(body_params: dict, app_secret: str) -&gt; str:
 </blockquote>
 <h3 id="64-联调自检清单">6.4 联调自检清单</h3>
 <ul>
-<li><input disabled="" type="checkbox"> 域名、<code>appKey</code>、<code>appSecret</code>、环境匹配无误</li>
+<li><input disabled="" type="checkbox"> 服务地址（<code>aiszcloud.cn:8080</code> 或 <code>aiszcloud.com.cn:8080</code>）、<code>appKey</code>、<code>appSecret</code>、环境匹配无误</li>
 <li><input disabled="" type="checkbox"> 待签名串严格按 ASCII 升序拼接、剔除空值、UTF-8、MD5 小写</li>
 <li><input disabled="" type="checkbox"> 能正确解析 <code>head.errorCode</code> 与 <code>body.code</code> 两级状态</li>
 <li><input disabled="" type="checkbox"> 已实现超时重试（依赖幂等，不重复计费）</li>

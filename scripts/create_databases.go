@@ -12,13 +12,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"gopkg.in/yaml.v3"
 )
@@ -128,14 +126,8 @@ func dsn(fv fileVersion, dbName string) string {
 }
 
 func ensureDatabase(ctx context.Context, fv fileVersion, bootstrapDB, newDB string) error {
-	// Fast path: target DB already exists and accepts connections.
-	if ok, err := dbReachable(ctx, fv, newDB); err != nil {
-		return err
-	} else if ok {
-		fmt.Printf("  database %s already exists\n", newDB)
-		return nil
-	}
-
+	// 直接连一个已存在的库 (bootstrap)，通过 pg_database catalog 判断目标库是否存在，
+	// 不存在则 CREATE。不去 ping 目标库本身——RDS 上连不存在的库会长时间挂起超时。
 	pool, err := pgxpool.New(ctx, dsn(fv, bootstrapDB))
 	if err != nil {
 		return fmt.Errorf("connect bootstrap db %s: %w", bootstrapDB, err)
@@ -152,7 +144,7 @@ func ensureDatabase(ctx context.Context, fv fileVersion, bootstrapDB, newDB stri
 		return fmt.Errorf("check exists: %w", err)
 	}
 	if exists {
-		fmt.Printf("  database %s already exists (catalog)\n", newDB)
+		fmt.Printf("  database %s already exists\n", newDB)
 		return nil
 	}
 
@@ -161,27 +153,6 @@ func ensureDatabase(ctx context.Context, fv fileVersion, bootstrapDB, newDB stri
 	}
 	fmt.Printf("  created database %s\n", newDB)
 	return nil
-}
-
-func dbReachable(ctx context.Context, fv fileVersion, dbName string) (bool, error) {
-	pool, err := pgxpool.New(ctx, dsn(fv, dbName))
-	if err != nil {
-		return false, fmt.Errorf("connect %s: %w", dbName, err)
-	}
-	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		// Unknown database → not created yet; other errors propagate.
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "3D000" {
-			return false, nil
-		}
-		msg := strings.ToLower(err.Error())
-		if strings.Contains(msg, "does not exist") {
-			return false, nil
-		}
-		return false, fmt.Errorf("ping %s: %w", dbName, err)
-	}
-	return true, nil
 }
 
 func quoteIdent(name string) string {

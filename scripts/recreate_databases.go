@@ -82,12 +82,10 @@ func main() {
 		}
 		dbName := fv.Database.Name
 		ctx, cancel := context.WithTimeout(context.Background(), perDBTimeout)
+		bootstrap := bootstrapDBName(fc, dbName)
 		fmt.Printf("== %s: ensure database %s exists ==\n", v, dbName)
-		// Bootstrap connection: use this version's own host/user but connect to the
-		// default 'postgres' maintenance DB to issue CREATE DATABASE if needed.
-		if err := ensureDatabase(ctx, fv, "postgres", dbName); err != nil {
-			// Aliyun RDS sometimes blocks the postgres maintenance DB; fall back to
-			// assuming the database already exists.
+		if err := ensureDatabase(ctx, fv, bootstrap, dbName); err != nil {
+			// Fallback message when bootstrap also fails.
 			fmt.Printf("  (ensureDatabase warning for %s: %v; assuming it exists — if next step fails, CREATE DATABASE manually in RDS console)\n", dbName, err)
 		}
 		fmt.Printf("== %s: drop legacy tables on %s ==\n", v, dbName)
@@ -103,6 +101,19 @@ func main() {
 		fmt.Printf("%s (%s) OK\n", v, dbName)
 	}
 	fmt.Println("\nDone. All configured version databases rebuilt.")
+}
+
+// bootstrapDBName picks an existing configured database for CREATE DATABASE
+// (Aliyun RDS often blocks the postgres maintenance DB).
+func bootstrapDBName(fc fileConfig, skip string) string {
+	for _, v := range versionOrder {
+		fvv, ok := fc.Versions[v]
+		if !ok || fvv.Database.Name == "" || fvv.Database.Name == skip {
+			continue
+		}
+		return fvv.Database.Name
+	}
+	return "postgres"
 }
 
 func dsn(fv fileVersion, dbName string) string {

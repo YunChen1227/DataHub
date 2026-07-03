@@ -73,7 +73,7 @@ type versionConfig struct {
 // dsn builds a libpq key/value DSN (safe for passwords with special chars).
 func (d dbConfig) dsn() string {
 	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s pool_max_conns=%d",
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=10 pool_max_conns=%d",
 		d.host, d.port, d.user, d.password, d.name, d.sslmode, d.maxConns,
 	)
 }

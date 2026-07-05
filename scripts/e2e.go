@@ -25,12 +25,19 @@ import (
 const (
 	baseURL   = "http://localhost:8080"
 	secret    = "demo-app-secret"
-	appKey    = "y89098io"
 	adminUser = "admin"
 	adminPass = "admin12345"
 )
 
 var versions = []string{"x1", "v9", "v8"}
+
+// demoAppKeys mirrors model.DemoAppKey：按域独立播种的 demo appKey（v8/v9 同属
+// v8v9 域共用一个），任何域的 demo 凭证在其它域的路由上都会鉴权失败。
+var demoAppKeys = map[string]string{
+	"x1": "y89098io", "v9": "y890v8v9", "v8": "y890v8v9", "zlf": "y8909zlf", "blk": "y8909blk",
+}
+
+func appKeyFor(v string) string { return demoAppKeys[v] }
 
 var (
 	pass int
@@ -120,7 +127,7 @@ func check(name string, cond bool, detail string) {
 }
 
 func serviceUsed(version string) float64 {
-	payload := map[string]any{"encryptionType": 1, "appKey": appKey, "sign": sign(map[string]string{}, secret), "body": map[string]string{}}
+	payload := map[string]any{"encryptionType": 1, "appKey": appKeyFor(version), "sign": sign(map[string]string{}, secret), "body": map[string]string{}}
 	_, m, _ := call(http.MethodGet, quotaPath(version), payload, nil)
 	if u, ok := m["serviceUsed"].(float64); ok {
 		return u
@@ -144,15 +151,15 @@ func main() {
 		usedBefore := serviceUsed(v)
 		fmt.Printf("  %s serviceUsed(before) = %v\n", v, usedBefore)
 
-		ec, bc, rng, raw := query(v, appKey, base(), nil)
+		ec, bc, rng, raw := query(v, appKeyFor(v), base(), nil)
 		check(v+" success: head.errorCode=0 body.code=001 range=7", ec == "0" && bc == "001" && rng == "7", raw)
 
 		nf := base()
 		nf["mobile"] = "13800000000"
-		ec, bc, _, raw = query(v, appKey, nf, nil)
+		ec, bc, _, raw = query(v, appKeyFor(v), nf, nil)
 		check(v+" not-found: head.errorCode=0 body.code=999", ec == "0" && bc == "999", raw)
 
-		ec, bc, _, raw = query(v, appKey, base(), map[string]any{"sign": "deadbeef"})
+		ec, bc, _, raw = query(v, appKeyFor(v), base(), map[string]any{"sign": "deadbeef"})
 		check(v+" bad-sign: head.errorCode=505002, no body", ec == "505002" && bc == "", raw)
 
 		ec, _, _, raw = query(v, "nonexistent", base(), nil)
@@ -163,10 +170,10 @@ func main() {
 
 		bad := base()
 		bad["mobile"] = "139xx"
-		ec, _, _, raw = query(v, appKey, bad, nil)
+		ec, _, _, raw = query(v, appKeyFor(v), bad, nil)
 		check(v+" param-invalid: head.errorCode=505062", ec == "505062", raw)
 
-		ec, bc, rng, raw = query(v, appKey, base(), nil)
+		ec, bc, rng, raw = query(v, appKeyFor(v), base(), nil)
 		check(v+" success#2: body.code=001 range=7", ec == "0" && bc == "001" && rng == "7", raw)
 
 		usedAfter := serviceUsed(v)
@@ -190,7 +197,7 @@ func main() {
 	if token != "" {
 		auth := map[string]string{"Authorization": "Bearer " + token}
 		for _, v := range versions {
-			_, am, ar := call(http.MethodGet, adminBase(v)+"/audits?appKey="+appKey+"&limit=200", nil, auth)
+			_, am, ar := call(http.MethodGet, adminBase(v)+"/audits?appKey="+appKeyFor(v)+"&limit=200", nil, auth)
 			audits, _ := am["audits"].([]any)
 			var seen10, seen1000, masked bool
 			for _, a := range audits {

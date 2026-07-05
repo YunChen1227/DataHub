@@ -27,10 +27,10 @@ func main() {
 	defer rec.Finish()
 
 	// 记录其他版本初始计数，用于稍后验证隔离。
-	v9Before := harness.ServiceUsed("v9", harness.AppKey, harness.Secret)
-	v8Before := harness.ServiceUsed("v8", harness.AppKey, harness.Secret)
-	zlfBefore := harness.ServiceUsed("zlf", harness.AppKey, harness.Secret)
-	blkBefore := harness.ServiceUsed("blk", harness.AppKey, harness.Secret)
+	v9Before := harness.ServiceUsed("v9", harness.AppKeyFor("v9"), harness.Secret)
+	v8Before := harness.ServiceUsed("v8", harness.AppKeyFor("v8"), harness.Secret)
+	zlfBefore := harness.ServiceUsed("zlf", harness.AppKeyFor("zlf"), harness.Secret)
+	blkBefore := harness.ServiceUsed("blk", harness.AppKeyFor("blk"), harness.Secret)
 
 	// 仅对 x1 发起流量，逐版本独立计数。
 	before := harness.ServiceUsed("x1", harness.AppKey, harness.Secret)
@@ -65,10 +65,10 @@ func main() {
 	rec.Check("无额度限制(无 1001/1006)", "全程不出现 505005/505006", noLimit, "出现了余额/上限拦截码")
 
 	// 版本隔离：对 x1 的流量不应影响其他版本的成功查得数。
-	v9After := harness.ServiceUsed("v9", harness.AppKey, harness.Secret)
-	v8After := harness.ServiceUsed("v8", harness.AppKey, harness.Secret)
-	zlfAfter := harness.ServiceUsed("zlf", harness.AppKey, harness.Secret)
-	blkAfter := harness.ServiceUsed("blk", harness.AppKey, harness.Secret)
+	v9After := harness.ServiceUsed("v9", harness.AppKeyFor("v9"), harness.Secret)
+	v8After := harness.ServiceUsed("v8", harness.AppKeyFor("v8"), harness.Secret)
+	zlfAfter := harness.ServiceUsed("zlf", harness.AppKeyFor("zlf"), harness.Secret)
+	blkAfter := harness.ServiceUsed("blk", harness.AppKeyFor("blk"), harness.Secret)
 	rec.Check("v9 计数不受 x1 流量影响", "delta == 0",
 		v9After == v9Before, fmt.Sprintf("before=%v after=%v", v9Before, v9After))
 	rec.Check("v8 计数不受 x1 流量影响", "delta == 0",

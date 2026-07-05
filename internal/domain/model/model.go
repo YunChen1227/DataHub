@@ -144,12 +144,13 @@ type RangeResult struct {
 	Range string `json:"range"`
 }
 
-// Versions is the canonical ordered list of service versions. 各版本对外接口
-// 完全一致 (x1 信封格式)，仅靠路由名区分，各自独立上游 + 独立数据库 + 独立
-// license/调用记录/统计。x1 同时充当后台登录的控制面 (admin 账号 + JWT)。
-// zlf 转接租赁分V2-D (守信 shouxin168) 上游；blk 转接黑名单因子V35 (应诺尔 enol) 上游。
-// 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属 v8v9 域，
-// 共用一套 license，但统计/日志仍按各自路由独立 (见 RouteDomain)。
+// Versions is the canonical ordered list of service versions (routes). 各版本对外
+// 接口完全一致 (x1 信封格式)，仅靠路由名区分，各自独立上游。x1 同时充当后台登录
+// 的控制面 (admin 账号 + JWT)。zlf 转接租赁分V2-D (守信 shouxin168) 上游；blk 转接
+// 黑名单因子V35 (应诺尔 enol) 上游。
+// 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
+// v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
+// 一律鉴权失败 (505004 账户信息不存在)。
 var Versions = []string{"x1", "v9", "v8", "zlf", "blk"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
@@ -164,6 +165,24 @@ func RouteDomain(route string) string {
 		return "v8v9"
 	default:
 		return route
+	}
+}
+
+// DemoAppKey returns the per-域 dev demo license appKey（开发/测试专用；生产库
+// 不播种 demo）。各域 demo 凭证互不相同，保证 demo token 无法跨域使用；v8/v9
+// 同属 v8v9 域，共用同一个 demo appKey。
+func DemoAppKey(route string) string {
+	switch RouteDomain(route) {
+	case "x1":
+		return "y89098io"
+	case "v8v9":
+		return "y890v8v9"
+	case "zlf":
+		return "y8909zlf"
+	case "blk":
+		return "y8909blk"
+	default:
+		return "demo-" + route
 	}
 }
 

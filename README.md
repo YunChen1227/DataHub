@@ -3,13 +3,15 @@
 接口转接网关（当前服务版本 **x1**）：
 - **对外（下游，x1）**：`POST /v1/openapi/zlx/querySrmxX1`，网关信封 `appKey/sign/encryptionType/body` + **MD5 加签**，
   响应 `head{errorCode,logId,time,errorMsg,timestamp} / body{code,msg,uid,reqid,verify,result{range}}`；在此基础上提供 **License 鉴权** 与 **成功查得数统计**（无额度限制）。
-- **对外（下游，旧版 v9 兼容）**：`GET /yrzx/finan/net/10w/v9`（`docs/income_cls.md`：`account/key` 验签，响应 `code/msg/uid/result.range/verify`），供老客户使用；与 x1 **共用同一上游/鉴权(account=appKey、key=appSecret)/统计口径**，仅对外协议不同。
+- **对外（下游，v9/v8）**：`POST /v1/openapi/zlx/querySrmxV9` / `querySrmxV8`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；各自对接独立的经济能力上游（`docs/income_cls.md` 协议）。详见 [`docs/API_接口文档与使用手册_v9v8.md`](docs/API_接口文档与使用手册_v9v8.md)。
 - **对外（下游，zlf=租赁分V2-D）**：`POST /v1/openapi/zlx/querySrmxZLF`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；`result.range` 透出上游 `score1`（500-700，[500-550]高 /(550-590]中 /(590-700]低）。详见 [`docs/API_接口文档与使用手册_zlf.md`](docs/API_接口文档与使用手册_zlf.md)。
 - **对外（下游，blk=黑名单因子V35）**：`POST /v1/openapi/zlx/querySrmxBLK`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；上游富对象结果（`whether_hit`/`hit_grade`/`hit_type[P1-P8 的 m1/m3/m6]`）整体 **JSON 序列化为字符串**经 `result.range` 透出，客户自行解析。详见 [`docs/API_接口文档与使用手册_blk.md`](docs/API_接口文档与使用手册_blk.md)。
 
 > **额度策略（v0.6+）**：已**取消额度限制**——不限制客户调用次数；系统仅**统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。维度②（上游配额/调用计数/对账作业）已在 v0.7 **彻底移除**。
 
 > **IP 准入（v0.7）**：网关**不再**做全局/每用户 IP 白名单校验；来源 IP 仅写入审计日志。生产环境由**阿里云 ECS 安全组**等网络层控制访问。
+
+> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` 四个域，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
 
 - **对内（上游，按版本路由）**：每个版本各自对接一个上游，归一化为统一的 `UpstreamResult`（`001`查得 /`999`查无）：
   - `x1` → **伽马分层分**（`gama`，《伽马分层分_定制版》PDF：`POST /enol/api/v1/doCheck`，MD5 加签 JSON 信封）。
@@ -45,7 +47,7 @@ internal/
 ├── job/                   # 异步复查 worker（RequeryWorker；伽马 Requery 当前为 stub）
 └── common/                # errs(错误码) / reqid / appctx / jwt / ipfilter(仅解析 IP) / mask
 web/admin/                 # 管理后台 React + Vite SPA（DESIGN §16）
-migrations/                # 建表 DDL（PostgreSQL）：0001 业务 / 0002 管理后台
+migrations/                # 建表 DDL（PostgreSQL）：0001 业务 / 0002 管理后台 / 0003 路由统计 / 0004 demo 清理
 scripts/                   # mock_gama、e2e、recreate_databases 等辅助脚本
 test/                      # 固定测试套件（run.ps1 + cases/*.go）
 ```
@@ -114,7 +116,16 @@ go run ./scripts/mock_gama.go
 curl http://localhost:8080/healthz
 ```
 
-开发态（memory 或 PG seed）预置 demo license：`appKey=y89098io`，`secret=demo-app-secret`（无额度限制，仅统计成功查得数）。
+开发态（memory；PG 由 `scripts/recreate_databases.go` 在 `SEED_DEMO=1` 时播种）为**每个域分别**预置一个独立的 demo license（`secret` 均为 `demo-app-secret`，appKey 按域不同，**跨域不可用**；v8/v9 同域共用一个）：
+
+| 域（路由） | demo appKey |
+|---|---|
+| x1 | `y89098io` |
+| v8v9（v9 与 v8 共用） | `y890v8v9` |
+| zlf | `y8909zlf` |
+| blk | `y8909blk` |
+
+生产（relay 以 postgres 启动）**不播种** demo license。
 上游唯一为 **伽马**（`upstream.provider: gama`），需在配置文件中设置 `upstream.gama.baseURL`/`appId`/`appSecret`/`apiKey`（见 `config.example.yaml`）。
 
 ## 运行（生产）
@@ -134,7 +145,7 @@ cp config.example.yaml config.aliyun.prod.yaml
 | `config.yaml` | ❌ 忽略 | 通用本地/部署配置（默认路径） |
 | `config.local.mem.yaml` | ❌ 忽略 | 本地 memory + mock gama |
 | `config.aliyun.e2e.yaml` | ❌ 忽略 | 阿里云 PG `dev_db` + Redis db0 + mock gama（e2e） |
-| `config.aliyun.prod.yaml` | ❌ 忽略 | **生产（Ubuntu 部署用此文件）**：三版本独立 PG + Redis + 真实上游 |
+| `config.aliyun.prod.yaml` | ❌ 忽略 | **生产（Ubuntu 部署用此文件）**：各域独立 PG + Redis + 真实上游 |
 
 生产环境关键配置（完整字段见 `config.example.yaml` / 本地 `config.aliyun.prod.yaml`）：
 
@@ -145,7 +156,7 @@ storage:
   driver: "postgres"             # 生产必须为 postgres
   migrationsDir: "migrations"    # 相对 relay 工作目录；启动时自动跑 DDL
 
-# 各版本各自独立：独立 PG 库 + 独立 Redis 逻辑库 + 独立上游
+# 存储按域独立：x1/v8v9/zlf/blk 各一套 PG 库 + Redis 逻辑库；每条路由独立上游
 versions:
   x1:
     upstream:
@@ -156,14 +167,12 @@ versions:
       apiKey: "gama_ctmz_layer_score"
     database: { host: "<RDS>", name: "datahub_x1_prod_db", user: "...", password: "..." }
     redis:    { addr: "<Redis>:6379", db: 3, password: "..." }
-  v9:
+  v9:                               # v8v9 域 owner：其 database/redis 即整个域的存储
     upstream: { kind: "income", baseURL: "...", account: "...", key: "..." }
-    database: { host: "<RDS>", name: "datahub_v9_prod_db", ... }
+    database: { host: "<RDS>", name: "datahub_v8v9_prod_db", ... }
     redis:    { db: 4, ... }
-  v8:
+  v8:                               # 与 v9 共用 v8v9 域库，仅配上游
     upstream: { kind: "income", baseURL: "...", account: "...", key: "..." }
-    database: { host: "<RDS>", name: "datahub_v8_prod_db", ... }
-    redis:    { db: 5, ... }
   zlf:                              # 租赁分V2-D（守信）：AES + form + 授权书 OSS
     upstream:
       kind: "rental"
@@ -200,8 +209,8 @@ admin:
 | 配置路径 | 说明 |
 |---|---|
 | `storage.driver` | 必须为 `postgres` |
-| `versions.{x1,v9,v8,zlf,blk}.database.*` | 各版本各自 PG 库（postgres 模式下每个版本均必填 `database.name`） |
-| `versions.*.redis.*` | 各版本各自 Redis 逻辑库（db3/4/5/6/7） |
+| `versions.{x1,v9,zlf,blk}.database.*` | 各域各自 PG 库（v8 与 v9 共用 v9 配的 v8v9 域库，v8 不单列） |
+| `versions.{x1,v9,zlf,blk}.redis.*` | 各域各自 Redis 逻辑库（db3/4/6/7；不同域不得复用） |
 | `versions.x1.upstream.*` | x1 伽马上游凭证 |
 | `versions.v9/v8.upstream.*` | v9/v8 经济能力上游凭证 |
 | `versions.zlf.upstream.*` | 租赁分V2-D 凭证：`institutionId`/`aesKey`/`oss.*`/`licenseFile`/`licenseType` |
@@ -212,15 +221,18 @@ admin:
 
 ### 2. 初始化数据库（首次部署，Ubuntu）
 
-relay 启动时会自动执行 `migrations/*.sql` 建表；**首次**需创建三个生产库并迁移：
+relay 启动时会自动执行 `migrations/*.sql` 建表；**首次**需为四个域各创建一个独立生产库（x1 / v8v9 / zlf / blk；v8 与 v9 共用 v8v9 库）并迁移：
 
 ```bash
 cd /workspace/DataHub   # 或你的部署目录，下同
 
-# 按 config.aliyun.prod.yaml 创建 datahub_x1/v9/v8_prod_db + 迁移 + SeedDemo
+# 按 config.aliyun.prod.yaml 创建 datahub_{x1,v8v9,zlf,blk}_prod_db + 迁移
 # ⚠️ 会 DROP 旧表后重建，生产已有数据时慎用
+# （开发/e2e 需要 demo license 时加 SEED_DEMO=1；生产不要加）
 CONFIG_FILE=config.aliyun.prod.yaml go run ./scripts/recreate_databases.go
 ```
+
+已有生产数据的部署升级到 v0.9 无需换库：重启 relay 后迁移 `0004` 会自动删除旧的共享 demo license（`y89098io`），此后各域之间不再存在任何可跨域使用的凭证。
 
 仅清空某库旧表、让 relay 下次启动重跑 migrations 时，可对该库执行 [`scripts/recreate_schema.sql`](scripts/recreate_schema.sql)。
 
@@ -308,7 +320,7 @@ sudo systemctl status datahub
 
 可选调试：`LOG_LEVEL=debug CONFIG_FILE=config.aliyun.prod.yaml ./relay`
 
-启动后 relay 会依次：连接三版本 PG → 自动迁移 → 连接三版本 Redis → 装配 x1/v9/v8 上游 → 创建/校验管理员账号 → 监听 HTTP。
+启动后 relay 会依次：存储隔离防呆校验 → 按域（x1/v8v9/zlf/blk）连接独立 PG → 自动迁移 → 连接独立 Redis → 装配 x1/v9/v8/zlf/blk 各自上游 → 创建/校验管理员账号 → 监听 HTTP。
 
 **健康检查：**
 
@@ -325,10 +337,10 @@ curl http://127.0.0.1:8080/admin/          # 管理后台（建议仅内网访�
 
 ### 5. 环境与隔离
 
-| 环境 | 配置文件 | PG 库 | Redis DB |
+| 环境 | 配置文件 | PG 库（每域独立，v8/v9 共用 v8v9 库） | Redis DB（每域独立） |
 |---|---|---|---|
-| 开发/e2e | `config.aliyun.e2e.yaml` | `datahub_x1_db` / `v9_db` / `v8_db` | 0 / 1 / 2 |
-| **生产（Ubuntu）** | `config.aliyun.prod.yaml` | `datahub_x1_prod_db` / `v9_prod_db` / `v8_prod_db` | 3 / 4 / 5 |
+| 开发/e2e | `config.aliyun.e2e.yaml` | `datahub_{x1,v8v9,zlf,blk}_db` | 0 / 1 / 3 / 4 |
+| **生产（Ubuntu）** | `config.aliyun.prod.yaml` | `datahub_{x1,v8v9,zlf,blk}_prod_db` | 3 / 4 / 6 / 7 |
 
 `storage.driver`：`memory`（开发默认）| `postgres`（**生产必须**）。
 

@@ -72,7 +72,8 @@ try {
     # postgres 模式：在启动 relay 前重建各版本库 (datahub_*_db)。
     $cfgText = Get-Content -Raw -Path (Join-Path $repo $ConfigFile)
     if ($cfgText -match 'driver:\s*"?postgres"?') {
-        Write-Host "postgres mode: recreating three version databases ..."
+        Write-Host "postgres mode: recreating per-domain databases (with demo seed) ..."
+        $env:SEED_DEMO = "1"   # e2e 需要各路由的 demo license；生产建库不要设置
         go run ./scripts/recreate_databases.go
         if ($LASTEXITCODE -ne 0) { throw "recreate_databases failed" }
     } else {

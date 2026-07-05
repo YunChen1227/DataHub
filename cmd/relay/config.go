@@ -87,7 +87,7 @@ type config struct {
 	upstreamTimeout time.Duration
 	requeryInterval time.Duration
 	demoAppSecret   string
-	demoSeed        bool // 是否在 postgres 启动时注入 demo license（生产应 false）
+	demoSeed        bool // 是否在 postgres 启动时注入 demo license（默认 false；0004 迁移已从生产清除 demo，勿在生产开启）
 
 	// admin console (DESIGN §16). 后台登录/JWT 走统一控制面 (x1)。
 	adminUser      string
@@ -198,7 +198,7 @@ type fileConfig struct {
 	} `yaml:"admin"`
 	Demo struct {
 		AppSecret string `yaml:"appSecret"`
-		Seed      *bool  `yaml:"seed"` // 默认 true；生产 postgres 建议 false
+		Seed      *bool  `yaml:"seed"` // 默认 false；开发/演示 postgres 可设 true（e2e 由建库脚本 SEED_DEMO=1 播种）
 	} `yaml:"demo"`
 	Storage struct {
 		Driver        string `yaml:"driver"`
@@ -234,7 +234,7 @@ func loadConfig() (config, error) {
 		upstreamTimeout: durOr(fc.Upstream.Timeout, 4*time.Second),
 		requeryInterval: durOr(fc.Billing.RequeryInterval, 10*time.Second),
 		demoAppSecret:   def(fc.Demo.AppSecret, "demo-app-secret"),
-		demoSeed:        demoSeedOr(fc.Demo.Seed, true),
+		demoSeed:        demoSeedOr(fc.Demo.Seed, false),
 
 		adminUser:      def(fc.Admin.BootstrapUser, "admin"),
 		adminPass:      fc.Admin.BootstrapPass,

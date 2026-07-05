@@ -1,8 +1,14 @@
 # 经济能力查询转接服务 — 设计文档（DESIGN.md）
 
-> 版本：v0.8（服务版本 **x1**）
+> 版本：v0.9（服务版本 **x1**）
 > 角色定位：本服务是一个**接口转接（API Relay / Gateway）网关**。对外为客户（商户）提供经济能力查询 API（当前版本 **x1**：`POST /v1/openapi/zlx/querySrmxX1`）；对内调用**上游数据源**（伽马分层分）获取评分后回传。
 > 在此基础上提供 **License 鉴权** 与 **每路由独立的调用统计**（无额度限制）能力。
+
+> **v0.9 变更（重要：demo license 治理 + 存储隔离防呆）**：
+> - **域模型不变**：仍为 `x1 / v8v9 / zlf / blk` 四个域（v8/v9 共用 v8v9 域与同一套 license，其余路由独立成域，见 v0.8）。跨域使用 license 一律 `505004`。
+> - **demo license 按域独立、且不进生产**：修复历史问题——旧实现把**同一个** demo license（`LIC-DEMO-0001` / `y89098io`，secret 公开）播种进**每个域库（含生产）**，导致这一个 token 能访问所有路由。现在：relay 生产（postgres）启动**不再播种** demo；迁移 `0004_per_route_license.sql` 自动删除旧共享 demo；开发态（memory / `SEED_DEMO=1` 的建库脚本）按域播种互不相同的 demo appKey（`model.DemoAppKey`：x1=`y89098io`、v8v9=`y890v8v9`、zlf=`y8909zlf`、blk=`y8909blk`）。
+> - **启动期存储隔离防呆**：`cmd/relay` 装配前校验任意两个**不同的域**不得配置同一个 PG 库（host:port/name）或同一个 Redis 逻辑库（addr/db），违者拒绝启动（v8/v9 同域共库属设计内共享，不受影响）。
+> - **后台前端**：路由标签页明确标注作用域——x1/zlf/blk 为独立数据库；v8/v9 标注共用同一套 license、统计与日志按路由独立。
 
 > **v0.8 变更（重要：License 域 + 每路由独立统计）**：
 > - **「路由」与「license 域」解耦**。路由（version）= 对外接口 + 上游，共 5 条：`x1 / v9 / v8 / zlf / blk`；license 域 = 存储边界（独占一套 DB + Redis + license 表），共 4 个：`x1 / v8v9 / zlf / blk`。映射 `model.RouteDomain`：`v8`、`v9` → `v8v9` 域，其余路由各自成域。

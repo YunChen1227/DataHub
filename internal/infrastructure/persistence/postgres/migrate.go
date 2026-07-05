@@ -96,14 +96,17 @@ func splitStatements(sqlText string) []string {
 }
 
 // SeedDemo inserts the 域's dev demo license idempotently so the e2e/admin
-// flows have a known client. 仅供开发/e2e 建库脚本调用——relay 生产启动不播种
-// demo。demo appKey 按域各不相同 (model.DemoAppKey)，demo 凭证无法跨域使用；
-// v8/v9 同属 v8v9 域，共用一个。Mirrors memory seedDemo (cmd/relay/main.go)。
+// flows have a known client. 仅供开发/e2e 建库脚本调用（或生产显式设置
+// demo.seed=true，不推荐）；relay 默认不在生产播种 demo。demo appKey 按域各
+// 不相同 (model.DemoAppKey)，demo 凭证无法跨域使用；v8/v9 同属 v8v9 域，共用
+// 一个。不用 ON CONFLICT，避免旧库/迁移后约束名不一致导致 42P10。Mirrors memory
+// seedDemo (cmd/relay/main.go)。
 func SeedDemo(ctx context.Context, s *Store, route string) error {
 	const insLicense = `INSERT INTO license
 		(license_id, app_key, app_secret_enc, client_uuid, name, mobile, status, valid_from, valid_to, secret_created_at)
-		VALUES ($1, $2, 'demo-app-secret', $3, $4, '13800001234', 'ACTIVE', now(), now() + interval '3650 days', now())
-		ON CONFLICT (license_id) DO NOTHING`
+		SELECT $1, $2, 'demo-app-secret', $3, $4, '13800001234', 'ACTIVE',
+			now(), now() + interval '3650 days', now()
+		WHERE NOT EXISTS (SELECT 1 FROM license WHERE license_id = $1)`
 	domain := model.RouteDomain(route)
 	up := strings.ToUpper(domain)
 	if _, err := s.pool.Exec(ctx, insLicense,

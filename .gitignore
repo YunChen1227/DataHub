@@ -1,7 +1,9 @@
 # Go build artifacts
 relay.exe
 *.exe
+*.exe~
 *.out
+*~
 
 # Runtime logs
 relay.log

@@ -41,11 +41,28 @@ admin:
 # 开发期预置 demo license 的绑定 secret（生产由管理后台为每个用户生成）
 demo:
   appSecret: "REPLACE_WITH_DEMO_APP_SECRET"
+  seed: false               # 默认 false：不在 postgres 启动时注入 demo license（0004 迁移已从生产清除 demo）；开发/演示可设 true，e2e 由建库脚本 SEED_DEMO=1 播种
 
 # 存储后端 (DESIGN §11): memory（开发/默认）| postgres（生产，每个域独立 PG + Redis）。
 storage:
   driver: "memory"          # memory | postgres
   migrationsDir: "migrations"
+
+# PostgreSQL / Redis 全实例共用凭证（填 RDS 高权限账号，阿里云即 pg_rds_superuser 成员；
+# 可 CREATE DATABASE + DDL。admin.bootstrapUser 是网页后台，不是 PG 账号）。
+pg_base: &pg_base
+  host: "REPLACE_WITH_PG_HOST"
+  port: 5432
+  user: "REPLACE_WITH_PG_ADMIN_USER"
+  password: "REPLACE_WITH_PG_ADMIN_PASSWORD"
+  sslmode: "disable"
+  maxConns: 10
+
+redis_base: &redis_base
+  addr: "REPLACE_WITH_REDIS_HOST:6379"
+  username: "REPLACE_WITH_REDIS_ADMIN_USER"
+  password: "REPLACE_WITH_REDIS_ADMIN_PASSWORD"
+  poolSize: 10
 
 # 按路由配置上游；存储按「域」装配：每个域用其 owner 路由的 database/redis 开库。
 # 域 owner：x1→x1, v8v9→v9, zlf→zlf, blk→blk。v8 与 v9 共用 v8v9 域库（同一套
@@ -59,19 +76,11 @@ versions:
       appSecret: "REPLACE_WITH_X1_UPSTREAM_APP_SECRET"
       apiKey: "gama_ctmz_layer_score"
     database:
-      host: "REPLACE_WITH_PG_HOST"
-      port: 5432
+      <<: *pg_base
       name: "datahub_x1_db"
-      user: "REPLACE_WITH_PG_USER"
-      password: "REPLACE_WITH_PG_PASSWORD"
-      sslmode: "disable"
-      maxConns: 10
     redis:
-      addr: "REPLACE_WITH_REDIS_HOST:6379"
-      username: "REPLACE_WITH_REDIS_USER"
-      password: "REPLACE_WITH_REDIS_PASSWORD"
+      <<: *redis_base
       db: 0
-      poolSize: 10
   # v9 是 v8v9 域的 owner：其 database/redis 即整个 v8v9 域的存储（v8 复用）。
   v9:
     upstream:
@@ -80,19 +89,11 @@ versions:
       account: "REPLACE_WITH_V9_UPSTREAM_ACCOUNT"
       key: "REPLACE_WITH_V9_UPSTREAM_KEY"
     database:
-      host: "REPLACE_WITH_PG_HOST"
-      port: 5432
+      <<: *pg_base
       name: "datahub_v8v9_db"
-      user: "REPLACE_WITH_PG_USER"
-      password: "REPLACE_WITH_PG_PASSWORD"
-      sslmode: "disable"
-      maxConns: 10
     redis:
-      addr: "REPLACE_WITH_REDIS_HOST:6379"
-      username: "REPLACE_WITH_REDIS_USER"
-      password: "REPLACE_WITH_REDIS_PASSWORD"
+      <<: *redis_base
       db: 1
-      poolSize: 10
   # v8 与 v9 同属 v8v9 域，共用 v9 的库/Redis（同一套 license）。仅配上游；
   # database/redis 不单列，主程序按域 owner(v9) 装配存储。
   v8:
@@ -119,19 +120,11 @@ versions:
         bucket: "shouwei"
         objectPrefix: "approve_files/"        # 必须以 approve_files/ 开头
     database:
-      host: "REPLACE_WITH_PG_HOST"
-      port: 5432
+      <<: *pg_base
       name: "datahub_zlf_db"
-      user: "REPLACE_WITH_PG_USER"
-      password: "REPLACE_WITH_PG_PASSWORD"
-      sslmode: "disable"
-      maxConns: 10
     redis:
-      addr: "REPLACE_WITH_REDIS_HOST:6379"
-      username: "REPLACE_WITH_REDIS_USER"
-      password: "REPLACE_WITH_REDIS_PASSWORD"
+      <<: *redis_base
       db: 3
-      poolSize: 10
   blk:
     upstream:
       kind: "blacklist"     # blk 对接黑名单因子V35（应诺尔 enol，同 gama 端点 + MD5 信封）
@@ -141,16 +134,8 @@ versions:
       apiKey: "blackIntV35"   # 黑名单因子V35 固定产品码
       encryptionType: 2       # 2=MD5：name/idCard/mobile 取 MD5 摘要后入 body 加签
     database:
-      host: "REPLACE_WITH_PG_HOST"
-      port: 5432
+      <<: *pg_base
       name: "datahub_blk_db"
-      user: "REPLACE_WITH_PG_USER"
-      password: "REPLACE_WITH_PG_PASSWORD"
-      sslmode: "disable"
-      maxConns: 10
     redis:
-      addr: "REPLACE_WITH_REDIS_HOST:6379"
-      username: "REPLACE_WITH_REDIS_USER"
-      password: "REPLACE_WITH_REDIS_PASSWORD"
+      <<: *redis_base
       db: 4
-      poolSize: 10

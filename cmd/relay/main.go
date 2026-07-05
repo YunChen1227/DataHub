@@ -215,6 +215,12 @@ func buildDomainStorage(ctx context.Context, cfg config, domain string, logger *
 			pg.Close()
 			return nil, fmt.Errorf("apply migrations: %w", err)
 		}
+		if cfg.demoSeed {
+			if err := postgres.SeedDemo(ctx, pg, owner); err != nil {
+				pg.Close()
+				return nil, fmt.Errorf("seed demo: %w", err)
+			}
+		}
 		rq, err := redisq.New(ctx, redisq.Options{
 			Addr:     vc.redis.addr,
 			Username: vc.redis.username,

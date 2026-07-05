@@ -5,7 +5,12 @@
 // whatever names the config's versions.*.database.name specify). 存储按「域」隔离：
 // v8/v9 共用 v8v9 域库——v8 在 config 中不单列 database，故此处自动跳过，v8v9 域库
 // 由 owner 路由 v9 创建。demo license 仅在 SEED_DEMO=1 时播种（开发/e2e），appKey
-// 按域各不相同 (model.DemoAppKey)。Usage:
+// 按域各不相同 (model.DemoAppKey)。
+//
+// 阿里云 RDS 常禁止普通账号连 postgres 维护库；若 ensureDatabase 失败，请先在
+// RDS 控制台手动 CREATE DATABASE，再重跑本脚本。
+//
+// Usage:
 //
 //	CONFIG_FILE=config.aliyun.e2e.yaml go run ./scripts/recreate_databases.go
 package main
@@ -45,10 +50,9 @@ type fileConfig struct {
 // versionOrder keeps a deterministic processing order matching model.Versions.
 var versionOrder = []string{"x1", "v9", "v8", "zlf", "blk"}
 
-func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
+const perDBTimeout = 2 * time.Minute
 
+func main() {
 	path := os.Getenv("CONFIG_FILE")
 	if path == "" {
 		path = "config.aliyun.e2e.yaml"
@@ -78,24 +82,39 @@ func main() {
 			continue
 		}
 		dbName := fv.Database.Name
+		ctx, cancel := context.WithTimeout(context.Background(), perDBTimeout)
+		bootstrap := bootstrapDBName(fc, dbName)
 		fmt.Printf("== %s: ensure database %s exists ==\n", v, dbName)
-		// Bootstrap connection: use this version's own host/user but connect to the
-		// default 'postgres' maintenance DB to issue CREATE DATABASE if needed.
-		if err := ensureDatabase(ctx, fv, "postgres", dbName); err != nil {
-			// Aliyun RDS sometimes blocks the postgres maintenance DB; fall back to
-			// assuming the database already exists.
-			fmt.Printf("  (ensureDatabase warning for %s: %v; assuming it exists)\n", dbName, err)
+		if err := ensureDatabase(ctx, fv, bootstrap, dbName); err != nil {
+			// Fallback message when bootstrap also fails.
+			fmt.Printf("  (ensureDatabase warning for %s: %v; assuming it exists — if next step fails, CREATE DATABASE manually in RDS console)\n", dbName, err)
 		}
 		fmt.Printf("== %s: drop legacy tables on %s ==\n", v, dbName)
 		if err := execSQL(ctx, dsn(fv, dbName), string(recreateSQL)); err != nil {
+			cancel()
 			fatal("%s recreate: %v", v, err)
 		}
 		if err := migrateAndSeed(ctx, fv, v, dbName, migDir); err != nil {
+			cancel()
 			fatal("%s migrate: %v", v, err)
 		}
+		cancel()
 		fmt.Printf("%s (%s) OK\n", v, dbName)
 	}
 	fmt.Println("\nDone. All configured version databases rebuilt.")
+}
+
+// bootstrapDBName picks an existing configured database for CREATE DATABASE
+// (Aliyun RDS often blocks the postgres maintenance DB).
+func bootstrapDBName(fc fileConfig, skip string) string {
+	for _, v := range versionOrder {
+		fvv, ok := fc.Versions[v]
+		if !ok || fvv.Database.Name == "" || fvv.Database.Name == skip {
+			continue
+		}
+		return fvv.Database.Name
+	}
+	return "postgres"
 }
 
 func dsn(fv fileVersion, dbName string) string {
@@ -112,7 +131,7 @@ func dsn(fv fileVersion, dbName string) string {
 		maxConns = 10
 	}
 	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s pool_max_conns=%d",
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=10 pool_max_conns=%d",
 		fv.Database.Host, port, fv.Database.User, fv.Database.Password, dbName, ssl, maxConns,
 	)
 }

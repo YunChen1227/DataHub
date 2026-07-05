@@ -4,7 +4,8 @@
 // instance (datahub_x1_db / datahub_v8v9_db / datahub_zlf_db / datahub_blk_db, or
 // whatever names the config's versions.*.database.name specify). 存储按「域」隔离：
 // v8/v9 共用 v8v9 域库——v8 在 config 中不单列 database，故此处自动跳过，v8v9 域库
-// 由 owner 路由 v9 创建。Usage:
+// 由 owner 路由 v9 创建。demo license 仅在 SEED_DEMO=1 时播种（开发/e2e），appKey
+// 按域各不相同 (model.DemoAppKey)。Usage:
 //
 //	CONFIG_FILE=config.aliyun.e2e.yaml go run ./scripts/recreate_databases.go
 package main
@@ -89,7 +90,7 @@ func main() {
 		if err := execSQL(ctx, dsn(fv, dbName), string(recreateSQL)); err != nil {
 			fatal("%s recreate: %v", v, err)
 		}
-		if err := migrateAndSeed(ctx, fv, dbName, migDir); err != nil {
+		if err := migrateAndSeed(ctx, fv, v, dbName, migDir); err != nil {
 			fatal("%s migrate: %v", v, err)
 		}
 		fmt.Printf("%s (%s) OK\n", v, dbName)
@@ -153,7 +154,7 @@ func ensureDatabase(ctx context.Context, fv fileVersion, adminDB, newDB string) 
 	return nil
 }
 
-func migrateAndSeed(ctx context.Context, fv fileVersion, dbName, migDir string) error {
+func migrateAndSeed(ctx context.Context, fv fileVersion, route, dbName, migDir string) error {
 	store, err := postgres.New(ctx, dsn(fv, dbName))
 	if err != nil {
 		return err
@@ -162,7 +163,12 @@ func migrateAndSeed(ctx context.Context, fv fileVersion, dbName, migDir string) 
 	if err := postgres.ApplyMigrations(ctx, store.Pool(), migDir); err != nil {
 		return err
 	}
-	return postgres.SeedDemo(ctx, store)
+	// demo license 仅开发/e2e 需要（SEED_DEMO=1 时播种）；生产库不播种，
+	// 避免公开 secret 的 demo 凭证进入生产。
+	if os.Getenv("SEED_DEMO") == "1" {
+		return postgres.SeedDemo(ctx, store, route)
+	}
+	return nil
 }
 
 func splitStatements(sqlText string) []string {

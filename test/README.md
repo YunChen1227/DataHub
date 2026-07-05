@@ -26,8 +26,8 @@ pwsh ./test/run.ps1 -SkipReal                            # 跳过真实 gama 连
 ## 架构与连通性
 
 - relay 以 `CONFIG_FILE=config.aliyun.e2e.yaml` 启动，存储后端 = **线上阿里云 PostgreSQL + Redis**；上游默认指向本地 mock（gama :9112、income :9113、rental :9114、blacklist :9115），保证主测试矩阵确定可重复。
-- 存储按「域」划分：x1 / v8v9 / zlf / blk 四个域库。**v8 与 v9 同属 v8v9 域，共用同一套 license（appKey/secret/状态）**，但调用次数、成功查得数、操作日志按各自路由独立统计（`0003_per_route_stats.sql` 给 quota/台账/审计加了 `route`/`version` 维度）。
-- relay 启动会自动跑迁移（`0001`~`0003`）并 seed demo license（`appKey=y89098io` / `secret=demo-app-secret`，在每个域库各一份）。
+- 存储按「域」划分：x1 / v8v9 / zlf / blk 四个域库。**v8 与 v9 同属 v8v9 域，共用同一套 license（appKey/secret/状态）**，但调用次数、成功查得数、操作日志按各自路由独立统计。任何域的 license（含 demo）在其它域的路由上一律鉴权失败（`505004`）。
+- relay 启动会自动跑迁移（`0001`~`0004`；`0004` 会清除旧共享 demo）。demo license 由 `SEED_DEMO=1 go run ./scripts/recreate_databases.go` 按域播种：appKey 各不相同（x1=`y89098io`、v8v9=`y890v8v9`（v9/v8 共用）、zlf=`y8909zlf`、blk=`y8909blk`），`secret` 均为 `demo-app-secret`（harness `AppKeyFor(version)`）。
 - `00_connectivity` 会**直接** ping 线上 PG + Redis，确认本机确实连得上。
 
 ## 对线上数据的影响（已尽量降到最低）

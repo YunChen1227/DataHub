@@ -1,8 +1,9 @@
 // Command relay is the entrypoint for the经济能力查询转接服务. It wires the
 // hexagonal layers together and starts the HTTP server + background workers.
 //
-// 三版本 (x1/v9/v8) 对外接口完全一致，仅靠路由名区分；每个版本各自独立装配
-// 一套依赖 (独立上游 + 独立数据库 + 独立 Redis + 独立 license/台账/审计/后台数据)。
+// 各路由 (x1/v9/v8/zlf/blk) 对外接口完全一致，仅靠路由名区分；存储按「域」装配
+// (x1/v8v9/zlf/blk 四域，v8/v9 共用 v8v9 域库与同一套 license，其余路由各自独立
+// 一套 DB+Redis+license)。跨域使用 license 一律鉴权失败。
 // Dev defaults use in-memory adapters; production swaps in Redis+Lua + 独立 PG。
 package main
 
@@ -67,6 +68,35 @@ func domainOwner(domain string) string {
 	return domain
 }
 
+// checkStorageIsolation fails fast when两个不同的域被配置成共用同一个 PostgreSQL
+// 库或同一个 Redis 逻辑库——那会破坏「各域独立 license/记录」的隔离承诺。
+// (v8/v9 同属 v8v9 域，共用其 owner v9 的库属于设计内共享，不在校验之列。)
+func checkStorageIsolation(cfg config) error {
+	dbSeen := make(map[string]string)    // host:port/name -> domain
+	redisSeen := make(map[string]string) // addr/db -> domain
+	for _, domain := range model.Domains {
+		vc, ok := cfg.versions[domainOwner(domain)]
+		if !ok {
+			continue
+		}
+		if vc.db.name != "" {
+			key := fmt.Sprintf("%s:%d/%s", vc.db.host, vc.db.port, vc.db.name)
+			if prev, dup := dbSeen[key]; dup {
+				return fmt.Errorf("域 %s 与 %s 配置了同一个数据库 %s；每个域必须使用独立数据库", prev, domain, key)
+			}
+			dbSeen[key] = domain
+		}
+		if vc.redis.addr != "" {
+			key := fmt.Sprintf("%s/%d", vc.redis.addr, vc.redis.db)
+			if prev, dup := redisSeen[key]; dup {
+				return fmt.Errorf("域 %s 与 %s 配置了同一个 Redis 逻辑库 %s；每个域必须使用独立 Redis db", prev, domain, key)
+			}
+			redisSeen[key] = domain
+		}
+	}
+	return nil
+}
+
 func main() {
 	level := slog.LevelInfo
 	if lv := os.Getenv("LOG_LEVEL"); strings.EqualFold(lv, "debug") {
@@ -86,9 +116,19 @@ func main() {
 
 	httpClient := &http.Client{Timeout: cfg.upstreamTimeout}
 
-	// --- build one storage backend per license 域 (v8/v9 共用 v8v9 域库) ---
+	// --- 存储隔离防呆校验后，按域开库 (v8/v9 共用 v8v9 域库)，再逐路由装配 ---
+	if err := checkStorageIsolation(cfg); err != nil {
+		logger.Error("storage isolation check failed", "err", err)
+		os.Exit(1)
+	}
+
 	domainStores := make(map[string]*domainStorage, len(model.Domains))
 	cleanups := make([]func(), 0, len(model.Domains))
+	defer func() {
+		for _, c := range cleanups {
+			c()
+		}
+	}()
 	for _, domain := range model.Domains {
 		ds, err := buildDomainStorage(ctx, cfg, domain, logger)
 		if err != nil {
@@ -102,13 +142,7 @@ func main() {
 		logger.Info("domain storage ready", "domain", domain, "driver", cfg.storageDriver,
 			"owner", domainOwner(domain))
 	}
-	defer func() {
-		for _, c := range cleanups {
-			c()
-		}
-	}()
 
-	// --- build one orchestrator + admin per route, 接到其所属域的存储 + 自己的上游 ---
 	apiStacks := make(map[string]*api.VersionStack, len(model.Versions))
 	adminByRoute := make(map[string]*admin.Service, len(model.Versions))
 	for _, route := range model.Versions {
@@ -162,6 +196,8 @@ func main() {
 
 // buildDomainStorage opens the storage backend for one license 域 (DB+Redis or
 // memory)，使用该域 owner 路由的 db/redis 配置。同一域只建一次，供域内各路由复用。
+// 生产 (postgres) 不播种 demo license；memory (开发) 按域播种各自独立的 demo 凭证
+// (model.DemoAppKey；v8/v9 同域共用一个)。
 func buildDomainStorage(ctx context.Context, cfg config, domain string, logger *slog.Logger) (*domainStorage, error) {
 	owner := domainOwner(domain)
 	vc := cfg.versions[owner]
@@ -178,10 +214,6 @@ func buildDomainStorage(ctx context.Context, cfg config, domain string, logger *
 		if err := postgres.ApplyMigrations(ctx, pg.Pool(), cfg.migrationsDir); err != nil {
 			pg.Close()
 			return nil, fmt.Errorf("apply migrations: %w", err)
-		}
-		if err := postgres.SeedDemo(ctx, pg); err != nil {
-			pg.Close()
-			return nil, fmt.Errorf("seed demo: %w", err)
 		}
 		rq, err := redisq.New(ctx, redisq.Options{
 			Addr:     vc.redis.addr,
@@ -201,7 +233,7 @@ func buildDomainStorage(ctx context.Context, cfg config, domain string, logger *
 		}, nil
 	default:
 		store := memory.New()
-		seedDemo(store, cfg.demoAppSecret)
+		seedDemo(store, domain, cfg.demoAppSecret)
 		return &domainStorage{
 			licenseRepo: store, ledgerRepo: store, quotaRepo: store, auditRepo: store,
 			adminRepo: store, userRepo: store, secrets: secret.NewStore(store),
@@ -307,13 +339,15 @@ func buildUpstream(version string, uc upstreamConfig, httpClient *http.Client, l
 	}
 }
 
-// seedDemo registers the dev demo license (appKey y89098io) in a memory store so
-// the e2e/admin flows have a known client per version.
-func seedDemo(store *memory.Store, demoSecret string) {
+// seedDemo registers the 域's dev demo license in a memory store so the
+// e2e/admin flows have a known client per 域。demo appKey 按域各不相同
+// (model.DemoAppKey)，保证 demo 凭证无法跨域使用；v8/v9 同域共用一个。
+func seedDemo(store *memory.Store, domain, demoSecret string) {
+	up := strings.ToUpper(domain)
 	store.SeedLicense(&model.LicenseView{
-		LicenseID:  "LIC-DEMO-0001",
-		AppKey:     "y89098io",
-		ClientUUID: "demo-client-uuid",
+		LicenseID:  "LIC-DEMO-" + up,
+		AppKey:     model.DemoAppKey(domainOwner(domain)),
+		ClientUUID: "demo-client-" + domain,
 		Status:     "ACTIVE",
-	}, demoSecret, "Demo 商户", "13800001234")
+	}, demoSecret, "Demo 商户("+up+")", "13800001234")
 }

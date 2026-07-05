@@ -22,13 +22,13 @@ func main() {
 
 	for _, v := range harness.Versions {
 		// query: POST，带最小信封；只要不是 404 即视为已注册。
-		x := harness.Query(v, harness.AppKey, harness.Secret,
+		x := harness.Query(v, harness.AppKeyFor(v), harness.Secret,
 			map[string]string{"mobile": "13809091009", "idCard": "330129199109094312"}, nil)
 		rec.Check("POST querySrmx"+up(v)+" 已注册", "返回 head 信封(非404)",
 			x.HTTPStatus == 200 && x.ErrorCode != "", "status="+itoa(x.HTTPStatus)+" raw="+x.Raw)
 
 		// quota: GET（带信封 body）。
-		used := harness.ServiceUsed(v, harness.AppKey, harness.Secret)
+		used := harness.ServiceUsed(v, harness.AppKeyFor(v), harness.Secret)
 		rec.Check("GET quota"+up(v)+" 已注册", "返回 serviceUsed 数值", used >= 0, ftoa(used))
 	}
 }

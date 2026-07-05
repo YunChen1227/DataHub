@@ -57,7 +57,7 @@ export default function App() {
               key={v}
               className={'btn small' + (version === v ? '' : ' ghost')}
               onClick={() => switchVersion(v)}
-              title={'切换到 ' + VERSION_LABELS[v] + ' 路由' + (SHARED_LICENSE_HINT[v] || '（统计与日志独立）')}
+              title={'切换到 ' + VERSION_LABELS[v] + ' 路由' + (SHARED_LICENSE_HINT[v] || '（独立数据库：license / 用户 / 统计 / 日志完全独立）')}
             >
               {VERSION_LABELS[v]}
             </button>

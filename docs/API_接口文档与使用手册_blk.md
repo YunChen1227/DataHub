@@ -44,7 +44,7 @@
 
 | 参数 | 示例 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
-| `appKey` | `y89098io` | String | 是 | 我方分配给客户的公开标识 |
+| `appKey` | `y8909blk` | String | 是 | 我方分配给客户的公开标识 |
 | `sign` | `0528999dd55c025b8f36fc72dceb1f63` | String | 是 | 对 `body` 业务参数的 MD5 签名（见 2.3） |
 | `encryptionType` | `1` | int | 否 | 参数加密类型，`1` = 明文（默认） |
 | `body` | `{...}` | Object | 是 | 业务请求体，见各接口定义 |
@@ -106,7 +106,7 @@ idCard330129199109094312mobile13809091009name张三<你的密钥>
 ```json
 {
   "encryptionType": 1,
-  "appKey": "y89098io",
+  "appKey": "y8909blk",
   "sign": "0528999dd55c025b8f36fc72dceb1f63",
   "body": {
     "mobile": "13809091009",

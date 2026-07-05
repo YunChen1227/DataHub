@@ -13,7 +13,8 @@
 # 存储按「域」划分：x1 / v8v9 / zlf / blk 四个域，各域独占一套 DB + Redis 逻辑库。
 # v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
 # 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
-# 每条路由各自对接独立上游。
+# 跨域使用 license 一律鉴权失败。启动时会做防呆校验：两个不同的域配置同一个数据库
+# 或同一个 Redis 逻辑库将直接拒绝启动。每条路由各自对接独立上游。
 # zlf 转接租赁分V2-D (守信 shouxin168) 上游：AES 加密 biz_data + form 提交。
 # blk 转接黑名单因子V35 (应诺尔 enol，与 x1/gama 同端点)：apiKey=blackIntV35、encryptionType=2 (PII 走 MD5)。
 #

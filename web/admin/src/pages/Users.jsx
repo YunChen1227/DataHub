@@ -18,7 +18,13 @@ function fmtDate(v) {
   return d.toLocaleString()
 }
 
-export default function Users() {
+export default function Users({ version }) {
+  const ver = (version || '').toUpperCase()
+  // v8/v9 同属 v8v9 域：共用同一套 license/appKey/secret，仅统计与日志按路由独立。
+  const shared = version === 'v8' || version === 'v9'
+  const scopeHint = shared
+    ? '此处的用户及其 license（appKey / secret）由 V8 与 V9 两条路由共用（在任一标签下创建/编辑/删除/轮换，对另一标签同步生效）；调用次数、成功查得数与操作日志按路由各自独立。对 x1/zlf/blk 等其它路由不可见、不可用。'
+    : '此处创建的用户及其 license（appKey / secret）仅可调用 ' + ver + ' 路由，其它路由不可见、不可用（独立数据库）。'
   const [users, setUsers] = useState([])
   const [err, setErr] = useState('')
   const [form, setForm] = useState(emptyForm)
@@ -103,7 +109,8 @@ export default function Users() {
   return (
     <>
       <div className="card">
-        <h2>新建用户</h2>
+        <h2>新建用户（{ver} 路由）</h2>
+        <p className="muted">{scopeHint}</p>
         <form className="form-grid" onSubmit={create}>
           <div>
             <label>名称/备注</label>
@@ -122,7 +129,7 @@ export default function Users() {
       {err && <div className="error">{err}</div>}
 
       <div className="card">
-        <h2>用户列表（{users.length}）</h2>
+        <h2>{ver} 用户列表（{users.length}）</h2>
         <form className="toolbar" onSubmit={search}>
           <div>
             <label>检索（uuid / 名称 / 手机号）</label>

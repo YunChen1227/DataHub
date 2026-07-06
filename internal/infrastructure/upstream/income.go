@@ -16,12 +16,16 @@ import (
 )
 
 // IncomeConfig holds the 经济能力 (income_cls) upstream endpoint + 我方在该上游侧的
-// 凭证 (account/key 由上游商户分配)。v9/v8 复用同一实现，仅 baseURL/account/key 不同。
+// 凭证 (account/key 由上游商户分配)。v9/v8 复用同一实现，仅 baseURL/account/key/
+// 签名公式不同：v9 含 mobile（docs/income_cls.md），v8 不含 mobile（对方 showdoc
+// 经济能力10W-V8：verify=MD5(account+idCard+reqid+key)），2026-07-06 与真实上游联调
+// 实测确认——此前 v8 复用 v9 签名公式（多拼了 mobile）导致上游 code=013 校验签名错误。
 type IncomeConfig struct {
-	BaseURL string // 上游版本路径，例如 https://{域名}/yrzx/finan/net/10w/v9
-	Account string // 我方在上游侧的账户
-	Key     string // 我方在上游侧的签名密钥
-	Version string // x1/v9/v8 仅用于日志区分
+	BaseURL        string // 上游版本路径，例如 https://{域名}/yrzx/finan/net/10w/v9
+	Account        string // 我方在上游侧的账户
+	Key            string // 我方在上游侧的签名密钥
+	Version        string // x1/v9/v8 仅用于日志区分
+	SignWithMobile bool   // true: verify 含 mobile (v9); false: 不含 (v8)
 }
 
 // IncomeClient implements port.UpstreamPort for the 经济能力 provider (income_cls
@@ -58,7 +62,11 @@ func (c *IncomeClient) Query(ctx context.Context, req *model.UpstreamRequest) (*
 	if len(reqid) > 20 {
 		reqid = reqid[:20] // 上游约束 reqid ≤20
 	}
-	verify := signIncome(c.cfg.Account, req.IDCard, req.Mobile, reqid, c.cfg.Key)
+	mobileForSign := req.Mobile
+	if !c.cfg.SignWithMobile {
+		mobileForSign = "" // v8: verify 不含 mobile
+	}
+	verify := signIncome(c.cfg.Account, req.IDCard, mobileForSign, reqid, c.cfg.Key)
 
 	q := url.Values{}
 	q.Set("account", c.cfg.Account)

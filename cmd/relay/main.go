@@ -282,6 +282,9 @@ func buildUpstream(version string, uc upstreamConfig, httpClient *http.Client, l
 			Account: uc.account,
 			Key:     uc.key,
 			Version: version,
+			// v9 与 v8 的 verify 公式不同：v9 含 mobile，v8 不含（对方 showdoc
+			// 经济能力10W-V8；2026-07-06 实测 v8 带 mobile 签名被拒 013）。
+			SignWithMobile: version != "v8",
 		}, httpClient)
 		return upstream.NewRouter(upstream.ProviderIncome, map[string]port.UpstreamPort{
 			upstream.ProviderIncome: client,

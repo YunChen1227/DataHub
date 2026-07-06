@@ -3,7 +3,10 @@
 // Mock 经济能力 (income_cls) upstream for v9/v8 full-link testing. Serves the
 // GET account/key contract on both version paths. Run: go run scripts/mock_income.go
 //
-// Verifies verify = MD5(account+idCard+mobile+reqid+key).toUpperCase(), then:
+// Verifies the per-version signature (与真实上游 showdoc 一致)：
+//   - v9: verify = MD5(account+idCard+mobile+reqid+key).toUpperCase()
+//   - v8: verify = MD5(account+idCard+reqid+key).toUpperCase()（不含 mobile）
+// then:
 //   - bad verify            -> code 013 (校验签名错误)
 //   - mobile == 13800000000 -> code 999 (查无结果)
 //   - otherwise             -> code 001 + result.range "7"
@@ -27,8 +30,12 @@ func env(k, def string) string {
 	return def
 }
 
-func signIncome(account, idCard, mobile, reqid, key string) string {
-	sum := md5.Sum([]byte(account + idCard + mobile + reqid + key))
+func signIncome(version, account, idCard, mobile, reqid, key string) string {
+	payload := account + idCard + mobile + reqid + key
+	if version == "v8" {
+		payload = account + idCard + reqid + key // v8 verify 不含 mobile（showdoc）
+	}
+	sum := md5.Sum([]byte(payload))
 	return strings.ToUpper(hex.EncodeToString(sum[:]))
 }
 
@@ -50,7 +57,7 @@ func main() {
 			switch {
 			case acc != account:
 				resp["code"], resp["msg"] = "002", "账号不存在"
-			case !strings.EqualFold(verify, signIncome(account, idCard, mobile, reqid, key)):
+			case !strings.EqualFold(verify, signIncome(version, account, idCard, mobile, reqid, key)):
 				resp["code"], resp["msg"] = "013", "校验签名错误"
 			case mobile == "13800000000":
 				resp["code"], resp["msg"] = "999", "查无结果"

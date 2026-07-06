@@ -1,7 +1,7 @@
 # 经济能力查询服务 · API 接口文档与使用手册（V9 / V8）
 
 > 面向接入方（客户）技术与运维人员的对外接口说明。  
-> 版本：V9 / V8 ｜ 通信：HTTPS + JSON ｜ 编码：UTF-8
+> 版本：V9 / V8 ｜ 通信：HTTP + JSON ｜ 编码：UTF-8
 
 > 说明：V9 与 V8 为两套相互独立的服务版本，**接口格式、鉴权、加签、返回码完全一致**，
 > 仅**请求路径名不同**（`querySrmxV9` / `querySrmxV8`、`quotaV9` / `quotaV8`）。
@@ -24,7 +24,7 @@
 | 项目 | 说明 |
 |---|---|
 | 请求方式 | `POST`（成功查得数查询为 `GET`） |
-| 通信协议 | HTTPS |
+| 通信协议 | HTTP |
 | 数据格式 | 请求体与响应体均为 JSON |
 | 字符编码 | UTF-8 |
 | 超时时间 | 4 秒（建议客户端读超时 ≥ 5 秒） |
@@ -148,7 +148,7 @@ func sign(body map[string]string, appSecret string) string {
 |---|---|
 | 路径（V9） | `POST /v1/openapi/zlx/querySrmxV9` |
 | 路径（V8） | `POST /v1/openapi/zlx/querySrmxV8` |
-| 完整地址 | `https://{网关域名}/v1/openapi/zlx/querySrmxV9`（或 `...querySrmxV8`） |
+| 完整地址 | `http://www.aiszcloud.cn:8080/v1/openapi/zlx/querySrmxV9`（或 `...querySrmxV8`） |
 | 鉴权 | appKey + MD5 签名（见第二章） |
 
 > 请按贵方开通的版本选用对应路径；两者请求/响应结构完全一致。

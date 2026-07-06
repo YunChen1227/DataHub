@@ -1,10 +1,10 @@
 # 黑名单因子查询服务（blk）· API 接口文档与使用手册
 
 > 面向接入方（客户）技术与运维人员的对外接口说明。
-> 版本：blk（黑名单因子V35）｜ 通信：HTTPS + JSON ｜ 编码：UTF-8
+> 版本：blk（黑名单因子V35）｜ 通信：HTTP + JSON ｜ 编码：UTF-8
 
-> 说明：本服务对外契约与「经济能力查询服务（x1）」**完全一致**（同请求信封、同 MD5 加签、同 `head/body` 响应结构），仅**路由名**与 `result.range` 的取值语义不同。已接入 x1 的客户改为本路由即可调用，加签逻辑无需改动。上游加密/产品码等细节由本服务内部处理，**调用方无需关心**。
-> 与其他版本的关键差异：黑名单因子的查询结果是一个**结构化对象**（命中等级、命中场景等），本服务将其**原样序列化为 JSON 字符串**置于 `body.result.range`，由调用方自行解析（见 [3.1.5 result.range 结构说明](#315-resultrange-结构说明)）。
+> 说明：本服务采用统一的请求信封与 MD5 加签方式，响应分为 `head`（网关头部）与 `body`（业务结果）两部分。上游加密/产品码等细节由本服务内部处理，**调用方无需关心**。
+> 关键特性：黑名单因子的查询结果是一个**结构化对象**（命中等级、命中场景等），本服务将其**原样序列化为 JSON 字符串**置于 `body.result.range`，由调用方自行解析（见 [3.1.5 result.range 结构说明](#315-resultrange-结构说明)）。
 
 ---
 
@@ -22,7 +22,7 @@
 | 项目 | 说明 |
 |---|---|
 | 请求方式 | `POST`（查得数查询为 `GET`） |
-| 通信协议 | HTTPS |
+| 通信协议 | HTTP |
 | 数据格式 | 请求体与响应体均为 JSON |
 | 字符编码 | UTF-8 |
 | 超时时间 | 4 秒（建议客户端读超时 ≥ 5 秒） |
@@ -38,7 +38,7 @@
 
 ## 二、鉴权与加签
 
-所有业务接口共用同一套请求信封与鉴权方式（与 x1 一致）。
+所有业务接口共用同一套请求信封与鉴权方式。
 
 ### 2.1 请求信封（顶层参数）
 
@@ -77,7 +77,65 @@ idCard330129199109094312mobile13809091009name张三<你的密钥>
 
 `sign = MD5(待签名串)` 的小写十六进制值。
 
-> 提示：拼接顺序由 key 的 ASCII 决定，请勿写死字段顺序；新增字段时排序会自动变化。加签代码示例与 x1 完全一致，见《API_接口文档与使用手册.md》第 2.4 节。
+> 提示：拼接顺序由 key 的 ASCII 决定，请勿写死字段顺序；新增字段时排序会自动变化。
+
+### 2.4 加签代码示例
+
+**Java**
+```java
+public static String sign(Map<String, String> bodyParams, String appSecret) throws Exception {
+    StringBuilder sb = new StringBuilder();
+    List<String> keys = new ArrayList<>(bodyParams.keySet());
+    Collections.sort(keys); // ASCII 升序
+    for (String k : keys) {
+        String v = bodyParams.get(k);
+        if (v == null || v.isEmpty()) continue; // 剔除空值
+        sb.append(k).append(v);
+    }
+    sb.append(appSecret);
+    MessageDigest md = MessageDigest.getInstance("MD5");
+    byte[] digest = md.digest(sb.toString().getBytes(StandardCharsets.UTF_8));
+    StringBuilder hex = new StringBuilder();
+    for (byte b : digest) hex.append(String.format("%02x", b));
+    return hex.toString();
+}
+```
+
+**Python**
+```python
+import hashlib
+
+def sign(body_params: dict, app_secret: str) -> str:
+    parts = []
+    for k in sorted(body_params.keys()):            # ASCII 升序
+        v = body_params[k]
+        if v is None or v == "":
+            continue                                # 剔除空值
+        parts.append(f"{k}{v}")
+    raw = "".join(parts) + app_secret
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()  # 小写 hex
+```
+
+**Go**
+```go
+func sign(body map[string]string, appSecret string) string {
+    keys := make([]string, 0, len(body))
+    for k, v := range body {
+        if v != "" { // 剔除空值
+            keys = append(keys, k)
+        }
+    }
+    sort.Strings(keys) // ASCII 升序
+    var sb strings.Builder
+    for _, k := range keys {
+        sb.WriteString(k)
+        sb.WriteString(body[k])
+    }
+    sb.WriteString(appSecret)
+    sum := md5.Sum([]byte(sb.String()))
+    return hex.EncodeToString(sum[:]) // 小写 hex
+}
+```
 
 ---
 
@@ -88,7 +146,7 @@ idCard330129199109094312mobile13809091009name张三<你的密钥>
 | 项目 | 内容 |
 |---|---|
 | 路径 | `POST /v1/openapi/zlx/querySrmxBLK` |
-| 完整地址 | `https://{网关域名}/v1/openapi/zlx/querySrmxBLK` |
+| 完整地址 | `http://www.aiszcloud.cn:8080/v1/openapi/zlx/querySrmxBLK` |
 | 鉴权 | appKey + MD5 签名（见第二章） |
 
 #### 3.1.1 请求 `body` 参数
@@ -267,7 +325,7 @@ idCard330129199109094312mobile13809091009name张三<你的密钥>
 | `001` | 查得数据 | `busiCode=10` 查得 | **计费** |
 | `999` | 查无结果 | `busiCode=1000` 未查得 | 不计费 |
 
-> 注：黑名单因子上游对「未查得」亦会计费，但本服务统一口径**仅对查得成功（`001`）计费**，与 x1/v9/v8/zlf 保持一致。
+> 注：本服务统一口径**仅对查得成功（`001`）计费**，「未查得」（`999`）不计费。
 
 ---
 

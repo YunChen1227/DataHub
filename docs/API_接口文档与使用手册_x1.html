@@ -19,7 +19,7 @@
 </style></head>
 <body><h1 id="经济能力查询服务-·-api-接口文档与使用手册">经济能力查询服务 · API 接口文档与使用手册</h1>
 <blockquote>
-<p>面向接入方（客户）技术与运维人员的对外接口说明。<br>版本：x1 ｜ 通信：HTTPS + JSON ｜ 编码：UTF-8</p>
+<p>面向接入方（客户）技术与运维人员的对外接口说明。<br>版本：x1 ｜ 通信：HTTP + JSON ｜ 编码：UTF-8</p>
 </blockquote>
 <hr>
 <h2 id="一、接入必读">一、接入必读</h2>
@@ -44,7 +44,7 @@
 </tr>
 <tr>
 <td>通信协议</td>
-<td>HTTPS</td>
+<td>HTTP</td>
 </tr>
 <tr>
 <td>数据格式</td>
@@ -209,7 +209,7 @@ def sign(body_params: dict, app_secret: str) -&gt; str:
 </tr>
 <tr>
 <td>完整地址</td>
-<td><code>https://{网关域名}/v1/openapi/zlx/querySrmxX1</code></td>
+<td><code>http://www.aiszcloud.cn:8080/v1/openapi/zlx/querySrmxX1</code></td>
 </tr>
 <tr>
 <td>鉴权</td>

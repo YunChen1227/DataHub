@@ -1,7 +1,7 @@
 # 经济能力查询服务 · API 接口文档与使用手册
 
 > 面向接入方（客户）技术与运维人员的对外接口说明。  
-> 版本：x1 ｜ 通信：HTTPS + JSON ｜ 编码：UTF-8
+> 版本：x1 ｜ 通信：HTTP + JSON ｜ 编码：UTF-8
 
 ---
 
@@ -19,7 +19,7 @@
 | 项目 | 说明 |
 |---|---|
 | 请求方式 | `POST`（配额查询为 `GET`） |
-| 通信协议 | HTTPS |
+| 通信协议 | HTTP |
 | 数据格式 | 请求体与响应体均为 JSON |
 | 字符编码 | UTF-8 |
 | 超时时间 | 4 秒（建议客户端读超时 ≥ 5 秒） |
@@ -142,7 +142,7 @@ func sign(body map[string]string, appSecret string) string {
 | 项目 | 内容 |
 |---|---|
 | 路径 | `POST /v1/openapi/zlx/querySrmxX1` |
-| 完整地址 | `https://{网关域名}/v1/openapi/zlx/querySrmxX1` |
+| 完整地址 | `http://www.aiszcloud.cn:8080/v1/openapi/zlx/querySrmxX1` |
 | 鉴权 | appKey + MD5 签名（见第二章） |
 
 #### 3.1.1 请求 `body` 参数

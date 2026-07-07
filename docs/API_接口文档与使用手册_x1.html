@@ -407,7 +407,8 @@ def sign(body_params: dict, app_secret: str) -&gt; str:
   &quot;errorCode&quot;: &quot;0&quot;,
   &quot;errorMsg&quot;: &quot;success&quot;,
   &quot;status&quot;: &quot;ACTIVE&quot;,
-  &quot;serviceUsed&quot;: 1280
+  &quot;serviceUsed&quot;: 1280,
+  &quot;totalCalls&quot;: 1560
 }
 </code></pre>
 <table>
@@ -424,6 +425,10 @@ def sign(body_params: dict, app_secret: str) -&gt; str:
 <tr>
 <td><code>serviceUsed</code></td>
 <td>累计成功查得数据的次数（仅统计 busiCode 10 查得成功）</td>
+</tr>
+<tr>
+<td><code>totalCalls</code></td>
+<td>累计调用上游次数（含查得与查无；不含被网关拦截的请求）</td>
 </tr>
 </tbody></table>
 <blockquote>

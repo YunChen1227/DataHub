@@ -251,7 +251,8 @@ func sign(body map[string]string, appSecret string) string {
   "errorCode": "0",
   "errorMsg": "success",
   "status": "ACTIVE",
-  "serviceUsed": 1280
+  "serviceUsed": 1280,
+  "totalCalls": 1560
 }
 ```
 
@@ -259,6 +260,7 @@ func sign(body map[string]string, appSecret string) string {
 |---|---|
 | `status` | 账户状态（ACTIVE/SUSPENDED 等） |
 | `serviceUsed` | 累计成功查得数据的次数（仅统计查得成功 `code=001`） |
+| `totalCalls` | 累计调用上游次数（含查得与查无；不含被网关拦截的请求） |
 
 > 说明：无任何额度上限拦截，仅做成功查得数统计。
 

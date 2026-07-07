@@ -167,10 +167,11 @@ def sign(body_params: dict, app_secret: str) -&gt; str:
   "errorCode": "0",
   "errorMsg": "success",
   "status": "ACTIVE",
-  "serviceUsed": 1280
+  "serviceUsed": 1280,
+  "totalCalls": 1560
 }
 </code></pre>
-<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>status</code></td><td>账户状态（ACTIVE/SUSPENDED 等）</td></tr><tr><td><code>serviceUsed</code></td><td>累计成功查得数据的次数（仅统计查得成功 <code>code=001</code>）</td></tr></tbody></table>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>status</code></td><td>账户状态（ACTIVE/SUSPENDED 等）</td></tr><tr><td><code>serviceUsed</code></td><td>累计成功查得数据的次数（仅统计查得成功 <code>code=001</code>）</td></tr><tr><td><code>totalCalls</code></td><td>累计调用上游次数（含查得与查无；不含被网关拦截的请求）</td></tr></tbody></table>
 <blockquote><p>说明：无任何额度上限拦截，仅做成功查得数统计。</p></blockquote>
 <hr>
 <h3>3.3 健康检查</h3>

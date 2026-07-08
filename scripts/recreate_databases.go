@@ -48,7 +48,7 @@ type fileConfig struct {
 }
 
 // versionOrder keeps a deterministic processing order matching model.Versions.
-var versionOrder = []string{"x1", "v9", "v8", "zlf", "blk"}
+var versionOrder = []string{"x1", "v9", "v8", "zlf", "blk", "swfp"}
 
 const perDBTimeout = 2 * time.Minute
 

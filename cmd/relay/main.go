@@ -24,6 +24,7 @@ import (
 	"github.com/datahub/relay/internal/domain/auth"
 	"github.com/datahub/relay/internal/domain/billing"
 	"github.com/datahub/relay/internal/domain/model"
+	"github.com/datahub/relay/internal/domain/parse"
 	"github.com/datahub/relay/internal/domain/port"
 	"github.com/datahub/relay/internal/domain/quota"
 	"github.com/datahub/relay/internal/infrastructure/oss"
@@ -268,6 +269,10 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		TokenTTL:  cfg.adminTokenTTL,
 	})
 	orch := application.NewQueryOrchestrator(route, authSvc, quotaSvc, billSvc, upRouter, ds.auditRepo, log)
+	if vc.upstream.kind == upstream.ProviderEntCredit {
+		// swfp 入参对齐上游证通 entcreditapi 的 args.entInfo，替换默认的个人三要素校验器。
+		orch.WithParser(parse.ParseEntInfo)
+	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upRouter, billSvc, quotaSvc, cfg.requeryInterval, log)
 
 	return &routeStack{orch: orch, admin: adminSvc, requery: requery}, nil
@@ -332,6 +337,17 @@ func buildUpstream(version string, uc upstreamConfig, httpClient *http.Client, l
 		}, httpClient)
 		return upstream.NewRouter(upstream.ProviderBlacklist, map[string]port.UpstreamPort{
 			upstream.ProviderBlacklist: client,
+		})
+	case upstream.ProviderEntCredit:
+		client := upstream.NewEntCredit(upstream.EntCreditConfig{
+			Endpoint:        uc.baseURL,
+			OrgCode:         uc.orgCode,
+			AccessKeyID:     uc.accessKeyID,
+			SecretAccessKey: uc.secretAccessKey,
+			Products:        uc.products,
+		}, httpClient)
+		return upstream.NewRouter(upstream.ProviderEntCredit, map[string]port.UpstreamPort{
+			upstream.ProviderEntCredit: client,
 		})
 	case upstream.ProviderGama, "":
 		client := upstream.NewGama(upstream.GamaConfig{

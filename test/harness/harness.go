@@ -31,7 +31,7 @@ const (
 )
 
 // Versions is the ordered list of service versions under test.
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp"}
 
 // demoAppKeys mirrors model.DemoAppKey：按域独立的 demo appKey（v8/v9 共用）。
 var demoAppKeys = map[string]string{
@@ -40,6 +40,7 @@ var demoAppKeys = map[string]string{
 	"v8":  "y890v8v9",
 	"zlf": "y8909zlf",
 	"blk": "y8909blk",
+	"swfp": "y890swfp",
 }
 
 // AppKeyFor returns the demo appKey seeded for the given route's 域.

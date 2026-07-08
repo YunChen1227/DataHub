@@ -15,6 +15,7 @@ const (
 	ProviderIncome    = "income"
 	ProviderRental    = "rental"
 	ProviderBlacklist = "blacklist"
+	ProviderEntCredit = "entcredit" // swfp: 税务+发票四产品码聚合
 )
 
 // Router selects the active data provider and delegates port.UpstreamPort calls

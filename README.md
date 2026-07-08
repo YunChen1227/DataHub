@@ -6,6 +6,7 @@
 - **对外（下游，v9/v8）**：`POST /v1/openapi/zlx/querySrmxV9` / `querySrmxV8`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；各自对接独立的经济能力上游（`docs/income_cls.md` 协议）。详见 [`docs/API_接口文档与使用手册_v9v8.md`](docs/API_接口文档与使用手册_v9v8.md)。
 - **对外（下游，zlf=租赁分V2-D）**：`POST /v1/openapi/zlx/querySrmxZLF`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；`result.range` 透出上游 `score1`（500-700，[500-550]高 /(550-590]中 /(590-700]低）。详见 [`docs/API_接口文档与使用手册_zlf.md`](docs/API_接口文档与使用手册_zlf.md)。
 - **对外（下游，blk=黑名单因子V35）**：`POST /v1/openapi/zlx/querySrmxBLK`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；上游富对象结果（`whether_hit`/`hit_grade`/`hit_type[P1-P8 的 m1/m3/m6]`）整体 **JSON 序列化为字符串**经 `result.range` 透出，客户自行解析。详见 [`docs/API_接口文档与使用手册_blk.md`](docs/API_接口文档与使用手册_blk.md)。
+- **对外（下游，swfp=税务发票聚合）**：`POST /v1/openapi/zlx/querySrmxSWFP`，同信封/同 MD5 加签/同 `head/body`，但为**企业维度**入参（`creditCode` 统一社会信用代码，必填）；内部**并发聚合四个产品码**（发票 P0130081/P0130083 + 税务 P0130082/P0130084），解开 base64 后四段合一 JSON 经 `result.range` 透出（每段带 `status: ok|empty|error`）。聚合特有业务码 **`002` = 部分数据源成功（不计费）**。
 
 > **额度策略（v0.6+）**：已**取消额度限制**——不限制客户调用次数；系统仅**统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。维度②（上游配额/调用计数/对账作业）已在 v0.7 **彻底移除**。
 

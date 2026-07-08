@@ -1,7 +1,7 @@
-# DataHub fixed test-suite entrypoint (Windows / PowerShell).
+﻿# DataHub fixed test-suite entrypoint (Windows / PowerShell).
 #
 # Flow: make result dir test_res/<date> -> build + start mock gama(:9112) +
-# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + relay(:8080,
+# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_entcredit(:9116) + relay(:8080,
 # live Aliyun PG+Redis) -> wait /healthz -> (optional) start real-gama relay(:8090)
 # -> run test/cases/*.go in order -> aggregate REPORT.md -> stop services.
 #
@@ -56,6 +56,7 @@ try {
     $incomeExe    = Join-Path $resultDir "mock_income.exe"
     $rentalExe    = Join-Path $resultDir "mock_rental.exe"
     $blacklistExe = Join-Path $resultDir "mock_blacklist.exe"
+    $entcreditExe = Join-Path $resultDir "mock_entcredit.exe"
     $relayExe     = Join-Path $resultDir "relay.exe"
     Write-Host "building mocks + relay ..."
     go build -o $mockExe ./scripts/mock_gama.go
@@ -66,6 +67,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build mock_rental failed" }
     go build -o $blacklistExe ./scripts/mock_blacklist.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_blacklist failed" }
+    go build -o $entcreditExe ./scripts/mock_entcredit.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_entcredit failed" }
     go build -o $relayExe ./cmd/relay
     if ($LASTEXITCODE -ne 0) { throw "go build relay failed" }
 
@@ -91,6 +94,9 @@ try {
 
     $blacklist = Start-Process -FilePath $blacklistExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_blacklist.log") -RedirectStandardError (Join-Path $resultDir "mock_blacklist.err.log")
     [void]$procs.Add($blacklist)
+
+    $entcredit = Start-Process -FilePath $entcreditExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_entcredit.log") -RedirectStandardError (Join-Path $resultDir "mock_entcredit.err.log")
+    [void]$procs.Add($entcredit)
 
     $relay = Start-Process -FilePath $relayExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "relay.log") -RedirectStandardError (Join-Path $resultDir "relay.err.log")
     [void]$procs.Add($relay)

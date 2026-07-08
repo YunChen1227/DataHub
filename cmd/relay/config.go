@@ -11,11 +11,11 @@ import (
 
 // upstreamConfig holds a single version's upstream endpoint + 我方在该上游侧的
 // 凭证。kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8) |
-// rental(租赁分V2-D, zlf)。
+// rental(租赁分V2-D, zlf) | blacklist(黑名单因子V35, blk) | entcredit(税务发票聚合, swfp)。
 type upstreamConfig struct {
-	kind    string // gama | income | rental
+	kind    string // gama | income | rental | blacklist | entcredit
 	baseURL string
-	// gama (伽马) / blacklist (黑名单因子V35) 凭证 (同为应诺尔 enol 端点)
+	// gama (伽马) / blacklist (黑名单因子V35) / entcredit (税务发票聚合) 凭证
 	appID          string
 	appSecret      string
 	apiKey         string
@@ -31,6 +31,12 @@ type upstreamConfig struct {
 	oss           ossConfig
 	licenseFile   string // 固定授权书本地文件, 启动时上传 OSS
 	licenseType   int    // 0:图片 1:pdf
+	// entcredit (swfp / 证通 entcreditapi) 凭证：与 gama/blacklist 的 appId/appSecret
+	// 语义不同（HMAC-SHA256 签名 + 机构维度鉴权），单列专属字段，不复用 appID/appSecret。
+	orgCode         string // 机构代码
+	accessKeyID     string // AK
+	secretAccessKey string // SK，Base64 编码，签名前需 Base64 解码取原始字节
+	products        []string // 产品码列表；为空时 client 默认四产品全查
 }
 
 // ossConfig holds aliyun OSS 凭证 for uploading the租赁分授权书 (rental 专用)。
@@ -142,6 +148,11 @@ type fileUpstream struct {
 	OSS           fileOSS `yaml:"oss"`
 	LicenseFile   string  `yaml:"licenseFile"`
 	LicenseType   int     `yaml:"licenseType"`
+	// entcredit (swfp / 证通 entcreditapi) 专用
+	OrgCode         string   `yaml:"orgCode"`
+	AccessKeyID     string   `yaml:"accessKeyId"`
+	SecretAccessKey string   `yaml:"secretAccessKey"`
+	Products        []string `yaml:"products"` // 为空时默认四产品全查
 }
 
 // fileOSS mirrors the rental upstream's oss YAML block.
@@ -278,6 +289,11 @@ func loadConfig() (config, error) {
 				},
 				licenseFile: fv.Upstream.LicenseFile,
 				licenseType: fv.Upstream.LicenseType,
+
+				orgCode:         fv.Upstream.OrgCode,
+				accessKeyID:     fv.Upstream.AccessKeyID,
+				secretAccessKey: fv.Upstream.SecretAccessKey,
+				products:        fv.Upstream.Products,
 			},
 			db: dbConfig{
 				host:     fv.Database.Host,
@@ -301,7 +317,7 @@ func loadConfig() (config, error) {
 }
 
 // defaultKind picks the upstream client family by version: x1→gama, zlf→rental,
-// blk→blacklist, others→income.
+// blk→blacklist, swfp→entcredit, others→income.
 func defaultKind(version string) string {
 	switch version {
 	case "x1":
@@ -310,6 +326,8 @@ func defaultKind(version string) string {
 		return "rental"
 	case "blk":
 		return "blacklist"
+	case "swfp":
+		return "entcredit"
 	default:
 		return "income"
 	}

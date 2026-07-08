@@ -18,7 +18,7 @@ var (
 	mobileRe = regexp.MustCompile(`^1\d{10}$`)
 	idCardRe = regexp.MustCompile(`^\d{17}[\dX]$`)
 	// 统一社会信用代码 (GB 32100)：18 位，字符集不含 I/O/S/V/Z（不做校验位运算）。
-	entInfoRe = regexp.MustCompile(`^[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}$`)
+	creditCodeRe = regexp.MustCompile(`^[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}$`)
 )
 
 // Parse runs参数校验; failures return busiCode 1007 数据请求异常 (我方拦截, 不调
@@ -46,20 +46,21 @@ func Parse(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	}, nil
 }
 
-// ParseEntInfo 校验 swfp 入参 (entInfo 必填，统一社会信用代码；字段名对齐上游
-// 证通 entcreditapi 的 args.entInfo，不臆造中间层字段名)。失败返回 busiCode
-// 1007 数据请求异常 (我方拦截, 不调上游/不计费)。
-func ParseEntInfo(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+// ParseCreditCode 校验 swfp 入参 (creditCode 必填，统一社会信用代码；字段名对齐
+// 上游证通 entcreditapi 的 args.creditCode——2026-07-08 上游 E1000 报错明确指出
+// 必填字段名为 creditCode，不是官方 demo 文档示例里的 entInfo，不臆造中间层字段
+// 名)。失败返回 busiCode 1007 数据请求异常 (我方拦截, 不调上游/不计费)。
+func ParseCreditCode(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	if cmd == nil {
 		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
 	}
-	entInfo := strings.ToUpper(strings.TrimSpace(cmd.EntInfo))
-	if !entInfoRe.MatchString(entInfo) {
-		return nil, errs.New(errs.BusiDataRequestErr, "entInfo 格式非法")
+	creditCode := strings.ToUpper(strings.TrimSpace(cmd.CreditCode))
+	if !creditCodeRe.MatchString(creditCode) {
+		return nil, errs.New(errs.BusiDataRequestErr, "creditCode 格式非法")
 	}
 	return &model.UpstreamRequest{
-		EntInfo: entInfo,
-		Reqid:   NewReqid(),
+		CreditCode: creditCode,
+		Reqid:      NewReqid(),
 	}, nil
 }
 

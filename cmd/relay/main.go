@@ -270,8 +270,8 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	})
 	orch := application.NewQueryOrchestrator(route, authSvc, quotaSvc, billSvc, upRouter, ds.auditRepo, log)
 	if vc.upstream.kind == upstream.ProviderEntCredit {
-		// swfp 入参对齐上游证通 entcreditapi 的 args.entInfo，替换默认的个人三要素校验器。
-		orch.WithParser(parse.ParseEntInfo)
+		// swfp 入参对齐上游证通 entcreditapi 的 args.creditCode，替换默认的个人三要素校验器。
+		orch.WithParser(parse.ParseCreditCode)
 	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upRouter, billSvc, quotaSvc, cfg.requeryInterval, log)
 

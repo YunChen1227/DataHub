@@ -5,7 +5,7 @@
 //
 // 严格复刻真实协议 (docs/java-api-demo)：application/x-www-form-urlencoded 表单，
 // HMAC-SHA256 签名（SignedRequestsHelper.java），args/signature 双重 URLEncode。
-// 按 entInfo（统一社会信用代码）驱动场景（与单上游 mock 用 13800000000 触发查无
+// 按 creditCode（统一社会信用代码）驱动场景（与单上游 mock 用 13800000000 触发查无
 // 同一惯例）：
 //   - 92500233MA60R5KW8M → 四产品全部查得 (resultCode=00000, Status=4)
 //   - 91110000EMPTYEMPT0 → 四产品全部查无 (resultCode=00000, Status=1)
@@ -44,9 +44,9 @@ var (
 )
 
 const (
-	entInfoNormal  = "92500233MA60R5KW8M"
-	entInfoEmpty   = "91110000EMPTYEMPT0"
-	entInfoPartial = "91110000PARTFA0001"
+	creditCodeNormal  = "92500233MA60R5KW8M"
+	creditCodeEmpty   = "91110000EMPTYEMPT0"
+	creditCodePartial = "91110000PARTFA0001"
 
 	requestURI = "/ectcispserver/api/entcreditapi/query"
 )
@@ -56,19 +56,19 @@ func sampleData(prodCode string) map[string]any {
 	switch prodCode {
 	case "P0130081":
 		return map[string]any{"nsrfpxx": map[string]any{"khxsdqList": []map[string]string{
-			{"ljse": "44.09", "kpqj": "2025-04-30", "nsrsbh": entInfoNormal, "jyje": "4452.61"},
+			{"ljse": "44.09", "kpqj": "2025-04-30", "nsrsbh": creditCodeNormal, "jyje": "4452.61"},
 		}}}
 	case "P0130083":
 		return map[string]any{"nsrfpxx": map[string]any{"syhzxxList": []map[string]string{
-			{"ljkpcs": "1", "kpqj": "2025-05-31", "nsrsbh": entInfoNormal, "ljkpjebhs": "172.28"},
+			{"ljkpcs": "1", "kpqj": "2025-05-31", "nsrsbh": creditCodeNormal, "ljkpjebhs": "172.28"},
 		}}}
 	case "P0130082":
 		return map[string]any{"nsrswxx": map[string]any{"sbsjList": []map[string]string{
-			{"sssjq": "2026-01-01", "nsrsbh": entInfoNormal, "ynse": "1.71", "ybtse": "1.71"},
+			{"sssjq": "2026-01-01", "nsrsbh": creditCodeNormal, "ynse": "1.71", "ybtse": "1.71"},
 		}}}
 	default: // P0130084
 		return map[string]any{"nsrswxx": map[string]any{"jksjList": []map[string]string{
-			{"sssjq": "2025-10-01", "nsrsbh": entInfoNormal, "bys": "19066.99"},
+			{"sssjq": "2025-10-01", "nsrsbh": creditCodeNormal, "bys": "19066.99"},
 		}}}
 	}
 }
@@ -140,27 +140,27 @@ func main() {
 		}
 
 		var argsMap struct {
-			ProdCode string `json:"prodCode"`
-			EntInfo  string `json:"entInfo"`
+			ProdCode   string `json:"prodCode"`
+			CreditCode string `json:"creditCode"`
 		}
 		if err := json.Unmarshal([]byte(args), &argsMap); err != nil {
 			writeJSON(w, map[string]any{"resultCode": "E1000", "resultDesc": "查询参数校验不通过", "orderNo": msgID})
 			return
 		}
-		if argsMap.EntInfo == "" {
-			writeJSON(w, map[string]any{"resultCode": "E1003", "resultDesc": "请提供查询条件", "orderNo": msgID})
+		if argsMap.CreditCode == "" {
+			writeJSON(w, map[string]any{"resultCode": "E1000", "resultDesc": "查询参数校验不通过,creditCode:为必填项", "orderNo": msgID})
 			return
 		}
 
 		switch {
-		case argsMap.EntInfo == entInfoEmpty:
+		case argsMap.CreditCode == creditCodeEmpty:
 			writeJSON(w, map[string]any{
 				"orderNo":    msgID,
 				"resultCode": "00000",
 				"resultDesc": "成功",
 				"resultData": map[string]any{argsMap.ProdCode + "Status": "1"},
 			})
-		case argsMap.EntInfo == entInfoPartial && argsMap.ProdCode == "P0130083":
+		case argsMap.CreditCode == creditCodePartial && argsMap.ProdCode == "P0130083":
 			writeJSON(w, map[string]any{"resultCode": "E0400", "resultDesc": "查询征信数据出错", "orderNo": msgID})
 		default:
 			plain, _ := json.Marshal(sampleData(argsMap.ProdCode))

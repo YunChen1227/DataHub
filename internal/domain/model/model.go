@@ -4,15 +4,17 @@
 package model
 
 // QueryCommand is the parsed client request body. 个人三要素路由用 mobile(必)/
-// idCard(必)/name(选)；swfp (税务发票聚合) 用 entInfo(统一社会信用代码，必)——
-// 字段名直接对齐上游真实入参名 (证通 entcreditapi args.entInfo)，本服务做接口
+// idCard(必)/name(选)；swfp (税务发票聚合) 用 creditCode(统一社会信用代码，必)——
+// 字段名直接对齐上游真实入参名 (证通 entcreditapi args.creditCode；2026-07-08
+// 上游 E1000 报错明确指出必填字段名为 creditCode，官方 demo 文档里的 entInfo
+// 示例字段名与四产品聚合接口实际契约不符，以服务器报错为准)，本服务做接口
 // 转发，下游客户入参必须与上游契约一致，不臆造中间层字段名。各路由由自己的参数
-// 校验器决定必填口径 (parse.Parse / parse.ParseEntInfo)。
+// 校验器决定必填口径 (parse.Parse / parse.ParseCreditCode)。
 type QueryCommand struct {
-	Mobile  string `json:"mobile"`
-	IDCard  string `json:"idCard"`
-	Name    string `json:"name"`
-	EntInfo string `json:"entInfo"`
+	Mobile     string `json:"mobile"`
+	IDCard     string `json:"idCard"`
+	Name       string `json:"name"`
+	CreditCode string `json:"creditCode"`
 }
 
 // SignedRequest carries the request envelope material needed for MD5 signature
@@ -39,14 +41,14 @@ type LicenseView struct {
 func (l *LicenseView) Active() bool { return l != nil && l.Status == "ACTIVE" }
 
 // UpstreamRequest carries the参数 the upstream client needs to build its signed
-// request (DESIGN §6). 个人三要素路由用 IDCard/Name/Mobile；swfp 用 EntInfo
-// (统一社会信用代码，对齐上游 args.entInfo)。Reqid 为内部幂等流水号。
+// request (DESIGN §6). 个人三要素路由用 IDCard/Name/Mobile；swfp 用 CreditCode
+// (统一社会信用代码，对齐上游 args.creditCode)。Reqid 为内部幂等流水号。
 type UpstreamRequest struct {
-	IDCard  string
-	Name    string
-	Mobile  string
-	EntInfo string
-	Reqid   string
+	IDCard     string
+	Name       string
+	Mobile     string
+	CreditCode string
+	Reqid      string
 }
 
 // UpstreamResult is the normalized upstream response (DESIGN §6). 唯一上游伽马把原生

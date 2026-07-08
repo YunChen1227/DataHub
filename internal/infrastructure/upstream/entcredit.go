@@ -194,8 +194,10 @@ type entCreditResponse struct {
 //   - 报文以 application/x-www-form-urlencoded 提交；args 字段在放入表单前也需
 //     URLEncode（Main.java 注释：加签时不 encode，放入报文时才 encode）
 //
-// entInfo 是本路由的业务查询参数，与 prodCode 一起放进 args JSON——上游文档示例
-// args={"prodCode":"P0010010","entInfo":"<统一社会信用代码>"}。
+// creditCode 是本路由的业务查询参数（统一社会信用代码），与 prodCode 一起放进
+// args JSON——官方 demo 文档给的示例字段名是 entInfo，但 2026-07-08 用真实凭证
+// 联调时上游直接报 "E1000 查询参数校验不通过,creditCode:为必填项"，证明四产品
+// 聚合接口的真实参数名是 creditCode，以服务器报错为准。
 func (c *EntCreditClient) callProduct(ctx context.Context, product string, req *model.UpstreamRequest) (entCreditSection, string) {
 	fail := func(msg string) (entCreditSection, string) {
 		return entCreditSection{Status: "error", Error: msg}, ""
@@ -210,8 +212,8 @@ func (c *EntCreditClient) callProduct(ctx context.Context, product string, req *
 	msgID := c.cfg.OrgCode + time.Now().Format("20060102") + fmt.Sprintf("%06d", msgSeq.Add(1)%1000000)
 
 	args, err := json.Marshal(map[string]string{
-		"prodCode": product,
-		"entInfo":  req.EntInfo,
+		"prodCode":   product,
+		"creditCode": req.CreditCode,
 	})
 	if err != nil {
 		return fail("marshal args: " + err.Error())

@@ -65,16 +65,21 @@ func main() {
 	rec.Check("二次全查得", "errorCode=0 & body.code=001", r.ErrorCode == "0" && r.BodyCode == "001", r.Raw)
 }
 
-// sectionsAllOK 校验 range JSON 四段 (invoice1/invoice2/tax1/tax2) 均 status=ok 且带 data。
+// sectionsAllOK 校验 range JSON 四段 (invoice1/invoice2/tax1/tax2) 均 status=ok 且
+// data 是解码后的明细本体（发票段含 nsrfpxx、税务段含 nsrswxx，而非 base64 包装）。
 func sectionsAllOK(raw string) bool {
 	m := parseSections(raw)
 	if m == nil {
 		return false
 	}
+	wantKey := map[string]string{"invoice1": "nsrfpxx", "invoice2": "nsrfpxx", "tax1": "nsrswxx", "tax2": "nsrswxx"}
 	for _, key := range []string{"invoice1", "invoice2", "tax1", "tax2"} {
 		sec, ok := m[key]
 		if !ok || sec.Status != "ok" || len(sec.Data) == 0 {
 			return false
+		}
+		if !strings.Contains(string(sec.Data), wantKey[key]) {
+			return false // data 未解码（仍是 base64 包装）或结构不符
 		}
 	}
 	return true

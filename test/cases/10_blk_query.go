@@ -52,6 +52,12 @@ func main() {
 	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, badi, nil)
 	rec.Check("身份证非法", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
 
+	// 上游要求 name 必传：网关前置拦截，不调用上游（与对外手册口径一致）。
+	noName := base()
+	delete(noName, "name")
+	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, noName, nil)
+	rec.Check("缺 name 拦截", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
+
 	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, base(), nil)
 	rec.Check("二次成功查得", "errorCode=0 & body.code=001 & range 含 hit_grade",
 		r.ErrorCode == "0" && r.BodyCode == "001" && strings.Contains(r.Range, "hit_grade"), r.Raw)

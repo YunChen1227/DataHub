@@ -269,9 +269,16 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		TokenTTL:  cfg.adminTokenTTL,
 	})
 	orch := application.NewQueryOrchestrator(route, authSvc, quotaSvc, billSvc, upRouter, ds.auditRepo, log)
-	if vc.upstream.kind == upstream.ProviderEntCredit {
-		// swfp 入参对齐上游证通 entcreditapi 的 args.creditCode，替换默认的个人三要素校验器。
+	// 网关校验口径必须与该路由上游的真实要求一致（必填字段前置拦截，不透传给
+	// 上游报错）。默认 parse.Parse (mobile必/idCard必/name选) 仅适用于与经济能力
+	// 同口径的上游 (gama/income)。
+	switch vc.upstream.kind {
+	case upstream.ProviderEntCredit:
+		// swfp 入参对齐上游证通 entcreditapi 的 args.creditCode。
 		orch.WithParser(parse.ParseCreditCode)
+	case upstream.ProviderRental, upstream.ProviderBlacklist:
+		// zlf (租赁分 name 必传) / blk (黑名单V35 name 参与摘要匹配) 均要求姓名必填。
+		orch.WithParser(parse.ParseWithName)
 	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upRouter, billSvc, quotaSvc, cfg.requeryInterval, log)
 

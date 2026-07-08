@@ -46,6 +46,21 @@ func Parse(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	}, nil
 }
 
+// ParseWithName 校验个人三要素且 name 必填。用于上游要求姓名必传的路由
+// (zlf 租赁分：文档 §2.5 name 必；blk 黑名单V35：name 参与 MD5 摘要匹配)——
+// 网关校验口径必须与上游要求一致，前置拦截而非透传给上游报错（对外手册承诺
+// "参数非法不调用上游、不计费"）。
+func ParseWithName(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+	up, err := Parse(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if up.Name == "" {
+		return nil, errs.New(errs.BusiDataRequestErr, "name 不能为空")
+	}
+	return up, nil
+}
+
 // ParseCreditCode 校验 swfp 入参 (creditCode 必填，统一社会信用代码；字段名对齐
 // 上游证通 entcreditapi 的 args.creditCode——2026-07-08 上游 E1000 报错明确指出
 // 必填字段名为 creditCode，不是官方 demo 文档示例里的 entInfo，不臆造中间层字段

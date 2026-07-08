@@ -44,6 +44,18 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
 - **上游归一化**：上游客户端实现 `port.UpstreamPort`，把响应归一化为
   `model.UpstreamResult`：查得 → `Code:"001"`；查无 → `Code:"999"`；上游侧错误
   （账户/参数/系统问题）→ 返回 `error`（不计费，走复查/对账兜底）。
+- **入参与上游严格对齐（铁律，违反即返工）**：本服务是纯转发网关——
+  1. **字段名以上游真实契约为准**：新路由的下游入参字段名必须用上游要求的名字
+     （如 swfp 的 `creditCode`），不得默认沿用既有路由的 mobile/idCard/name，
+     也不得臆造中间层字段名；上游文档示例与服务器报错不一致时**以服务器报错为准**。
+  2. **必填/选填口径必须与上游一致**：上游必填的字段，网关校验器必须**前置拦截**
+     （对外手册承诺"参数非法不调用上游、不计费"），禁止靠透传给上游报错兜底。
+     默认 `parse.Parse`（mobile必/idCard必/name选）只适用于与经济能力同口径的
+     上游；口径不同就写专属校验器并在 `cmd/relay/main.go` buildRouteStack 的
+     kind switch 里 `orch.WithParser(...)` 挂上（参考 zlf/blk 的 ParseWithName、
+     swfp 的 ParseCreditCode）。
+  3. 交付前必须逐字段核对一遍「下游契约 → 网关校验 → 上游客户端发送 → 上游
+     文档要求」四层一致性，测试用例必须包含每个必填字段的"缺失拦截"场景。
 - **不要动** quota / billing / persistence / admin 后端——它们对路由完全泛化。
 
 ## 改动清单（按此顺序执行）

@@ -194,8 +194,10 @@ type entCreditResponse struct {
 //   - 报文以 application/x-www-form-urlencoded 提交；args 字段在放入表单前也需
 //     URLEncode（Main.java 注释：加签时不 encode，放入报文时才 encode）
 //
-// entInfo 是本路由的业务查询参数，与 prodCode 一起放进 args JSON——上游文档示例
-// args={"prodCode":"P0010010","entInfo":"<统一社会信用代码>"}。
+// creditCode 是本路由的业务查询参数（统一社会信用代码），与 prodCode 一起放进
+// args JSON——官方 demo 文档给的示例字段名是 entInfo，但 2026-07-08 用真实凭证
+// 联调时上游直接报 "E1000 查询参数校验不通过,creditCode:为必填项"，证明四产品
+// 聚合接口的真实参数名是 creditCode，以服务器报错为准。
 func (c *EntCreditClient) callProduct(ctx context.Context, product string, req *model.UpstreamRequest) (entCreditSection, string) {
 	fail := func(msg string) (entCreditSection, string) {
 		return entCreditSection{Status: "error", Error: msg}, ""
@@ -210,8 +212,8 @@ func (c *EntCreditClient) callProduct(ctx context.Context, product string, req *
 	msgID := c.cfg.OrgCode + time.Now().Format("20060102") + fmt.Sprintf("%06d", msgSeq.Add(1)%1000000)
 
 	args, err := json.Marshal(map[string]string{
-		"prodCode": product,
-		"entInfo":  req.EntInfo,
+		"prodCode":   product,
+		"creditCode": req.CreditCode,
 	})
 	if err != nil {
 		return fail("marshal args: " + err.Error())
@@ -284,11 +286,57 @@ func (c *EntCreditClient) callProduct(ctx context.Context, product string, req *
 		if !ok || len(dataNode) == 0 {
 			return fail("状态码4但缺少 " + product + "Data")
 		}
-		return entCreditSection{Status: "ok", Raw: status, Data: dataNode}, er.OrderNo
+		// <产品码>Data.result[].data 是 base64 编码的明细 JSON（PDF 样例展示）。
+		// 解开 base64 后透出明细本体，客户拿到即可用（单条→对象，多条→数组）。
+		decoded, err := decodeEntCreditData(dataNode)
+		if err != nil {
+			return fail("解码明细失败: " + err.Error())
+		}
+		return entCreditSection{Status: "ok", Raw: status, Data: decoded}, er.OrderNo
 	case "1":
 		return entCreditSection{Status: "empty", Raw: status}, er.OrderNo
 	default:
 		return fail(fmt.Sprintf("状态码=%s (预期4/1)", status))
+	}
+}
+
+// decodeEntCreditData 把 <产品码>Data 节点里 result[].data 的 base64 串解成明细
+// JSON：单条返回对象本体，多条返回数组。异常（非法 base64/非法 JSON）报错，由
+// 调用方把该段归一为 error。
+func decodeEntCreditData(dataNode json.RawMessage) (json.RawMessage, error) {
+	var dn struct {
+		Result []struct {
+			Data string `json:"data"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(dataNode, &dn); err != nil {
+		return nil, fmt.Errorf("解析 Data 节点: %w", err)
+	}
+	decoded := make([]json.RawMessage, 0, len(dn.Result))
+	for _, item := range dn.Result {
+		if item.Data == "" {
+			continue
+		}
+		plain, err := base64.StdEncoding.DecodeString(item.Data)
+		if err != nil {
+			return nil, fmt.Errorf("base64 解码: %w", err)
+		}
+		if !json.Valid(plain) {
+			return nil, fmt.Errorf("解码结果不是合法 JSON")
+		}
+		decoded = append(decoded, json.RawMessage(plain))
+	}
+	switch len(decoded) {
+	case 0:
+		return nil, fmt.Errorf("Data 节点无有效明细")
+	case 1:
+		return decoded[0], nil
+	default:
+		arr, err := json.Marshal(decoded)
+		if err != nil {
+			return nil, err
+		}
+		return json.RawMessage(arr), nil
 	}
 }
 

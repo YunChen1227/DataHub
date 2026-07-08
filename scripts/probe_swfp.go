@@ -5,8 +5,8 @@
 // versions.swfp.upstream 读取，不硬编码进本文件。
 //
 // 用法：
-//   go run ./scripts/probe_swfp.go                       # 默认虚构信用代码（预期查无, 不计费）
-//   SWFP_ENT_INFO=91xxxxxxxx go run ./scripts/probe_swfp.go   # 指定真实企业（可能计费, 慎用）
+//   go run ./scripts/probe_swfp.go                            # 默认虚构信用代码（预期查无, 不计费）
+//   SWFP_CREDIT_CODE=91xxxxxxxx go run ./scripts/probe_swfp.go # 指定真实企业（可能计费, 慎用）
 package main
 
 import (
@@ -59,9 +59,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	entInfo := os.Getenv("SWFP_ENT_INFO")
-	if entInfo == "" {
-		entInfo = "91330100MA2AAAAA0X" // 虚构但格式合法（预期查无, 不计费）
+	creditCode := os.Getenv("SWFP_CREDIT_CODE")
+	if creditCode == "" {
+		creditCode = "91330100MA2AAAAA0X" // 虚构但格式合法（预期查无, 不计费）
 	}
 
 	client := upstream.NewEntCredit(upstream.EntCreditConfig{
@@ -72,12 +72,12 @@ func main() {
 		Products:        uc.Products,
 	}, &http.Client{Timeout: 30 * time.Second})
 
-	fmt.Printf("== 探测开始: endpoint=%s orgCode=%s entInfo=%s products=%v ==\n",
-		uc.BaseURL, uc.OrgCode, entInfo, uc.Products)
+	fmt.Printf("== 探测开始: endpoint=%s orgCode=%s creditCode=%s products=%v ==\n",
+		uc.BaseURL, uc.OrgCode, creditCode, uc.Products)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	result, err := client.Query(ctx, &model.UpstreamRequest{EntInfo: entInfo, Reqid: "probe"})
+	result, err := client.Query(ctx, &model.UpstreamRequest{CreditCode: creditCode, Reqid: "probe"})
 	if err != nil {
 		fmt.Println("\n== 聚合结果: 全部数据源失败 ==")
 		fmt.Println("error:", err)

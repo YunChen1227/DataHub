@@ -141,9 +141,10 @@ versions:
       db: 4
   swfp:
     upstream:
-      kind: "entcredit"     # swfp 聚合税务+发票四产品码（证通 entcreditapi，企业维度 entInfo 入参）
-      # 候选域名（据上游文档/demo，实际生效以商务/联调确认为准，需逐个测试连通性）：
-      #   生产：https://cisp.zenitera.com  或 https://cisp.ect888.com
+      kind: "entcredit"     # swfp 聚合税务+发票四产品码（证通 entcreditapi，企业维度 creditCode 入参）
+      # 已实测连通并验证鉴权：https://cisp.zenitera.com（真实凭证签名一次通过）。
+      # 其余候选域名（未逐个验证，供参考）：
+      #   生产候选：https://cisp.ect888.com
       #   测试：https://cispuat.tongtongcf.com
       #   IP直连：https://112.65.144.19:9179
       baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"   # 仅 endpoint（scheme+host[:port]），不含 requestUri

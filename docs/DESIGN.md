@@ -5,6 +5,7 @@
 > 在此基础上提供 **License 鉴权** 与 **每路由独立的调用统计**（无额度限制）能力。
 
 > **v0.9 变更（重要：demo license 治理 + 存储隔离防呆）**：
+> - **swfp（v1.0，本次新增）**：税务发票聚合路由——企业维度入参 `creditCode`，内部并发聚合四个产品码（发票 P0130081/P0130083、税务 P0130082/P0130084，共用端点 `/ectcispserver/api/entcreditapi/query`），按判定表归一：全成功且≥1查得→`001`、全查无→`999`、部分失败→**`002` 部分数据源成功（确定结论、不计费）**、全失败→`505062`。002 经 mapping.NotFound 分支透出部分数据；参数校验器按路由替换（`orchestrator.WithParser` → `parse.ParseCredit`）。swfp 独立成域（redis db5 / datahub_swfp_db）。
 > - **域模型不变**：仍为 `x1 / v8v9 / zlf / blk` 四个域（v8/v9 共用 v8v9 域与同一套 license，其余路由独立成域，见 v0.8）。跨域使用 license 一律 `505004`。
 > - **demo license 按域独立、且不进生产**：修复历史问题——旧实现把**同一个** demo license（`LIC-DEMO-0001` / `y89098io`，secret 公开）播种进**每个域库（含生产）**，导致这一个 token 能访问所有路由。现在：relay 生产（postgres）启动**不再播种** demo；迁移 `0004_per_route_license.sql` 自动删除旧共享 demo；开发态（memory / `SEED_DEMO=1` 的建库脚本）按域播种互不相同的 demo appKey（`model.DemoAppKey`：x1=`y89098io`、v8v9=`y890v8v9`、zlf=`y8909zlf`、blk=`y8909blk`）。
 > - **启动期存储隔离防呆**：`cmd/relay` 装配前校验任意两个**不同的域**不得配置同一个 PG 库（host:port/name）或同一个 Redis 逻辑库（addr/db），违者拒绝启动（v8/v9 同域共库属设计内共享，不受影响）。

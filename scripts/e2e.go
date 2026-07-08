@@ -34,7 +34,7 @@ var versions = []string{"x1", "v9", "v8"}
 // demoAppKeys mirrors model.DemoAppKey：按域独立播种的 demo appKey（v8/v9 同属
 // v8v9 域共用一个），任何域的 demo 凭证在其它域的路由上都会鉴权失败。
 var demoAppKeys = map[string]string{
-	"x1": "y89098io", "v9": "y890v8v9", "v8": "y890v8v9", "zlf": "y8909zlf", "blk": "y8909blk",
+	"x1": "y89098io", "v9": "y890v8v9", "v8": "y890v8v9", "zlf": "y8909zlf", "blk": "y8909blk", "swfp": "y890swfp",
 }
 
 func appKeyFor(v string) string { return demoAppKeys[v] }

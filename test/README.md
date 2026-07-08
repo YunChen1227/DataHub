@@ -53,6 +53,7 @@ pwsh ./test/run.ps1 -SkipReal                            # 跳过真实 gama 连
 | `08_version_isolation.go` | 域隔离 + v8/v9 共享 license | v9 建的用户在 v9 **和 v8**（同域）都可见/可鉴权；x1（不同域）路由与后台均看不到（`505004`/`404`） | 隔离失败说明域→存储映射或 PG/Redis 逻辑库配置有误 |
 | `09_zlf_query.go` | zlf 版本 `POST querySrmxZLF` 全场景（租赁分V2-D） | 成功 `001/range=546.6`；查无 `999`；错签/参数非法等同 x1 | mock rental(:9114) 未起或 AES 密钥不匹配 → `505062` |
 | `10_blk_query.go` | blk 版本 `POST querySrmxBLK` 全场景（黑名单因子V35） | 成功 `001` 且 `result.range` 为 JSON 含 `whether_hit=1`；查无 `999` | mock blacklist(:9115) 未起 → `505062` |
+| `12_swfp_query.go` | swfp 版本 `POST querySrmxSWFP` 全场景（税务发票四产品聚合，creditCode 入参） | 全查得 `001`（range 四段 ok）；全查无 `999`；部分失败 `002`（range 含 error 段） | mock entcredit(:9116) 未起 → `505062` |
 | `11_license_route_stats.go` | v8/v9 共享 license + 路由独立统计 | v8 建的用户在 v9 可见（共享 license），同一 appKey/secret 在 v8、v9 都能鉴权；对 v8 发 2 查得+1 查无、v9 发 1 查得后：`/quotaV8` serviceUsed=2/totalCalls=3，`/quotaV9` serviceUsed=1/totalCalls=1（计数互不影响，查无也计调用次数） | income mock(:9113) 未起 → 鉴权后上游错误；计数串扰 → 断言 FAIL |
 
 > 说明：所有业务接口无论成功/失败均返回 HTTP 200，错误体现在信封里的 `head.errorCode`（x1）或 `code`（v9）。

@@ -38,8 +38,10 @@ func Found(r *model.UpstreamResult, requestID string, latencyMs int64) *model.Qu
 	return &model.QueryResponse{Head: head(errs.ErrorCodeOK, "success", requestID, latencyMs), Body: b}
 }
 
-// NotFound builds a查无结果 response: head.errorCode "0" + body.code "999" (无
-// result 节点). 查无属正常返回, 不计维度① (DESIGN §7.4).
+// NotFound builds a确定结论但非查得计费 response: head.errorCode "0" + body.code
+// 默认 "999" 查无 (无 result 节点)。聚合路由的 002 部分成功也走此映射——r.Code
+// 覆盖 body.code 且 r.Range 非空时透出 result.range (部分数据)；单上游查无的
+// Range 恒为空，行为不变 (DESIGN §7.4)。
 func NotFound(r *model.UpstreamResult, requestID string, latencyMs int64) *model.QueryResponse {
 	b := &model.QueryBody{Code: "999", Msg: "查无结果", Reqid: requestID}
 	if r != nil {
@@ -52,6 +54,9 @@ func NotFound(r *model.UpstreamResult, requestID string, latencyMs int64) *model
 		b.UID = r.UID
 		if r.Reqid != "" {
 			b.Reqid = r.Reqid
+		}
+		if r.Range != "" {
+			b.Result = &model.RangeResult{Range: r.Range}
 		}
 	}
 	return &model.QueryResponse{Head: head(errs.ErrorCodeOK, "success", requestID, latencyMs), Body: b}

@@ -139,3 +139,22 @@ versions:
     redis:
       <<: *redis_base
       db: 4
+  swfp:
+    upstream:
+      kind: "entcredit"     # swfp 聚合税务+发票四产品码（证通 entcreditapi，企业维度 entInfo 入参）
+      # 候选域名（据上游文档/demo，实际生效以商务/联调确认为准，需逐个测试连通性）：
+      #   生产：https://cisp.zenitera.com  或 https://cisp.ect888.com
+      #   测试：https://cispuat.tongtongcf.com
+      #   IP直连：https://112.65.144.19:9179
+      baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"   # 仅 endpoint（scheme+host[:port]），不含 requestUri
+      orgCode: "REPLACE_WITH_SWFP_ORG_CODE"            # 机构代码
+      accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"   # AK
+      secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"  # SK，Base64 编码
+      # 产品码可省，默认四个全查：发票 part1/2 + 税务 part1/2
+      products: ["P0130081", "P0130083", "P0130082", "P0130084"]
+    database:
+      <<: *pg_base
+      name: "datahub_swfp_db"
+    redis:
+      <<: *redis_base
+      db: 5

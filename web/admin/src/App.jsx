@@ -9,7 +9,7 @@ const TABS = [
   { id: 'audits', label: '操作记录' },
 ]
 
-const VERSION_LABELS = { x1: 'X1', v9: 'V9', v8: 'V8', zlf: 'ZLF', blk: 'BLK' }
+const VERSION_LABELS = { x1: 'X1', v9: 'V9', v8: 'V8', zlf: 'ZLF', blk: 'BLK', swfp: 'SWFP' }
 
 // 共享 license 的路由：v8/v9 同属 v8v9 域，license 互通但统计/日志各自独立。
 const SHARED_LICENSE_HINT = {

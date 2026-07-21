@@ -3,12 +3,23 @@
 // it never participates in import cycles.
 package model
 
-// QueryCommand is the parsed client request body (接口文档-经济能力.doc §3.1.3:
-// mobile 必填 / idCard 必填 / name 选填).
+// QueryCommand is the parsed client request body. 个人三要素路由用 mobile(必)/
+// idCard(必)/name(选)；swfp (税务发票聚合) 用 creditCode(统一社会信用代码，必)——
+// 字段名直接对齐上游真实入参名 (证通 entcreditapi args.creditCode；2026-07-08
+// 上游 E1000 报错明确指出必填字段名为 creditCode，官方 demo 文档里的 entInfo
+// 示例字段名与四产品聚合接口实际契约不符，以服务器报错为准)，本服务做接口
+// 转发，下游客户入参必须与上游契约一致，不臆造中间层字段名。各路由由自己的参数
+// 校验器决定必填口径 (parse.Parse / parse.ParseCreditCode)。
 type QueryCommand struct {
-	Mobile string `json:"mobile"`
-	IDCard string `json:"idCard"`
-	Name   string `json:"name"`
+	Mobile     string `json:"mobile"`
+	IDCard     string `json:"idCard"`
+	Name       string `json:"name"`
+	CreditCode string `json:"creditCode"`
+	// rlbd1 (人脸身份证比对) 入参：image(base64) 与 url 二选一，配合 name/idCard。
+	Image string `json:"image"`
+	URL   string `json:"url"`
+	// sfzhy (身份证三要素核验) 入参：人像照片 base64(≤50K)，配合 name/idCard。
+	ProfilePicture string `json:"profilePicture"`
 }
 
 // SignedRequest carries the request envelope material needed for MD5 signature
@@ -35,12 +46,19 @@ type LicenseView struct {
 func (l *LicenseView) Active() bool { return l != nil && l.Status == "ACTIVE" }
 
 // UpstreamRequest carries the参数 the upstream client needs to build its signed
-// request (DESIGN §6). 唯一上游伽马使用 IDCard/Name/Mobile, Reqid 为内部幂等流水号。
+// request (DESIGN §6). 个人三要素路由用 IDCard/Name/Mobile；swfp 用 CreditCode
+// (统一社会信用代码，对齐上游 args.creditCode)。Reqid 为内部幂等流水号。
 type UpstreamRequest struct {
-	IDCard string
-	Name   string
-	Mobile string
-	Reqid  string
+	IDCard     string
+	Name       string
+	Mobile     string
+	CreditCode string
+	// rlbd1 (人脸身份证比对) 用 Image(base64) 或 URL (二选一) + Name/IDCard。
+	Image string
+	URL   string
+	// sfzhy (身份证三要素核验) 用 ProfilePicture(base64) + Name/IDCard。
+	ProfilePicture string
+	Reqid          string
 }
 
 // UpstreamResult is the normalized upstream response (DESIGN §6). 唯一上游伽马把原生
@@ -144,17 +162,22 @@ type RangeResult struct {
 	Range string `json:"range"`
 }
 
-// Versions is the canonical ordered list of service versions. 各版本对外接口
-// 完全一致 (x1 信封格式)，仅靠路由名区分，各自独立上游 + 独立数据库 + 独立
-// license/调用记录/统计。x1 同时充当后台登录的控制面 (admin 账号 + JWT)。
-// zlf 转接租赁分V2-D (守信 shouxin168) 上游；blk 转接黑名单因子V35 (应诺尔 enol) 上游。
-// 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属 v8v9 域，
-// 共用一套 license，但统计/日志仍按各自路由独立 (见 RouteDomain)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk"}
+// Versions is the canonical ordered list of service versions (routes). 各版本对外
+// 接口完全一致 (x1 信封格式)，仅靠路由名区分，各自独立上游。x1 同时充当后台登录
+// 的控制面 (admin 账号 + JWT)。zlf 转接租赁分V2-D (守信 shouxin168) 上游；blk 转接
+// 黑名单因子V35 (应诺尔 enol) 上游；swfp 聚合税务+发票四产品码 (企业维度,
+// creditCode 入参, 见 upstream/entcredit.go)；rlbd1 转接人脸身份证比对一所 (数脉
+// facecompare 上游，name+idCard+image|url 入参，见 upstream/facecompare.go)；
+// sfzhy 转接身份证三要素核验 (idverify 上游，name+idCard+profilePicture 入参，
+// 见 upstream/idverify.go)。
+// 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
+// v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
+// 一律鉴权失败 (505004 账户信息不存在)。
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "sfzhy"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "sfzhy"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -164,6 +187,30 @@ func RouteDomain(route string) string {
 		return "v8v9"
 	default:
 		return route
+	}
+}
+
+// DemoAppKey returns the per-域 dev demo license appKey（开发/测试专用；生产库
+// 不播种 demo）。各域 demo 凭证互不相同，保证 demo token 无法跨域使用；v8/v9
+// 同属 v8v9 域，共用同一个 demo appKey。
+func DemoAppKey(route string) string {
+	switch RouteDomain(route) {
+	case "x1":
+		return "y89098io"
+	case "v8v9":
+		return "y890v8v9"
+	case "zlf":
+		return "y8909zlf"
+	case "blk":
+		return "y8909blk"
+	case "swfp":
+		return "y890swfp"
+	case "rlbd1":
+		return "y89rlbd1"
+	case "sfzhy":
+		return "y89sfzhy"
+	default:
+		return "demo-" + route
 	}
 }
 

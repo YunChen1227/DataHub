@@ -16,13 +16,17 @@ type DecisionTable struct {
 }
 
 // DefaultTable reflects DESIGN §7.4:
-//   - RESOLVED_CODES = {001, 999}（上游确定结论）
+//   - RESOLVED_CODES = {001, 999, 002}（上游确定结论）
 //   - RETURNED_CODES = {001}（仅查得数据才累计成功查得数）
+//
+// 002 为多上游聚合路由 (swfp) 特有：部分数据源成功——确定结论但数据不完整,
+// 不计费。单上游路由永不产生 002。
 func DefaultTable() *DecisionTable {
 	return &DecisionTable{
 		resolvedCodes: map[string]bool{
 			"001": true, // 成功
 			"999": true, // 查无结果（上游已给出确定结论）
+			"002": true, // 部分数据源成功（聚合路由；确定结论、不计费）
 		},
 		returnedCodes: map[string]bool{
 			"001": true, // 仅查得数据才累计成功查得数

@@ -1,8 +1,17 @@
 # 经济能力查询转接服务 — 设计文档（DESIGN.md）
 
-> 版本：v0.8（服务版本 **x1**）
+> 版本：v0.9（服务版本 **x1**）
 > 角色定位：本服务是一个**接口转接（API Relay / Gateway）网关**。对外为客户（商户）提供经济能力查询 API（当前版本 **x1**：`POST /v1/openapi/zlx/querySrmxX1`）；对内调用**上游数据源**（伽马分层分）获取评分后回传。
 > 在此基础上提供 **License 鉴权** 与 **每路由独立的调用统计**（无额度限制）能力。
+
+> **v0.9 变更（重要：demo license 治理 + 存储隔离防呆）**：
+> - **swfp（v1.0，本次新增）**：税务发票聚合路由——企业维度入参 `creditCode`，内部并发聚合四个产品码（发票 P0130081/P0130083、税务 P0130082/P0130084，共用端点 `/ectcispserver/api/entcreditapi/query`），按判定表归一：全成功且≥1查得→`001`、全查无→`999`、部分失败→**`002` 部分数据源成功（确定结论、不计费）**、全失败→`505062`。002 经 mapping.NotFound 分支透出部分数据；参数校验器按路由替换（`orchestrator.WithParser` → `parse.ParseCredit`）。swfp 独立成域（redis db5 / datahub_swfp_db）。
+> - **rlbd1（本次新增）**：人脸身份证比对一所路由——上游数脉 `facecompare`（`POST /v4/face_id_card/yisuo/compare`，form 提交，`sign = md5(appid&timestamp&app_security)`）；入参 `name`+`idCard`+（`image` base64 或 `url` 二选一），校验器 `parse.ParseFace`（`orchestrator.WithParser` 挂载）。归一：`code=200` 且 `incorrect` 为收费码（100/101/103/109/110/111/112）→`001` 查得（`result.range` 透出 data 富对象 JSON）；不收费码（104/106/107/108/113）及 `code≠200`→上游侧错误（不计费，`505062`）；人脸比对无「查无」概念，不产生 `999`。rlbd1 独立成域（redis db6 / datahub_rlbd1_db）。
+> - **sfzhy（本次新增）**：身份证三要素核验路由——上游 `idverify`（`POST /api/idCardThreeElements`，JSON 提交，`signature = SHA256(升序 k=v&… + "&AppSecret=" + 商户密钥)`）；入参 `name`+`idCard`(15/18 位)+`profilePicture`(base64 人像照片)，校验器 `parse.ParseIDVerify`（`orchestrator.WithParser` 挂载）。归一：`Code=0`→`001` 查得（`result.range` 透出 Data 富对象 JSON `Result/ResultMessage/ImageScore`，上游 Result 0–5 均为可计费结论）；`Code≠0`（40x/45x/46x/50x）→上游侧错误（不计费，`505062`）；三要素核验无「查无」概念，不产生 `999`。sfzhy 独立成域（redis db7 / datahub_sfzhy_db）。
+> - **域模型**：`x1 / v8v9 / zlf / blk / swfp / rlbd1 / sfzhy` 各域独立（v8/v9 共用 v8v9 域与同一套 license，其余路由独立成域，见 v0.8）。跨域使用 license 一律 `505004`。
+> - **demo license 按域独立、且不进生产**：修复历史问题——旧实现把**同一个** demo license（`LIC-DEMO-0001` / `y89098io`，secret 公开）播种进**每个域库（含生产）**，导致这一个 token 能访问所有路由。现在：relay 生产（postgres）启动**不再播种** demo；迁移 `0004_per_route_license.sql` 自动删除旧共享 demo；开发态（memory / `SEED_DEMO=1` 的建库脚本）按域播种互不相同的 demo appKey（`model.DemoAppKey`：x1=`y89098io`、v8v9=`y890v8v9`、zlf=`y8909zlf`、blk=`y8909blk`）。
+> - **启动期存储隔离防呆**：`cmd/relay` 装配前校验任意两个**不同的域**不得配置同一个 PG 库（host:port/name）或同一个 Redis 逻辑库（addr/db），违者拒绝启动（v8/v9 同域共库属设计内共享，不受影响）。
+> - **后台前端**：路由标签页明确标注作用域——x1/zlf/blk 为独立数据库；v8/v9 标注共用同一套 license、统计与日志按路由独立。
 
 > **v0.8 变更（重要：License 域 + 每路由独立统计）**：
 > - **「路由」与「license 域」解耦**。路由（version）= 对外接口 + 上游，共 5 条：`x1 / v9 / v8 / zlf / blk`；license 域 = 存储边界（独占一套 DB + Redis + license 表），共 4 个：`x1 / v8v9 / zlf / blk`。映射 `model.RouteDomain`：`v8`、`v9` → `v8v9` 域，其余路由各自成域。
@@ -277,7 +286,7 @@ sequenceDiagram
 
 ## 6. 上游对接（Provider 侧）
 
-> 上游按版本路由：`x1 → gama`（伽马分层分）、`v9/v8 → income`（经济能力）、`zlf → rental`（租赁分V2-D / 守信）、`blk → blacklist`（黑名单因子V35 / 应诺尔）。`upstream.Router` 为每个版本持有一个单 provider 路由；下文 §6~§6.3 以伽马为例，§6.4 描述租赁分V2-D，§6.5 描述黑名单因子V35。
+> 上游按版本路由：`x1 → gama`（伽马分层分）、`v9/v8 → income`（经济能力）、`zlf → rental`（租赁分V2-D / 守信）、`blk → blacklist`（黑名单因子V35 / 应诺尔）、`swfp → entcredit`（税务发票四产品聚合 / 证通）、`rlbd1 → facecompare`（人脸身份证比对一所 / 数脉）、`sfzhy → idverify`（身份证三要素核验）。`upstream.Router` 为每个版本持有一个单 provider 路由；下文 §6~§6.3 以伽马为例，§6.4 描述租赁分V2-D，§6.5 描述黑名单因子V35。
 
 - **URL**：`POST https://{域名}/enol/api/v1/doCheck`
 - **请求信封**：`appId`（商务分配）、`sign`、`apiKey`（固定 `gama_ctmz_layer_score`）、`encryptionType`(1=明文)、`body{name?, idCard, mobile}`

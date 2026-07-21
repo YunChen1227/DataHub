@@ -11,10 +11,13 @@ import (
 // Provider identifiers for the upstream Router (DESIGN §6). 每个版本 stack 持有
 // 一个单 provider 的 Router：x1→gama(伽马), v9/v8→income(经济能力)。
 const (
-	ProviderGama      = "gama"
-	ProviderIncome    = "income"
-	ProviderRental    = "rental"
-	ProviderBlacklist = "blacklist"
+	ProviderGama        = "gama"
+	ProviderIncome      = "income"
+	ProviderRental      = "rental"
+	ProviderBlacklist   = "blacklist"
+	ProviderEntCredit   = "entcredit"   // swfp: 税务+发票四产品码聚合
+	ProviderFaceCompare = "facecompare" // rlbd1: 人脸身份证比对一所 (数脉)
+	ProviderIDVerify    = "idverify"    // sfzhy: 身份证三要素核验
 )
 
 // Router selects the active data provider and delegates port.UpstreamPort calls

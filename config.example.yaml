@@ -7,15 +7,18 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | querySrmxV9 | querySrmxV8 | querySrmxZLF | querySrmxBLK
-#   GET  /v1/openapi/zlx/quotaX1     | quotaV9     | quotaV8     | quotaZLF     | quotaBLK
-# 存储按「域」划分：x1 / v8v9 / zlf / blk 四个域，各域独占一套 DB + Redis 逻辑库。
+# 各版本 (x1/v9/v8/zlf/blk/swfp/rlbd1/sfzhy) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...SFZHY
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...SFZHY
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / swfp / rlbd1 / sfzhy 各域独占一套 DB + Redis 逻辑库。
 # v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
 # 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
-# 每条路由各自对接独立上游。
+# 跨域使用 license 一律鉴权失败。启动时会做防呆校验：两个不同的域配置同一个数据库
+# 或同一个 Redis 逻辑库将直接拒绝启动。每条路由各自对接独立上游。
 # zlf 转接租赁分V2-D (守信 shouxin168) 上游：AES 加密 biz_data + form 提交。
 # blk 转接黑名单因子V35 (应诺尔 enol，与 x1/gama 同端点)：apiKey=blackIntV35、encryptionType=2 (PII 走 MD5)。
+# rlbd1 转接人脸身份证比对一所 (数脉)：form POST + sign=md5(appid&timestamp&app_security)，name+idCard+image|url 入参。
+# sfzhy 转接身份证三要素核验：JSON POST + signature=SHA256(升序 k=v&... + "&AppSecret=" + 商户密钥)，name+idCard+profilePicture 入参。
 #
 # 注：durations 支持 Go 风格字符串，如 4s / 10s / 5m / 8h。
 
@@ -40,7 +43,7 @@ admin:
 # 开发期预置 demo license 的绑定 secret（生产由管理后台为每个用户生成）
 demo:
   appSecret: "REPLACE_WITH_DEMO_APP_SECRET"
-  seed: true                # postgres 生产环境建议 false（不注入 y89098io demo 账户）
+  seed: false               # 默认 false：不在 postgres 启动时注入 demo license（0004 迁移已从生产清除 demo）；开发/演示可设 true，e2e 由建库脚本 SEED_DEMO=1 播种
 
 # 存储后端 (DESIGN §11): memory（开发/默认）| postgres（生产，每个域独立 PG + Redis）。
 storage:
@@ -138,3 +141,47 @@ versions:
     redis:
       <<: *redis_base
       db: 4
+  swfp:
+    upstream:
+      kind: "entcredit"     # swfp 聚合税务+发票四产品码（证通 entcreditapi，企业维度 creditCode 入参）
+      # 已实测连通并验证鉴权：https://cisp.zenitera.com（真实凭证签名一次通过）。
+      # 其余候选域名（未逐个验证，供参考）：
+      #   生产候选：https://cisp.ect888.com
+      #   测试：https://cispuat.tongtongcf.com
+      #   IP直连：https://112.65.144.19:9179
+      baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"   # 仅 endpoint（scheme+host[:port]），不含 requestUri
+      orgCode: "REPLACE_WITH_SWFP_ORG_CODE"            # 机构代码
+      accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"   # AK
+      secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"  # SK，Base64 编码
+      # 产品码可省，默认四个全查：发票 part1/2 + 税务 part1/2
+      products: ["P0130081", "P0130083", "P0130082", "P0130084"]
+    database:
+      <<: *pg_base
+      name: "datahub_swfp_db"
+    redis:
+      <<: *redis_base
+      db: 5
+  rlbd1:
+    upstream:
+      kind: "facecompare"   # rlbd1 对接人脸身份证比对一所（数脉，form POST + md5 签名）
+      baseURL: "https://api.shumaidata.com/v4/face_id_card/yisuo/compare"
+      appId: "nar7aGqok9Q5x31iWoZFgEtsssE7tq9b"           # 上游 appid
+      appSecret: "KKZwRJ6zrlIAEY2RMhh79orZT2VVpq66"   # 上游 app_security（sign 用）
+    database:
+      <<: *pg_base
+      name: "datahub_rlbd1_db"
+    redis:
+      <<: *redis_base
+      db: 6
+  sfzhy:
+    upstream:
+      kind: "idverify"   # sfzhy 对接身份证三要素核验（JSON POST + SHA256 签名）
+      baseURL: "https://api.cqcucc.com:8443/api/idCardThreeElements"
+      appId: "302CcJOpWsT44rToGQEPeA"           # 上游 appId
+      appSecret: "4TnKoR4uB4ZIIlRexiOgIDq3IlZLWzs7uBeOlNFfUE7OsKegya21VEqfDCHWJpKLn"   # 上游商户密钥（拼 &AppSecret= 参与签名）
+    database:
+      <<: *pg_base
+      name: "datahub_sfzhy_db"
+    redis:
+      <<: *redis_base
+      db: 7

@@ -19,20 +19,39 @@ import (
 	"time"
 )
 
-// Primary test client credentials: the demo license seeded on a fresh store
-// (memory seedDemo / postgres SeedDemo) in EVERY 域 store (x1/v8v9/zlf/blk)。
-// v8 与 v9 共用 v8v9 域库，故同一 demo license 在两条路由上均可鉴权，但调用
-// 次数/成功查得数/操作日志按各自路由独立统计。
+// Primary test client credentials: 每个「域」的存储各自播种一个独立的 demo license
+// (memory seedDemo / postgres SeedDemo)，appKey 按域各不相同 (model.DemoAppKey)，
+// secret 相同。v8 与 v9 同属 v8v9 域，共用同一个 demo appKey（license 共享，但
+// 统计/日志按路由独立）；任何域的 demo appKey 在其它域的路由上都会鉴权失败 (505004)。
 const (
-	UserName  = "Demo 商户"
-	AppKey    = "y89098io"
+	AppKey    = "y89098io" // x1 域的 demo appKey（QueryX1 等 x1 用例向后兼容）
 	Secret    = "demo-app-secret"
 	AdminUser = "admin"
 	AdminPass = "admin12345"
 )
 
 // Versions is the ordered list of service versions under test.
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "sfzhy"}
+
+// demoAppKeys mirrors model.DemoAppKey：按域独立的 demo appKey（v8/v9 共用）。
+var demoAppKeys = map[string]string{
+	"x1":    "y89098io",
+	"v9":    "y890v8v9",
+	"v8":    "y890v8v9",
+	"zlf":   "y8909zlf",
+	"blk":   "y8909blk",
+	"swfp":  "y890swfp",
+	"rlbd1": "y89rlbd1",
+	"sfzhy": "y89sfzhy",
+}
+
+// AppKeyFor returns the demo appKey seeded for the given route's 域.
+func AppKeyFor(version string) string {
+	if k, ok := demoAppKeys[version]; ok {
+		return k
+	}
+	return "demo-" + version
+}
 
 // QueryPath returns the public query route for a version (统一 x1 信封, POST)。
 func QueryPath(version string) string {

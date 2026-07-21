@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api.js'
 
-export default function Audits() {
+export default function Audits({ version }) {
+  const ver = (version || '').toUpperCase()
   const [rows, setRows] = useState([])
   const [err, setErr] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -32,7 +33,8 @@ export default function Audits() {
 
   return (
     <div className="card">
-      <h2>操作记录 / 审计日志</h2>
+      <h2>{ver} 操作记录 / 审计日志</h2>
+      <p className="muted">仅展示 {ver} 路由自己的调用记录，与其它路由相互独立（v8/v9 虽共用 license，操作日志也按路由分开）。</p>
       <form className="toolbar" onSubmit={(e) => { e.preventDefault(); load() }}>
         <div>
           <label>检索（uuid / 名称 / 手机号）</label>

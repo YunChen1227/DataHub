@@ -1,7 +1,7 @@
-# DataHub fixed test-suite entrypoint (Windows / PowerShell).
+﻿# DataHub fixed test-suite entrypoint (Windows / PowerShell).
 #
 # Flow: make result dir test_res/<date> -> build + start mock gama(:9112) +
-# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + relay(:8080,
+# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_entcredit(:9116) + mock_facecompare(:9117) + mock_idverify(:9118) + relay(:8080,
 # live Aliyun PG+Redis) -> wait /healthz -> (optional) start real-gama relay(:8090)
 # -> run test/cases/*.go in order -> aggregate REPORT.md -> stop services.
 #
@@ -56,6 +56,9 @@ try {
     $incomeExe    = Join-Path $resultDir "mock_income.exe"
     $rentalExe    = Join-Path $resultDir "mock_rental.exe"
     $blacklistExe = Join-Path $resultDir "mock_blacklist.exe"
+    $entcreditExe = Join-Path $resultDir "mock_entcredit.exe"
+    $facecompareExe = Join-Path $resultDir "mock_facecompare.exe"
+    $idverifyExe  = Join-Path $resultDir "mock_idverify.exe"
     $relayExe     = Join-Path $resultDir "relay.exe"
     Write-Host "building mocks + relay ..."
     go build -o $mockExe ./scripts/mock_gama.go
@@ -66,13 +69,20 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build mock_rental failed" }
     go build -o $blacklistExe ./scripts/mock_blacklist.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_blacklist failed" }
+    go build -o $entcreditExe ./scripts/mock_entcredit.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_entcredit failed" }
+    go build -o $facecompareExe ./scripts/mock_facecompare.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_facecompare failed" }
+    go build -o $idverifyExe ./scripts/mock_idverify.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_idverify failed" }
     go build -o $relayExe ./cmd/relay
     if ($LASTEXITCODE -ne 0) { throw "go build relay failed" }
 
     # postgres 模式：在启动 relay 前重建各版本库 (datahub_*_db)。
     $cfgText = Get-Content -Raw -Path (Join-Path $repo $ConfigFile)
     if ($cfgText -match 'driver:\s*"?postgres"?') {
-        Write-Host "postgres mode: recreating three version databases ..."
+        Write-Host "postgres mode: recreating per-domain databases (with demo seed) ..."
+        $env:SEED_DEMO = "1"   # e2e 需要各路由的 demo license；生产建库不要设置
         go run ./scripts/recreate_databases.go
         if ($LASTEXITCODE -ne 0) { throw "recreate_databases failed" }
     } else {
@@ -90,6 +100,15 @@ try {
 
     $blacklist = Start-Process -FilePath $blacklistExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_blacklist.log") -RedirectStandardError (Join-Path $resultDir "mock_blacklist.err.log")
     [void]$procs.Add($blacklist)
+
+    $entcredit = Start-Process -FilePath $entcreditExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_entcredit.log") -RedirectStandardError (Join-Path $resultDir "mock_entcredit.err.log")
+    [void]$procs.Add($entcredit)
+
+    $facecompare = Start-Process -FilePath $facecompareExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_facecompare.log") -RedirectStandardError (Join-Path $resultDir "mock_facecompare.err.log")
+    [void]$procs.Add($facecompare)
+
+    $idverify = Start-Process -FilePath $idverifyExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_idverify.log") -RedirectStandardError (Join-Path $resultDir "mock_idverify.err.log")
+    [void]$procs.Add($idverify)
 
     $relay = Start-Process -FilePath $relayExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "relay.log") -RedirectStandardError (Join-Path $resultDir "relay.err.log")
     [void]$procs.Add($relay)

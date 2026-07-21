@@ -157,7 +157,7 @@ func main() {
 		adminByRoute[route] = st.admin
 		go st.requery.Run(ctx)
 		logger.Info("route stack ready", "route", route, "domain", model.RouteDomain(route),
-			"upstream", cfg.versions[route].upstream.kind)
+			"upstream", cfg.versions[route].upstreamKind(), "sources", len(cfg.versions[route].upstreams))
 	}
 
 	// 控制面：后台统一登录 + JWT 校验走 x1 路由的 admin 服务 (x1 域)。
@@ -255,7 +255,7 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	vc := cfg.versions[route]
 	log := logger.With("route", route)
 
-	upRouter, err := buildUpstream(route, vc.upstream, httpClient, log)
+	upClient, routeKind, err := buildUpstreams(route, vc.upstreams, httpClient, log)
 	if err != nil {
 		return nil, err
 	}
@@ -268,11 +268,12 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		JWTSecret: cfg.adminJWTSecret,
 		TokenTTL:  cfg.adminTokenTTL,
 	})
-	orch := application.NewQueryOrchestrator(route, authSvc, quotaSvc, billSvc, upRouter, ds.auditRepo, log)
+	orch := application.NewQueryOrchestrator(route, authSvc, quotaSvc, billSvc, upClient, ds.auditRepo, log)
 	// 网关校验口径必须与该路由上游的真实要求一致（必填字段前置拦截，不透传给
 	// 上游报错）。默认 parse.Parse (mobile必/idCard必/name选) 仅适用于与经济能力
-	// 同口径的上游 (gama/income)。
-	switch vc.upstream.kind {
+	// 同口径的上游 (gama/income)。聚合路由所有子源 kind 一致 (loadConfig 已校验)，
+	// 故按路由 kind 选校验器即可。
+	switch routeKind {
 	case upstream.ProviderEntCredit:
 		// swfp 入参对齐上游证通 entcreditapi 的 args.creditCode。
 		orch.WithParser(parse.ParseCreditCode)
@@ -286,13 +287,49 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// sfzhy 身份证三要素核验：name+idCard(15/18)+profilePicture 均必填。
 		orch.WithParser(parse.ParseIDVerify)
 	}
-	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upRouter, billSvc, quotaSvc, cfg.requeryInterval, log)
+	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upClient, billSvc, quotaSvc, cfg.requeryInterval, log)
 
 	return &routeStack{orch: orch, admin: adminSvc, requery: requery}, nil
 }
 
-// buildUpstream constructs the version's upstream client behind a 1-provider Router.
-func buildUpstream(version string, uc upstreamConfig, httpClient *http.Client, logger *slog.Logger) (*upstream.Router, error) {
+// buildUpstreams 把一条路由的上游子源列表装配成一个 port.UpstreamPort：逐条构建
+// 单源 client，套上 Aggregator (len==1 直通 / len>1 并发聚合)。返回聚合器与路由 kind
+// (=首个子源 kind，loadConfig 已校验同路由 kind 一致；供 parser 选择)。
+func buildUpstreams(route string, ucs []upstreamConfig, httpClient *http.Client, logger *slog.Logger) (port.UpstreamPort, string, error) {
+	if len(ucs) == 0 {
+		// 路由未在配置中给出 (memory 模式常见)：合成一个按路由缺省 kind 的空 client，
+		// 保持"不崩溃"的历史行为——该 client 在被调用前不产生任何副作用。
+		ucs = []upstreamConfig{{kind: defaultKind(route)}}
+	}
+	sources := make([]upstream.LabeledUpstream, 0, len(ucs))
+	for i, uc := range ucs {
+		client, err := buildClient(route, uc, httpClient, logger)
+		if err != nil {
+			return nil, "", err
+		}
+		sources = append(sources, upstream.LabeledUpstream{Label: labelFor(uc, i), Port: client})
+	}
+	agg, err := upstream.NewAggregator(sources)
+	if err != nil {
+		return nil, "", err
+	}
+	return agg, ucs[0].kind, nil
+}
+
+// labelFor 决定子源在聚合 range 里的段名：显式 label 优先；entcredit 未指定时按
+// 产品码缺省 (invoice1/tax1…)；其余回退为 kind+下标 (单源路由用不到 label)。
+func labelFor(uc upstreamConfig, idx int) string {
+	if uc.label != "" {
+		return uc.label
+	}
+	if uc.kind == upstream.ProviderEntCredit && uc.product != "" {
+		return upstream.EntCreditLabel(uc.product)
+	}
+	return fmt.Sprintf("%s%d", uc.kind, idx+1)
+}
+
+// buildClient constructs one 上游子源 client (port.UpstreamPort) by kind.
+func buildClient(version string, uc upstreamConfig, httpClient *http.Client, logger *slog.Logger) (port.UpstreamPort, error) {
 	switch uc.kind {
 	case upstream.ProviderIncome:
 		client := upstream.NewIncome(upstream.IncomeConfig{
@@ -304,9 +341,7 @@ func buildUpstream(version string, uc upstreamConfig, httpClient *http.Client, l
 			// 经济能力10W-V8；2026-07-06 实测 v8 带 mobile 签名被拒 013）。
 			SignWithMobile: version != "v8",
 		}, httpClient)
-		return upstream.NewRouter(upstream.ProviderIncome, map[string]port.UpstreamPort{
-			upstream.ProviderIncome: client,
-		})
+		return client, nil
 	case upstream.ProviderRental:
 		// 启动时把固定授权书上传到 OSS, 缓存 licenseUrl 供所有查询复用。OSS/授权书
 		// 未配置时 (dev/memory) 留空, 由上游在调用时报错, 不阻塞服务启动。
@@ -337,9 +372,7 @@ func buildUpstream(version string, uc upstreamConfig, httpClient *http.Client, l
 			LicenseURL:    licenseURL,
 			LicenseType:   uc.licenseType,
 		}, httpClient)
-		return upstream.NewRouter(upstream.ProviderRental, map[string]port.UpstreamPort{
-			upstream.ProviderRental: client,
-		})
+		return client, nil
 	case upstream.ProviderBlacklist:
 		client := upstream.NewBlacklist(upstream.BlacklistConfig{
 			BaseURL:        uc.baseURL,
@@ -348,38 +381,30 @@ func buildUpstream(version string, uc upstreamConfig, httpClient *http.Client, l
 			APIKey:         uc.apiKey,
 			EncryptionType: uc.encryptionType,
 		}, httpClient)
-		return upstream.NewRouter(upstream.ProviderBlacklist, map[string]port.UpstreamPort{
-			upstream.ProviderBlacklist: client,
-		})
+		return client, nil
 	case upstream.ProviderEntCredit:
 		client := upstream.NewEntCredit(upstream.EntCreditConfig{
 			Endpoint:        uc.baseURL,
 			OrgCode:         uc.orgCode,
 			AccessKeyID:     uc.accessKeyID,
 			SecretAccessKey: uc.secretAccessKey,
-			Products:        uc.products,
+			Product:         uc.product,
 		}, httpClient)
-		return upstream.NewRouter(upstream.ProviderEntCredit, map[string]port.UpstreamPort{
-			upstream.ProviderEntCredit: client,
-		})
+		return client, nil
 	case upstream.ProviderFaceCompare:
 		client := upstream.NewFaceCompare(upstream.FaceCompareConfig{
 			BaseURL:   uc.baseURL,
 			AppID:     uc.appID,
 			AppSecret: uc.appSecret,
 		}, httpClient)
-		return upstream.NewRouter(upstream.ProviderFaceCompare, map[string]port.UpstreamPort{
-			upstream.ProviderFaceCompare: client,
-		})
+		return client, nil
 	case upstream.ProviderIDVerify:
 		client := upstream.NewIDVerify(upstream.IDVerifyConfig{
 			BaseURL:   uc.baseURL,
 			AppID:     uc.appID,
 			AppSecret: uc.appSecret,
 		}, httpClient)
-		return upstream.NewRouter(upstream.ProviderIDVerify, map[string]port.UpstreamPort{
-			upstream.ProviderIDVerify: client,
-		})
+		return client, nil
 	case upstream.ProviderGama, "":
 		client := upstream.NewGama(upstream.GamaConfig{
 			BaseURL: uc.baseURL,
@@ -387,9 +412,7 @@ func buildUpstream(version string, uc upstreamConfig, httpClient *http.Client, l
 			Secret:  uc.appSecret,
 			APIKey:  uc.apiKey,
 		}, httpClient)
-		return upstream.NewRouter(upstream.ProviderGama, map[string]port.UpstreamPort{
-			upstream.ProviderGama: client,
-		})
+		return client, nil
 	default:
 		return nil, fmt.Errorf("version %s: unknown upstream kind %q", version, uc.kind)
 	}

@@ -70,9 +70,16 @@ mock/测试/文档 19 条照走），本文件只讲聚合特有的 6 个差异�
    的 Range 恒为空，行为不变。
 
 3. **聚合客户端**（新建 `internal/infrastructure/upstream/<kind>.go`）：
-   仍实现 `port.UpstreamPort`（对 orchestrator 完全透明），内部结构：
-   - config 含子源列表（同平台多产品码：`products []string`；多家上游：每源一组凭证）；
-   - `Query()` 用 `sync.WaitGroup` **并发**调所有子源，每源独立超时/错误互不影响；
+   仍实现 `port.UpstreamPort`（对 orchestrator 完全透明）。**聚合已下沉为通用能力**：
+   一条路由的上游是 `upstreams` 列表 (config)，装配层给每个子源建一个单一职责 client，
+   再统一套上 `internal/infrastructure/upstream/aggregate.go` 的 `Aggregator`
+   (`len==1` 直通、`len>1` 并发聚合)。新增聚合上游时**通常只需写单源 client**（如
+   entcredit 单产品码），并发/判定表/range 合并交给 Aggregator：
+   - config：每个子源在 `upstreams` 列表里自带完整凭证 + `label`(段名) + 业务标识
+     （如 entcredit 的 `product` 产品码）；同一路由所有子源 `kind` 必须一致；
+   - 单源 client 归一为 `001`(查得, Range=明细)/`999`(查无)/`error`(失败)，其余判定
+     由 Aggregator 按下方判定表完成；
+   - `Query()` 里 Aggregator 用 `sync.WaitGroup` **并发**调所有子源，每源独立错误互不影响；
    - 逐源归一为内部小结构 `{key, ok(查得/查无/error), data}`；
    - 按判定表聚合出 001/999/002/error；range = `{"<源key>":{"status":"ok|empty|error","data":{...}},...}`
      的 compact JSON（复用 blacklist.go 的 `compactJSON` 思路）；
@@ -119,5 +126,6 @@ mock/测试/文档 19 条照走），本文件只讲聚合特有的 6 个差异�
 
 - 对外文档（api-doc skill）里 `002` 要有独立行：含义、计费=否、range 结构说明。
 - 聚合路由的"调用上游次数"（totalCalls）口径 = 下游一次查询计 1 次，不按子源乘 N。
-- 子源凭证如是同一平台共享，config 只放一组；多家上游则在 config 的 upstream 块内
-  为每源开子块，不要把多源凭证拍平成一堆无前缀字段。
+- config 一律用 `versions.<route>.upstreams` 列表：每个子源一个列表项，自带完整凭证
+  （即使多个子源同平台同凭证也各写一份，保持子源完全独立、可分别替换）。不要把多源
+  凭证拍平成一堆无前缀字段，也不要再用已废弃的单块 `upstream:` + `products` 数组。

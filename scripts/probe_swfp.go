@@ -2,7 +2,7 @@
 
 // probe_swfp: 用真实凭证对证通 entcreditapi 四产品码做一次聚合联调探测。
 // 凭证从 CONFIG_FILE (默认 config.aliyun.prod.yaml, gitignored) 的
-// versions.swfp.upstream 读取，不硬编码进本文件。
+// versions.swfp.upstreams 列表读取，不硬编码进本文件。
 //
 // 用法：
 //   go run ./scripts/probe_swfp.go                            # 默认虚构信用代码（预期查无, 不计费）
@@ -24,15 +24,19 @@ import (
 	"github.com/datahub/relay/internal/infrastructure/upstream"
 )
 
+type fileUpstream struct {
+	Kind            string `yaml:"kind"`
+	BaseURL         string `yaml:"baseURL"`
+	OrgCode         string `yaml:"orgCode"`
+	AccessKeyID     string `yaml:"accessKeyId"`
+	SecretAccessKey string `yaml:"secretAccessKey"`
+	Product         string `yaml:"product"`
+	Label           string `yaml:"label"`
+}
+
 type fileConfig struct {
 	Versions map[string]struct {
-		Upstream struct {
-			BaseURL         string   `yaml:"baseURL"`
-			OrgCode         string   `yaml:"orgCode"`
-			AccessKeyID     string   `yaml:"accessKeyId"`
-			SecretAccessKey string   `yaml:"secretAccessKey"`
-			Products        []string `yaml:"products"`
-		} `yaml:"upstream"`
+		Upstreams []fileUpstream `yaml:"upstreams"`
 	} `yaml:"versions"`
 }
 
@@ -53,9 +57,9 @@ func main() {
 		fmt.Println("解析配置失败:", err)
 		os.Exit(1)
 	}
-	uc := fc.Versions["swfp"].Upstream
-	if uc.BaseURL == "" || uc.OrgCode == "" {
-		fmt.Println("配置缺少 versions.swfp.upstream 的 baseURL/orgCode")
+	ups := fc.Versions["swfp"].Upstreams
+	if len(ups) == 0 {
+		fmt.Println("配置缺少 versions.swfp.upstreams 列表")
 		os.Exit(1)
 	}
 
@@ -64,20 +68,38 @@ func main() {
 		creditCode = "91330100MA2AAAAA0X" // 虚构但格式合法（预期查无, 不计费）
 	}
 
-	client := upstream.NewEntCredit(upstream.EntCreditConfig{
-		Endpoint:        uc.BaseURL,
-		OrgCode:         uc.OrgCode,
-		AccessKeyID:     uc.AccessKeyID,
-		SecretAccessKey: uc.SecretAccessKey,
-		Products:        uc.Products,
-	}, &http.Client{Timeout: 30 * time.Second})
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	sources := make([]upstream.LabeledUpstream, 0, len(ups))
+	for i, u := range ups {
+		if u.BaseURL == "" || u.OrgCode == "" {
+			fmt.Printf("配置缺少 swfp 子源 %d 的 baseURL/orgCode\n", i)
+			os.Exit(1)
+		}
+		label := u.Label
+		if label == "" {
+			label = upstream.EntCreditLabel(u.Product)
+		}
+		client := upstream.NewEntCredit(upstream.EntCreditConfig{
+			Endpoint:        u.BaseURL,
+			OrgCode:         u.OrgCode,
+			AccessKeyID:     u.AccessKeyID,
+			SecretAccessKey: u.SecretAccessKey,
+			Product:         u.Product,
+		}, httpClient)
+		sources = append(sources, upstream.LabeledUpstream{Label: label, Port: client})
+		fmt.Printf("  子源[%d] label=%s product=%s endpoint=%s\n", i, label, u.Product, u.BaseURL)
+	}
+	agg, err := upstream.NewAggregator(sources)
+	if err != nil {
+		fmt.Println("构建聚合器失败:", err)
+		os.Exit(1)
+	}
 
-	fmt.Printf("== 探测开始: endpoint=%s orgCode=%s creditCode=%s products=%v ==\n",
-		uc.BaseURL, uc.OrgCode, creditCode, uc.Products)
+	fmt.Printf("== 探测开始: %d 个子源 creditCode=%s ==\n", len(sources), creditCode)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	result, err := client.Query(ctx, &model.UpstreamRequest{CreditCode: creditCode, Reqid: "probe"})
+	result, err := agg.Query(ctx, &model.UpstreamRequest{CreditCode: creditCode, Reqid: "probe"})
 	if err != nil {
 		fmt.Println("\n== 聚合结果: 全部数据源失败 ==")
 		fmt.Println("error:", err)

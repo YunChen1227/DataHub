@@ -28,8 +28,16 @@ type upstreamBlock struct {
 
 type fileConfig struct {
 	Versions map[string]struct {
-		Upstream upstreamBlock `yaml:"upstream"`
+		Upstreams []upstreamBlock `yaml:"upstreams"`
 	} `yaml:"versions"`
+}
+
+// firstUpstream 取该路由的首个上游子源 (rlbd1/sfzhy 均为单源列表)。
+func (fc fileConfig) firstUpstream(route string) upstreamBlock {
+	if ups := fc.Versions[route].Upstreams; len(ups) > 0 {
+		return ups[0]
+	}
+	return upstreamBlock{}
 }
 
 // 1x1 PNG base64，用于联调探测（体积极小，满足格式校验）。
@@ -58,8 +66,8 @@ func main() {
 	anyFail := false
 
 	fmt.Println("== rlbd1 / facecompare 联通探测 ==")
-	if u := fc.Versions["rlbd1"].Upstream; u.BaseURL == "" || u.AppID == "" {
-		fmt.Println("FAIL: 配置缺少 versions.rlbd1.upstream")
+	if u := fc.firstUpstream("rlbd1"); u.BaseURL == "" || u.AppID == "" {
+		fmt.Println("FAIL: 配置缺少 versions.rlbd1.upstreams")
 		anyFail = true
 	} else {
 		client := upstream.NewFaceCompare(upstream.FaceCompareConfig{
@@ -84,8 +92,8 @@ func main() {
 
 	fmt.Println()
 	fmt.Println("== sfzhy / idverify 联通探测 ==")
-	if u := fc.Versions["sfzhy"].Upstream; u.BaseURL == "" || u.AppID == "" {
-		fmt.Println("FAIL: 配置缺少 versions.sfzhy.upstream")
+	if u := fc.firstUpstream("sfzhy"); u.BaseURL == "" || u.AppID == "" {
+		fmt.Println("FAIL: 配置缺少 versions.sfzhy.upstreams")
 		anyFail = true
 	} else {
 		client := upstream.NewIDVerify(upstream.IDVerifyConfig{

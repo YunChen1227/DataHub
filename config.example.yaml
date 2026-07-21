@@ -20,6 +20,12 @@
 # rlbd1 转接人脸身份证比对一所 (数脉)：form POST + sign=md5(appid&timestamp&app_security)，name+idCard+image|url 入参。
 # sfzhy 转接身份证三要素核验：JSON POST + signature=SHA256(升序 k=v&... + "&AppSecret=" + 商户密钥)，name+idCard+profilePicture 入参。
 #
+# 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
+#   - 单源路由 (x1/v9/v8/zlf/blk/rlbd1/sfzhy)：列表长度 1。
+#   - 聚合路由 (swfp)：列表长度 N，每个子源自带完整凭证；主程序并发调所有子源、
+#     按判定表聚合 (≥1查得→001 计费 / 全查无→999 / 部分成功→002 不计费 / 全失败→505062)。
+#   同一路由内所有子源 kind 必须一致 (入参校验/信封按路由统一)。
+#
 # 注：durations 支持 Go 风格字符串，如 4s / 10s / 5m / 8h。
 
 # HTTP 服务监听地址
@@ -66,17 +72,17 @@ redis_base: &redis_base
   password: "REPLACE_WITH_REDIS_ADMIN_PASSWORD"
   poolSize: 10
 
-# 按路由配置上游；存储按「域」装配：每个域用其 owner 路由的 database/redis 开库。
+# 按路由配置上游 (upstreams 列表)；存储按「域」装配：每个域用其 owner 路由的 database/redis 开库。
 # 域 owner：x1→x1, v8v9→v9, zlf→zlf, blk→blk。v8 与 v9 共用 v8v9 域库（同一套
 # license），故 v8 无需单列 database/redis。memory 模式下 database/redis 可全省略。
 versions:
   x1:
-    upstream:
-      kind: "gama"          # x1 对接上游 A
-      baseURL: "REPLACE_WITH_X1_UPSTREAM_DOCHECK_URL"
-      appId: "REPLACE_WITH_X1_UPSTREAM_APP_ID"
-      appSecret: "REPLACE_WITH_X1_UPSTREAM_APP_SECRET"
-      apiKey: "gama_ctmz_layer_score"
+    upstreams:
+      - kind: "gama"          # x1 对接上游 A
+        baseURL: "REPLACE_WITH_X1_UPSTREAM_DOCHECK_URL"
+        appId: "REPLACE_WITH_X1_UPSTREAM_APP_ID"
+        appSecret: "REPLACE_WITH_X1_UPSTREAM_APP_SECRET"
+        apiKey: "gama_ctmz_layer_score"
     database:
       <<: *pg_base
       name: "datahub_x1_db"
@@ -85,11 +91,11 @@ versions:
       db: 0
   # v9 是 v8v9 域的 owner：其 database/redis 即整个 v8v9 域的存储（v8 复用）。
   v9:
-    upstream:
-      kind: "income"        # v9 对接上游 B（GET account/key 验签）
-      baseURL: "REPLACE_WITH_V9_UPSTREAM_URL"
-      account: "REPLACE_WITH_V9_UPSTREAM_ACCOUNT"
-      key: "REPLACE_WITH_V9_UPSTREAM_KEY"
+    upstreams:
+      - kind: "income"        # v9 对接上游 B（GET account/key 验签）
+        baseURL: "REPLACE_WITH_V9_UPSTREAM_URL"
+        account: "REPLACE_WITH_V9_UPSTREAM_ACCOUNT"
+        key: "REPLACE_WITH_V9_UPSTREAM_KEY"
     database:
       <<: *pg_base
       name: "datahub_v8v9_db"
@@ -99,28 +105,28 @@ versions:
   # v8 与 v9 同属 v8v9 域，共用 v9 的库/Redis（同一套 license）。仅配上游；
   # database/redis 不单列，主程序按域 owner(v9) 装配存储。
   v8:
-    upstream:
-      kind: "income"        # v8 对接上游 C（GET account/key 验签）
-      baseURL: "REPLACE_WITH_V8_UPSTREAM_URL"
-      account: "REPLACE_WITH_V8_UPSTREAM_ACCOUNT"
-      key: "REPLACE_WITH_V8_UPSTREAM_KEY"
+    upstreams:
+      - kind: "income"        # v8 对接上游 C（GET account/key 验签）
+        baseURL: "REPLACE_WITH_V8_UPSTREAM_URL"
+        account: "REPLACE_WITH_V8_UPSTREAM_ACCOUNT"
+        key: "REPLACE_WITH_V8_UPSTREAM_KEY"
   zlf:
-    upstream:
-      kind: "rental"        # zlf 对接租赁分V2-D（AES 加密 biz_data + form POST）
-      baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
-      institutionId: "REPLACE_WITH_RENTAL_INSTITUTION_ID"
-      aesKey: "REPLACE_WITH_RENTAL_AES_KEY"   # AES/ECB/PKCS5Padding 密钥（16/24/32 字节）
-      service: "buer_unique_service"          # 可省，默认值
-      mode: "mode_rent_score_v2_d"            # 可省，默认值
-      # 授权书：固定本地文件，服务启动时上传 OSS 一次并缓存 licenseUrl 复用
-      licenseFile: "REPLACE_WITH_LOCAL_AUTH_FILE_PATH"   # 如 ./config/approve.pdf
-      licenseType: 1                          # 0:图片(jpg/jpeg/png/bmp) 1:pdf
-      oss:
-        endpoint: "oss-cn-shanghai.aliyuncs.com"
-        accessKeyId: "REPLACE_WITH_OSS_ACCESS_KEY_ID"
-        accessKeySecret: "REPLACE_WITH_OSS_ACCESS_KEY_SECRET"
-        bucket: "shouwei"
-        objectPrefix: "approve_files/"        # 必须以 approve_files/ 开头
+    upstreams:
+      - kind: "rental"        # zlf 对接租赁分V2-D（AES 加密 biz_data + form POST）
+        baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
+        institutionId: "REPLACE_WITH_RENTAL_INSTITUTION_ID"
+        aesKey: "REPLACE_WITH_RENTAL_AES_KEY"   # AES/ECB/PKCS5Padding 密钥（16/24/32 字节）
+        service: "buer_unique_service"          # 可省，默认值
+        mode: "mode_rent_score_v2_d"            # 可省，默认值
+        # 授权书：固定本地文件，服务启动时上传 OSS 一次并缓存 licenseUrl 复用
+        licenseFile: "REPLACE_WITH_LOCAL_AUTH_FILE_PATH"   # 如 ./config/approve.pdf
+        licenseType: 1                          # 0:图片(jpg/jpeg/png/bmp) 1:pdf
+        oss:
+          endpoint: "oss-cn-shanghai.aliyuncs.com"
+          accessKeyId: "REPLACE_WITH_OSS_ACCESS_KEY_ID"
+          accessKeySecret: "REPLACE_WITH_OSS_ACCESS_KEY_SECRET"
+          bucket: "shouwei"
+          objectPrefix: "approve_files/"        # 必须以 approve_files/ 开头
     database:
       <<: *pg_base
       name: "datahub_zlf_db"
@@ -128,33 +134,52 @@ versions:
       <<: *redis_base
       db: 3
   blk:
-    upstream:
-      kind: "blacklist"     # blk 对接黑名单因子V35（应诺尔 enol，同 gama 端点 + MD5 信封）
-      baseURL: "REPLACE_WITH_BLK_UPSTREAM_DOCHECK_URL"
-      appId: "REPLACE_WITH_BLK_UPSTREAM_APP_ID"
-      appSecret: "REPLACE_WITH_BLK_UPSTREAM_APP_SECRET"
-      apiKey: "blackIntV35"   # 黑名单因子V35 固定产品码
-      encryptionType: 2       # 2=MD5：name/idCard/mobile 取 MD5 摘要后入 body 加签
+    upstreams:
+      - kind: "blacklist"     # blk 对接黑名单因子V35（应诺尔 enol，同 gama 端点 + MD5 信封）
+        baseURL: "REPLACE_WITH_BLK_UPSTREAM_DOCHECK_URL"
+        appId: "REPLACE_WITH_BLK_UPSTREAM_APP_ID"
+        appSecret: "REPLACE_WITH_BLK_UPSTREAM_APP_SECRET"
+        apiKey: "blackIntV35"   # 黑名单因子V35 固定产品码
+        encryptionType: 2       # 2=MD5：name/idCard/mobile 取 MD5 摘要后入 body 加签
     database:
       <<: *pg_base
       name: "datahub_blk_db"
     redis:
       <<: *redis_base
       db: 4
+  # swfp 是聚合路由：4 个 entcredit 子源（证通 entcreditapi 四产品码）并发查询后聚合。
+  # 每个子源自带完整凭证——即使同平台同凭证也各写一份（子源完全独立）。label 是该子源
+  # 在聚合 range 里的段名；product 是产品码。四产品：发票 part1/2 + 税务 part1/2。
   swfp:
-    upstream:
-      kind: "entcredit"     # swfp 聚合税务+发票四产品码（证通 entcreditapi，企业维度 creditCode 入参）
-      # 已实测连通并验证鉴权：https://cisp.zenitera.com（真实凭证签名一次通过）。
-      # 其余候选域名（未逐个验证，供参考）：
-      #   生产候选：https://cisp.ect888.com
-      #   测试：https://cispuat.tongtongcf.com
-      #   IP直连：https://112.65.144.19:9179
-      baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"   # 仅 endpoint（scheme+host[:port]），不含 requestUri
-      orgCode: "REPLACE_WITH_SWFP_ORG_CODE"            # 机构代码
-      accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"   # AK
-      secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"  # SK，Base64 编码
-      # 产品码可省，默认四个全查：发票 part1/2 + 税务 part1/2
-      products: ["P0130081", "P0130083", "P0130082", "P0130084"]
+    upstreams:
+      - kind: "entcredit"
+        label: "invoice1"
+        product: "P0130081"                              # 发票数据聚合-part1
+        baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"   # 仅 endpoint（scheme+host[:port]），不含 requestUri
+        orgCode: "REPLACE_WITH_SWFP_ORG_CODE"            # 机构代码
+        accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"   # AK
+        secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"  # SK，Base64 编码
+      - kind: "entcredit"
+        label: "invoice2"
+        product: "P0130083"                              # 发票数据聚合-part2
+        baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"
+        orgCode: "REPLACE_WITH_SWFP_ORG_CODE"
+        accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"
+        secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"
+      - kind: "entcredit"
+        label: "tax1"
+        product: "P0130082"                              # 税务数据聚合-part1
+        baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"
+        orgCode: "REPLACE_WITH_SWFP_ORG_CODE"
+        accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"
+        secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"
+      - kind: "entcredit"
+        label: "tax2"
+        product: "P0130084"                              # 税务数据聚合-part2
+        baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"
+        orgCode: "REPLACE_WITH_SWFP_ORG_CODE"
+        accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"
+        secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"
     database:
       <<: *pg_base
       name: "datahub_swfp_db"
@@ -162,11 +187,11 @@ versions:
       <<: *redis_base
       db: 5
   rlbd1:
-    upstream:
-      kind: "facecompare"   # rlbd1 对接人脸身份证比对一所（数脉，form POST + md5 签名）
-      baseURL: "https://api.shumaidata.com/v4/face_id_card/yisuo/compare"
-      appId: "nar7aGqok9Q5x31iWoZFgEtsssE7tq9b"           # 上游 appid
-      appSecret: "KKZwRJ6zrlIAEY2RMhh79orZT2VVpq66"   # 上游 app_security（sign 用）
+    upstreams:
+      - kind: "facecompare"   # rlbd1 对接人脸身份证比对一所（数脉，form POST + md5 签名）
+        baseURL: "https://api.shumaidata.com/v4/face_id_card/yisuo/compare"
+        appId: "nar7aGqok9Q5x31iWoZFgEtsssE7tq9b"           # 上游 appid
+        appSecret: "KKZwRJ6zrlIAEY2RMhh79orZT2VVpq66"   # 上游 app_security（sign 用）
     database:
       <<: *pg_base
       name: "datahub_rlbd1_db"
@@ -174,11 +199,11 @@ versions:
       <<: *redis_base
       db: 6
   sfzhy:
-    upstream:
-      kind: "idverify"   # sfzhy 对接身份证三要素核验（JSON POST + SHA256 签名）
-      baseURL: "https://api.cqcucc.com:8443/api/idCardThreeElements"
-      appId: "302CcJOpWsT44rToGQEPeA"           # 上游 appId
-      appSecret: "4TnKoR4uB4ZIIlRexiOgIDq3IlZLWzs7uBeOlNFfUE7OsKegya21VEqfDCHWJpKLn"   # 上游商户密钥（拼 &AppSecret= 参与签名）
+    upstreams:
+      - kind: "idverify"   # sfzhy 对接身份证三要素核验（JSON POST + SHA256 签名）
+        baseURL: "https://api.cqcucc.com:8443/api/idCardThreeElements"
+        appId: "302CcJOpWsT44rToGQEPeA"           # 上游 appId
+        appSecret: "4TnKoR4uB4ZIIlRexiOgIDq3IlZLWzs7uBeOlNFfUE7OsKegya21VEqfDCHWJpKLn"   # 上游商户密钥（拼 &AppSecret= 参与签名）
     database:
       <<: *pg_base
       name: "datahub_sfzhy_db"

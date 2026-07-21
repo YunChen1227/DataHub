@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -52,29 +51,37 @@ var msgSeq = func() *atomic.Uint64 {
 	return &v
 }()
 
-// EntCreditConfig holds the 证通 entcreditapi 聚合平台的 endpoint + 我方凭证。
-// Endpoint 只含 scheme+host(:port)，不含 requestUri（requestUri 固定，签名时
-// 需要把它与 endpoint 分开参与拼接，见 sign()）。四个产品码共用同一凭证。
+// EntCreditConfig holds the 证通 entcreditapi 平台的 endpoint + 我方凭证 + 本子源
+// 负责的单个产品码。Endpoint 只含 scheme+host(:port)，不含 requestUri（requestUri
+// 固定，签名时需要把它与 endpoint 分开参与拼接，见 sign()）。swfp 的"四产品聚合"由
+// 上层 Aggregator 并发调 4 个各自 Product 不同的 EntCreditClient 实现——本客户端只
+// 负责一个产品码。
 type EntCreditConfig struct {
 	Endpoint        string // 如 https://cisp.zenitera.com（不同环境域名不同，见官方 demo 注释）
 	OrgCode         string // 机构代码
 	AccessKeyID     string // AK
 	SecretAccessKey string // SK（Base64 编码，签名时先 Base64 解码取原始字节）
-	Products        []string // 为空时默认四产品全查
+	Product         string // 本子源的产品码 (P0130081/83/82/84)
 }
 
-// EntCreditClient implements port.UpstreamPort for the swfp 聚合路由：并发查询
-// N 个产品码，逐源归一后聚合 (add-upstream-multi skill 判定表)：
-//   - 全部成功应答且 ≥1 份查得 → "001"（计费）
-//   - 全部成功应答且全部查无   → "999"
-//   - 部分成功部分失败         → "002"（部分数据源成功，不计费，range 带成功段）
-//   - 全部失败                 → error（505062，走复查/对账）
+// EntCreditClient implements port.UpstreamPort for 证通 entcreditapi 的单个产品码：
+// 查得 → "001"(Range=解码后的明细)；查无 → "999"；账户/参数/系统错误 → error。
+// 多产品聚合 (001/999/002/error 判定 + range 分段合并) 由上层 upstream.Aggregator 承接。
 type EntCreditClient struct {
 	cfg  EntCreditConfig
 	http *http.Client
 }
 
-// NewEntCredit builds the 证通 entcreditapi 聚合 client.
+// EntCreditLabel 返回产品码在聚合 range 里的缺省段名 (invoice1/invoice2/tax1/tax2)；
+// 未知产品码回退为产品码本身。供装配层在 config 未显式指定 label 时缺省使用。
+func EntCreditLabel(product string) string {
+	if k := entCreditSectionKey[product]; k != "" {
+		return k
+	}
+	return product
+}
+
+// NewEntCredit builds a 证通 entcreditapi 单产品 client.
 func NewEntCredit(cfg EntCreditConfig, httpClient *http.Client) *EntCreditClient {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -84,95 +91,27 @@ func NewEntCredit(cfg EntCreditConfig, httpClient *http.Client) *EntCreditClient
 	if httpClient.Transport == nil {
 		httpClient.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec
 	}
-	if len(cfg.Products) == 0 {
-		cfg.Products = []string{entCreditInvoice1, entCreditInvoice2, entCreditTax1, entCreditTax2}
-	}
 	return &EntCreditClient{cfg: cfg, http: httpClient}
 }
 
-// entCreditSection is one 子源的归一结果，聚合进 range JSON 的一段。
+// entCreditSection is 单产品调用的归一中间结果 (callProduct 返回)。
 type entCreditSection struct {
-	Status string          `json:"status"`              // ok=查得 / empty=查无 / error=该源失败
-	Raw    string          `json:"rawStatus,omitempty"`  // 上游 resultCode 原值 (透出备查)
-	Data   json.RawMessage `json:"data,omitempty"`       // 上游 resultData 原样透出
-	Error  string          `json:"error,omitempty"`      // status=error 时的原因摘要
+	Status string          // ok=查得 / empty=查无 / error=该源失败
+	Raw    string          // 上游状态码原值 (备查)
+	Data   json.RawMessage // 解码后的明细 JSON
+	Error  string          // status=error 时的原因摘要
 }
 
-// Query 并发调四个产品码并按判定表聚合 (见类型注释)。
+// Query 调本子源的单个产品码并归一：查得→001(Range=明细)、查无→999、失败→error。
 func (c *EntCreditClient) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
-	type sub struct {
-		key     string
-		section entCreditSection
-		orderNo string
-	}
-	results := make([]sub, len(c.cfg.Products))
-	var wg sync.WaitGroup
-	for i, product := range c.cfg.Products {
-		wg.Add(1)
-		go func(i int, product string) {
-			defer wg.Done()
-			key := entCreditSectionKey[product]
-			if key == "" {
-				key = product
-			}
-			sec, orderNo := c.callProduct(ctx, product, req)
-			results[i] = sub{key: key, section: sec, orderNo: orderNo}
-		}(i, product)
-	}
-	wg.Wait()
-
-	var okCnt, emptyCnt, errCnt int
-	uid := ""
-	sections := make(map[string]entCreditSection, len(results))
-	for _, r := range results {
-		sections[r.key] = r.section
-		if uid == "" && r.orderNo != "" {
-			uid = r.orderNo
-		}
-		switch r.section.Status {
-		case "ok":
-			okCnt++
-		case "empty":
-			emptyCnt++
-		default:
-			errCnt++
-		}
-	}
-	slog.Debug("entcredit aggregate", "reqid", req.Reqid, "ok", okCnt, "empty", emptyCnt, "err", errCnt)
-
-	if errCnt == len(results) {
-		return nil, fmt.Errorf("entcredit 全部数据源失败 (reqid=%s)", req.Reqid)
-	}
-
-	merged, err := json.Marshal(sections)
-	if err != nil {
-		return nil, fmt.Errorf("entcredit 聚合序列化失败: %w", err)
-	}
-
-	switch {
-	case errCnt > 0:
-		return &model.UpstreamResult{
-			Code:  "002",
-			Msg:   "部分数据源成功",
-			UID:   uid,
-			Reqid: req.Reqid,
-			Range: string(merged),
-		}, nil
-	case okCnt > 0:
-		return &model.UpstreamResult{
-			Code:  "001",
-			Msg:   "成功",
-			UID:   uid,
-			Reqid: req.Reqid,
-			Range: string(merged),
-		}, nil
+	sec, orderNo := c.callProduct(ctx, c.cfg.Product, req)
+	switch sec.Status {
+	case "ok":
+		return &model.UpstreamResult{Code: "001", Msg: "成功", UID: orderNo, Reqid: req.Reqid, Range: string(sec.Data)}, nil
+	case "empty":
+		return &model.UpstreamResult{Code: "999", Msg: "查无结果", UID: orderNo, Reqid: req.Reqid}, nil
 	default:
-		return &model.UpstreamResult{
-			Code:  "999",
-			Msg:   "查无结果",
-			UID:   uid,
-			Reqid: req.Reqid,
-		}, nil
+		return nil, fmt.Errorf("entcredit 产品 %s 失败 (reqid=%s): %s", c.cfg.Product, req.Reqid, sec.Error)
 	}
 }
 

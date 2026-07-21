@@ -64,7 +64,7 @@
 ### 1.3 非目标（本期不做）
 - 不做客户自助开通 / 充值前台（仅提供查询路由 + 预留数据模型）。
 - 不做 V8（`/openapi/zlx/querySrmxV8`，发票明细数组）——本期仅 x1 经济能力评分。
-- 多上游：当前仅伽马一个上游；保留 `upstream.Router` 抽象以便未来扩展，但不做同请求并发对比/合并或自动故障转移。
+- 多上游：早期仅伽马一个上游。现按 `versions.<route>.upstreams` 列表 + `upstream.Aggregator` 支持一条路由聚合多个子源（swfp 并发四产品码）；仍不做「同一子源多家备份自动故障转移」。
 
 ---
 
@@ -286,7 +286,7 @@ sequenceDiagram
 
 ## 6. 上游对接（Provider 侧）
 
-> 上游按版本路由：`x1 → gama`（伽马分层分）、`v9/v8 → income`（经济能力）、`zlf → rental`（租赁分V2-D / 守信）、`blk → blacklist`（黑名单因子V35 / 应诺尔）、`swfp → entcredit`（税务发票四产品聚合 / 证通）、`rlbd1 → facecompare`（人脸身份证比对一所 / 数脉）、`sfzhy → idverify`（身份证三要素核验）。`upstream.Router` 为每个版本持有一个单 provider 路由；下文 §6~§6.3 以伽马为例，§6.4 描述租赁分V2-D，§6.5 描述黑名单因子V35。
+> 上游按版本路由：`x1 → gama`（伽马分层分）、`v9/v8 → income`（经济能力）、`zlf → rental`（租赁分V2-D / 守信）、`blk → blacklist`（黑名单因子V35 / 应诺尔）、`swfp → entcredit`（税务发票四产品聚合 / 证通）、`rlbd1 → facecompare`（人脸身份证比对一所 / 数脉）、`sfzhy → idverify`（身份证三要素核验）。每条路由的上游按 `versions.<route>.upstreams` 列表配置，装配层给每个子源建一个单一职责 client 后统一套上 `upstream.Aggregator`（`len==1` 直通；`len>1` 如 swfp 并发调所有子源并按判定表聚合）。下文 §6~§6.3 以伽马为例，§6.4 描述租赁分V2-D，§6.5 描述黑名单因子V35。
 
 - **URL**：`POST https://{域名}/enol/api/v1/doCheck`
 - **请求信封**：`appId`（商务分配）、`sign`、`apiKey`（固定 `gama_ctmz_layer_score`）、`encryptionType`(1=明文)、`body{name?, idCard, mobile}`

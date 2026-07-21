@@ -9,11 +9,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// upstreamConfig holds a single version's upstream endpoint + 我方在该上游侧的
-// 凭证。kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8) |
+// upstreamConfig holds a single 上游子源 endpoint + 我方在该上游侧的凭证。一条路由
+// 的上游是 []upstreamConfig：单源路由列表长度 1，聚合路由 (swfp) 长度 N，每条自带
+// 完整凭证。kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8) |
 // rental(租赁分V2-D, zlf) | blacklist(黑名单因子V35, blk) | entcredit(税务发票聚合, swfp)。
 type upstreamConfig struct {
-	kind    string // gama | income | rental | blacklist | entcredit
+	kind    string // gama | income | rental | blacklist | entcredit | facecompare | idverify
 	baseURL string
 	// gama (伽马) / blacklist (黑名单因子V35) / entcredit (税务发票聚合) 凭证
 	appID          string
@@ -36,7 +37,10 @@ type upstreamConfig struct {
 	orgCode         string // 机构代码
 	accessKeyID     string // AK
 	secretAccessKey string // SK，Base64 编码，签名前需 Base64 解码取原始字节
-	products        []string // 产品码列表；为空时 client 默认四产品全查
+	product         string // entcredit: 本子源的单个产品码 (P0130081/83/82/84)
+	// label 是本子源在聚合 range 里的段名 (如 invoice1/tax1)；聚合路由 (len>1) 用，
+	// 单源路由可省。为空时由 client 按 product/下标缺省。
+	label string
 }
 
 // ossConfig holds aliyun OSS 凭证 for uploading the租赁分授权书 (rental 专用)。
@@ -69,11 +73,21 @@ type redisConfig struct {
 }
 
 // versionConfig is the full per-version dependency config (独立上游 + 独立库 +
-// 独立 Redis)。三版本对外接口完全一致，仅靠路由名区分。
+// 独立 Redis)。各路由对外接口完全一致，仅靠路由名区分。upstreams 是本路由的上游
+// 子源列表：单源长度 1，聚合路由 (swfp) 长度 N。
 type versionConfig struct {
-	upstream upstreamConfig
-	db       dbConfig
-	redis    redisConfig
+	upstreams []upstreamConfig
+	db        dbConfig
+	redis     redisConfig
+}
+
+// upstreamKind returns the route-level upstream kind (取首个子源；loadConfig 已校验
+// 同一路由所有子源 kind 一致)。空列表时返回 ""。
+func (v versionConfig) upstreamKind() string {
+	if len(v.upstreams) == 0 {
+		return ""
+	}
+	return v.upstreams[0].kind
 }
 
 // dsn builds a libpq key/value DSN (safe for passwords with special chars).
@@ -149,10 +163,12 @@ type fileUpstream struct {
 	LicenseFile   string  `yaml:"licenseFile"`
 	LicenseType   int     `yaml:"licenseType"`
 	// entcredit (swfp / 证通 entcreditapi) 专用
-	OrgCode         string   `yaml:"orgCode"`
-	AccessKeyID     string   `yaml:"accessKeyId"`
-	SecretAccessKey string   `yaml:"secretAccessKey"`
-	Products        []string `yaml:"products"` // 为空时默认四产品全查
+	OrgCode         string `yaml:"orgCode"`
+	AccessKeyID     string `yaml:"accessKeyId"`
+	SecretAccessKey string `yaml:"secretAccessKey"`
+	Product         string `yaml:"product"` // entcredit: 本子源的单个产品码
+	// label：本子源在聚合 range 里的段名 (invoice1/tax1…)；聚合路由用，单源可省。
+	Label string `yaml:"label"`
 }
 
 // fileOSS mirrors the rental upstream's oss YAML block.
@@ -184,11 +200,13 @@ type fileRedis struct {
 	PoolSize int    `yaml:"poolSize"`
 }
 
-// fileVersion mirrors one entry under versions: in config.yaml.
+// fileVersion mirrors one entry under versions: in config.yaml. 上游用 upstreams:
+// 列表 (单源长度 1，聚合路由 swfp 长度 N)；旧的单块 upstream: 仍解析以向后兼容。
 type fileVersion struct {
-	Upstream fileUpstream `yaml:"upstream"`
-	Database fileDatabase `yaml:"database"`
-	Redis    fileRedis    `yaml:"redis"`
+	Upstreams []fileUpstream `yaml:"upstreams"`
+	Upstream  fileUpstream   `yaml:"upstream"` // 向后兼容：upstreams 为空时包成单元素列表
+	Database  fileDatabase   `yaml:"database"`
+	Redis     fileRedis      `yaml:"redis"`
 }
 
 // fileConfig mirrors the YAML structure of config.yaml.
@@ -265,36 +283,25 @@ func loadConfig() (config, error) {
 			// version 未在配置中给出：memory 模式仍可启用 (无需 DB/上游凭证)。
 			continue
 		}
+
+		// 上游子源列表：优先 upstreams:；为空时退回旧的单块 upstream: (向后兼容)。
+		files := fv.Upstreams
+		if len(files) == 0 {
+			files = []fileUpstream{fv.Upstream}
+		}
+		ups := make([]upstreamConfig, 0, len(files))
+		for _, fu := range files {
+			ups = append(ups, toUpstreamConfig(fu, v))
+		}
+		// 同一路由所有子源 kind 必须一致 (入参校验器/信封按路由统一，见 buildRouteStack)。
+		for i := 1; i < len(ups); i++ {
+			if ups[i].kind != ups[0].kind {
+				return config{}, fmt.Errorf("version %s: upstreams 各子源 kind 必须一致 (%q vs %q)", v, ups[0].kind, ups[i].kind)
+			}
+		}
+
 		cfg.versions[v] = versionConfig{
-			upstream: upstreamConfig{
-				kind:           def(fv.Upstream.Kind, defaultKind(v)),
-				baseURL:        fv.Upstream.BaseURL,
-				appID:          fv.Upstream.AppID,
-				appSecret:      fv.Upstream.AppSecret,
-				apiKey:         fv.Upstream.APIKey, // 空值由各 client 自行默认 (gama/blacklist)
-				encryptionType: fv.Upstream.EncryptionType,
-				account:        fv.Upstream.Account,
-				key:            fv.Upstream.Key,
-
-				institutionID: fv.Upstream.InstitutionID,
-				aesKey:        fv.Upstream.AESKey,
-				service:       fv.Upstream.Service,
-				mode:          fv.Upstream.Mode,
-				oss: ossConfig{
-					endpoint:        fv.Upstream.OSS.Endpoint,
-					accessKeyID:     fv.Upstream.OSS.AccessKeyID,
-					accessKeySecret: fv.Upstream.OSS.AccessKeySecret,
-					bucket:          fv.Upstream.OSS.Bucket,
-					objectPrefix:    def(fv.Upstream.OSS.ObjectPrefix, "approve_files/"),
-				},
-				licenseFile: fv.Upstream.LicenseFile,
-				licenseType: fv.Upstream.LicenseType,
-
-				orgCode:         fv.Upstream.OrgCode,
-				accessKeyID:     fv.Upstream.AccessKeyID,
-				secretAccessKey: fv.Upstream.SecretAccessKey,
-				products:        fv.Upstream.Products,
-			},
+			upstreams: ups,
 			db: dbConfig{
 				host:     fv.Database.Host,
 				port:     intOr(fv.Database.Port, 5432),
@@ -314,6 +321,40 @@ func loadConfig() (config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+// toUpstreamConfig maps one YAML 上游子源块到 upstreamConfig，kind 空时按路由缺省。
+func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
+	return upstreamConfig{
+		kind:           def(fu.Kind, defaultKind(version)),
+		baseURL:        fu.BaseURL,
+		appID:          fu.AppID,
+		appSecret:      fu.AppSecret,
+		apiKey:         fu.APIKey, // 空值由各 client 自行默认 (gama/blacklist)
+		encryptionType: fu.EncryptionType,
+		account:        fu.Account,
+		key:            fu.Key,
+
+		institutionID: fu.InstitutionID,
+		aesKey:        fu.AESKey,
+		service:       fu.Service,
+		mode:          fu.Mode,
+		oss: ossConfig{
+			endpoint:        fu.OSS.Endpoint,
+			accessKeyID:     fu.OSS.AccessKeyID,
+			accessKeySecret: fu.OSS.AccessKeySecret,
+			bucket:          fu.OSS.Bucket,
+			objectPrefix:    def(fu.OSS.ObjectPrefix, "approve_files/"),
+		},
+		licenseFile: fu.LicenseFile,
+		licenseType: fu.LicenseType,
+
+		orgCode:         fu.OrgCode,
+		accessKeyID:     fu.AccessKeyID,
+		secretAccessKey: fu.SecretAccessKey,
+		product:         fu.Product,
+		label:           fu.Label,
+	}
 }
 
 // defaultKind picks the upstream client family by version: x1→gama, zlf→rental,

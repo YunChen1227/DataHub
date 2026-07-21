@@ -162,46 +162,59 @@ storage:
   driver: "postgres"             # 生产必须为 postgres
   migrationsDir: "migrations"    # 相对 relay 工作目录；启动时自动跑 DDL
 
-# 存储按域独立：x1/v8v9/zlf/blk 各一套 PG 库 + Redis 逻辑库；每条路由独立上游
+# 存储按域独立：x1/v8v9/zlf/blk/swfp/rlbd1/sfzhy 各一套 PG 库 + Redis 逻辑库。
+# 上游按 upstreams 列表配置：单源路由列表长度 1；聚合路由 (swfp) 长度 N，每个子源自带
+# 完整凭证，主程序并发调所有子源后按判定表聚合（≥1查得→001计费 / 全查无→999 /
+# 部分成功→002不计费 / 全失败→505062）。同一路由所有子源 kind 必须一致。
 versions:
   x1:
-    upstream:
-      kind: "gama"
-      baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"
-      appId: "<x1 伽马 appId>"
-      appSecret: "<x1 伽马 appSecret>"
-      apiKey: "gama_ctmz_layer_score"
+    upstreams:
+      - kind: "gama"
+        baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"
+        appId: "<x1 伽马 appId>"
+        appSecret: "<x1 伽马 appSecret>"
+        apiKey: "gama_ctmz_layer_score"
     database: { host: "<RDS>", name: "datahub_x1_prod_db", user: "...", password: "..." }
     redis:    { addr: "<Redis>:6379", db: 3, password: "..." }
   v9:                               # v8v9 域 owner：其 database/redis 即整个域的存储
-    upstream: { kind: "income", baseURL: "...", account: "...", key: "..." }
+    upstreams:
+      - { kind: "income", baseURL: "...", account: "...", key: "..." }
     database: { host: "<RDS>", name: "datahub_v8v9_prod_db", ... }
     redis:    { db: 4, ... }
   v8:                               # 与 v9 共用 v8v9 域库，仅配上游
-    upstream: { kind: "income", baseURL: "...", account: "...", key: "..." }
+    upstreams:
+      - { kind: "income", baseURL: "...", account: "...", key: "..." }
   zlf:                              # 租赁分V2-D（守信）：AES + form + 授权书 OSS
-    upstream:
-      kind: "rental"
-      baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
-      institutionId: "<机构号>"
-      aesKey: "<AES 密钥 16/24/32 字节>"
-      service: "buer_unique_service"
-      mode: "mode_rent_score_v2_d"
-      licenseFile: "./config/approve.pdf"   # 固定授权书，启动上传 OSS 缓存 licenseUrl
-      licenseType: 1                          # 0:图片 1:pdf
-      oss: { endpoint: "oss-cn-shanghai.aliyuncs.com", accessKeyId: "...", accessKeySecret: "...", bucket: "shouwei", objectPrefix: "approve_files/" }
+    upstreams:
+      - kind: "rental"
+        baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
+        institutionId: "<机构号>"
+        aesKey: "<AES 密钥 16/24/32 字节>"
+        service: "buer_unique_service"
+        mode: "mode_rent_score_v2_d"
+        licenseFile: "./config/approve.pdf"   # 固定授权书，启动上传 OSS 缓存 licenseUrl
+        licenseType: 1                          # 0:图片 1:pdf
+        oss: { endpoint: "oss-cn-shanghai.aliyuncs.com", accessKeyId: "...", accessKeySecret: "...", bucket: "shouwei", objectPrefix: "approve_files/" }
     database: { host: "<RDS>", name: "datahub_zlf_prod_db", ... }
     redis:    { db: 6, ... }
   blk:                              # 黑名单因子V35（应诺尔）：同 gama 端点 + MD5 信封
-    upstream:
-      kind: "blacklist"
-      baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"
-      appId: "<应诺尔分配 appId>"
-      appSecret: "<应诺尔分配 secret>"
-      apiKey: "blackIntV35"         # 固定产品码
-      encryptionType: 2             # 2=MD5：name/idCard/mobile 取摘要后入 body 加签
+    upstreams:
+      - kind: "blacklist"
+        baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"
+        appId: "<应诺尔分配 appId>"
+        appSecret: "<应诺尔分配 secret>"
+        apiKey: "blackIntV35"         # 固定产品码
+        encryptionType: 2             # 2=MD5：name/idCard/mobile 取摘要后入 body 加签
     database: { host: "<RDS>", name: "datahub_blk_prod_db", ... }
     redis:    { db: 7, ... }
+  swfp:                             # 税务发票四产品聚合：4 个 entcredit 子源并发聚合
+    upstreams:
+      - { kind: "entcredit", label: "invoice1", product: "P0130081", baseURL: "https://cisp.zenitera.com", orgCode: "...", accessKeyId: "...", secretAccessKey: "..." }
+      - { kind: "entcredit", label: "invoice2", product: "P0130083", baseURL: "https://cisp.zenitera.com", orgCode: "...", accessKeyId: "...", secretAccessKey: "..." }
+      - { kind: "entcredit", label: "tax1",     product: "P0130082", baseURL: "https://cisp.zenitera.com", orgCode: "...", accessKeyId: "...", secretAccessKey: "..." }
+      - { kind: "entcredit", label: "tax2",     product: "P0130084", baseURL: "https://cisp.zenitera.com", orgCode: "...", accessKeyId: "...", secretAccessKey: "..." }
+    database: { host: "<RDS>", name: "datahub_swfp_db", ... }
+    redis:    { db: 5, ... }
 
 admin:
   bootstrapUser: "admin"

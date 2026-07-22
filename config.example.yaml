@@ -7,21 +7,22 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk/swfp/rlbd1/sfzhy) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...SFZHY
-#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...SFZHY
-# 存储按「域」划分：x1 / v8v9 / zlf / blk / swfp / rlbd1 / sfzhy 各域独占一套 DB + Redis 逻辑库。
+# 各版本 (x1/v9/v8/zlf/blk/swfp/rlbd1/rlbd2/sfzhy) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / swfp / rlbd1 / rlbd2 / sfzhy 各域独占一套 DB + Redis 逻辑库。
 # v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
 # 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
 # 跨域使用 license 一律鉴权失败。启动时会做防呆校验：两个不同的域配置同一个数据库
 # 或同一个 Redis 逻辑库将直接拒绝启动。每条路由各自对接独立上游。
 # zlf 转接租赁分V2-D (守信 shouxin168) 上游：AES 加密 biz_data + form 提交。
 # blk 转接黑名单因子V35 (应诺尔 enol，与 x1/gama 同端点)：apiKey=blackIntV35、encryptionType=2 (PII 走 MD5)。
-# rlbd1 转接人脸身份证比对一所 (数脉)：form POST + sign=md5(appid&timestamp&app_security)，name+idCard+image|url 入参。
+# rlbd1/rlbd2 转接人脸身份证比对一所 (数脉)：form POST + sign=md5(appid&timestamp&app_security)，name+idCard+image|url 入参。
+#   rlbd1 与 rlbd2 是同一个上游接口，仅 appId/appSecret 不同 (各自独立库/统计/license)。
 # sfzhy 转接身份证三要素核验：JSON POST + signature=SHA256(升序 k=v&... + "&AppSecret=" + 商户密钥)，name+idCard+profilePicture 入参。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
-#   - 单源路由 (x1/v9/v8/zlf/blk/rlbd1/sfzhy)：列表长度 1。
+#   - 单源路由 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy)：列表长度 1。
 #   - 聚合路由 (swfp)：列表长度 N，每个子源自带完整凭证；主程序并发调所有子源、
 #     按判定表聚合 (≥1查得→001 计费 / 全查无→999 / 部分成功→002 不计费 / 全失败→505062)。
 #   同一路由内所有子源 kind 必须一致 (入参校验/信封按路由统一)。
@@ -210,3 +211,17 @@ versions:
     redis:
       <<: *redis_base
       db: 7
+  # rlbd2：与 rlbd1 同一个人脸身份证比对上游接口，仅换一套 appId/appSecret；
+  # 独立成域（独立库 datahub_rlbd2_db / redis db8 / 独立 license 与统计）。
+  rlbd2:
+    upstreams:
+      - kind: "facecompare"
+        baseURL: "https://api.shumaidata.com/v4/face_id_card/yisuo/compare"
+        appId: "REPLACE_WITH_RLBD2_UPSTREAM_APP_ID"           # 上游 appid（与 rlbd1 不同）
+        appSecret: "REPLACE_WITH_RLBD2_UPSTREAM_APP_SECRET"   # 上游 app_security（与 rlbd1 不同）
+    database:
+      <<: *pg_base
+      name: "datahub_rlbd2_db"
+    redis:
+      <<: *redis_base
+      db: 8

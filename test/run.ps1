@@ -82,7 +82,8 @@ try {
     $cfgText = Get-Content -Raw -Path (Join-Path $repo $ConfigFile)
     if ($cfgText -match 'driver:\s*"?postgres"?') {
         Write-Host "postgres mode: recreating per-domain databases (with demo seed) ..."
-        $env:SEED_DEMO = "1"   # e2e 需要各路由的 demo license；生产建库不要设置
+        $env:SEED_DEMO = "1"          # e2e 需要各路由的 demo license；生产建库不要设置
+        $env:RESET_DESTRUCTIVE = "1"  # 仅测试库：允许 DROP 重建（脚本会硬拒绝生产库）
         go run ./scripts/recreate_databases.go
         if ($LASTEXITCODE -ne 0) { throw "recreate_databases failed" }
     } else {

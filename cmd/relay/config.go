@@ -358,7 +358,7 @@ func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
 }
 
 // defaultKind picks the upstream client family by version: x1→gama, zlf→rental,
-// blk→blacklist, swfp→entcredit, rlbd1→facecompare, sfzhy→idverify, others→income.
+// blk→blacklist, swfp→entcredit, rlbd1/rlbd2→facecompare, sfzhy→idverify, others→income.
 func defaultKind(version string) string {
 	switch version {
 	case "x1":
@@ -369,7 +369,7 @@ func defaultKind(version string) string {
 		return "blacklist"
 	case "swfp":
 		return "entcredit"
-	case "rlbd1":
+	case "rlbd1", "rlbd2":
 		return "facecompare"
 	case "sfzhy":
 		return "idverify"

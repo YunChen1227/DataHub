@@ -173,7 +173,9 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
 ## 上线注意
 
 - 生产新库：在 RDS 上 `CREATE DATABASE datahub_<route>_db` 即可，relay 启动时
-  自动跑 migrations（生产**不**播种 demo license）。
-  **绝不要**对生产库跑 `scripts/recreate_databases.go`——它会 DROP 重建表。
+  自动跑 migrations（生产**不**播种 demo license）。也可跑
+  `CONFIG_FILE=config.aliyun.prod.yaml go run ./scripts/recreate_databases.go`——
+  它默认**只补建缺失的库 + 迁移，绝不删数据**，且对生产库硬拒绝 DROP。
+  破坏性重置（`RESET_DESTRUCTIVE=1`）仅用于测试库，脚本会自动拒绝生产环境。
 - Redis：新路由用独立逻辑库编号，与 config 一致（复用会被启动校验拒绝）。
 - 提醒用户更新生产 config 并重新构建部署（含 `web/admin` 前端产物）。

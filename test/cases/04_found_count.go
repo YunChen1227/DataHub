@@ -33,6 +33,7 @@ func main() {
 	blkBefore := harness.ServiceUsed("blk", harness.AppKeyFor("blk"), harness.Secret)
 	swfpBefore := harness.ServiceUsed("swfp", harness.AppKeyFor("swfp"), harness.Secret)
 	rlbd1Before := harness.ServiceUsed("rlbd1", harness.AppKeyFor("rlbd1"), harness.Secret)
+	rlbd2Before := harness.ServiceUsed("rlbd2", harness.AppKeyFor("rlbd2"), harness.Secret)
 	sfzhyBefore := harness.ServiceUsed("sfzhy", harness.AppKeyFor("sfzhy"), harness.Secret)
 
 	// 仅对 x1 发起流量，逐版本独立计数。
@@ -74,6 +75,7 @@ func main() {
 	blkAfter := harness.ServiceUsed("blk", harness.AppKeyFor("blk"), harness.Secret)
 	swfpAfter := harness.ServiceUsed("swfp", harness.AppKeyFor("swfp"), harness.Secret)
 	rlbd1After := harness.ServiceUsed("rlbd1", harness.AppKeyFor("rlbd1"), harness.Secret)
+	rlbd2After := harness.ServiceUsed("rlbd2", harness.AppKeyFor("rlbd2"), harness.Secret)
 	sfzhyAfter := harness.ServiceUsed("sfzhy", harness.AppKeyFor("sfzhy"), harness.Secret)
 	rec.Check("v9 计数不受 x1 流量影响", "delta == 0",
 		v9After == v9Before, fmt.Sprintf("before=%v after=%v", v9Before, v9After))
@@ -87,6 +89,8 @@ func main() {
 		swfpAfter == swfpBefore, fmt.Sprintf("before=%v after=%v", swfpBefore, swfpAfter))
 	rec.Check("rlbd1 计数不受 x1 流量影响", "delta == 0",
 		rlbd1After == rlbd1Before, fmt.Sprintf("before=%v after=%v", rlbd1Before, rlbd1After))
+	rec.Check("rlbd2 计数不受 x1 流量影响", "delta == 0",
+		rlbd2After == rlbd2Before, fmt.Sprintf("before=%v after=%v", rlbd2Before, rlbd2After))
 	rec.Check("sfzhy 计数不受 x1 流量影响", "delta == 0",
 		sfzhyAfter == sfzhyBefore, fmt.Sprintf("before=%v after=%v", sfzhyBefore, sfzhyAfter))
 }

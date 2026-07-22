@@ -1,18 +1,30 @@
 //go:build ignore
 
-// Create/recreate + migrate + seed the per-domain databases on the Aliyun RDS
-// instance (datahub_x1_db / datahub_v8v9_db / datahub_zlf_db / datahub_blk_db, or
-// whatever names the config's versions.*.database.name specify). 存储按「域」隔离：
-// v8/v9 共用 v8v9 域库——v8 在 config 中不单列 database，故此处自动跳过，v8v9 域库
-// 由 owner 路由 v9 创建。demo license 仅在 SEED_DEMO=1 时播种（开发/e2e），appKey
-// 按域各不相同 (model.DemoAppKey)。
+// Ensure per-domain databases exist and are migrated. SAFE BY DEFAULT: this
+// script NEVER drops or truncates data. For a brand-new database it runs
+// CREATE DATABASE (if missing) + ApplyMigrations (idempotent via
+// schema_migrations). For an existing database it only applies any pending
+// migrations — existing rows (license / audit_log / billing_ledger …) are left
+// untouched.
+//
+// 存储按「域」隔离：v8/v9 共用 v8v9 域库——v8 在 config 中不单列 database，故此处
+// 自动跳过，v8v9 域库由 owner 路由 v9 创建。demo license 仅在 SEED_DEMO=1 时播种
+// (开发/e2e)，appKey 按域各不相同 (model.DemoAppKey)。
 //
 // 阿里云 RDS 常禁止普通账号连 postgres 维护库；若 ensureDatabase 失败，请先在
 // RDS 控制台手动 CREATE DATABASE，再重跑本脚本。
 //
+// ⚠️ 破坏性重置（DROP 全部业务表后重建）仅用于**测试库**，默认关闭。必须显式设置
+//    RESET_DESTRUCTIVE=1 才会执行，且脚本会**拒绝对生产库执行**（配置文件名含 prod
+//    或库名含 _prod_ 即判定为生产）。生产环境永远不要设置该变量。
+//
 // Usage:
 //
-//	CONFIG_FILE=config.aliyun.e2e.yaml go run ./scripts/recreate_databases.go
+//	# 生产：只补建缺失的库并迁移，绝不删数据
+//	CONFIG_FILE=config.aliyun.prod.yaml go run ./scripts/recreate_databases.go
+//
+//	# e2e 测试：清空并重建测试库（仅测试库允许）
+//	RESET_DESTRUCTIVE=1 SEED_DEMO=1 CONFIG_FILE=config.aliyun.e2e.yaml go run ./scripts/recreate_databases.go
 package main
 
 import (
@@ -48,7 +60,7 @@ type fileConfig struct {
 }
 
 // versionOrder keeps a deterministic processing order matching model.Versions.
-var versionOrder = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "sfzhy"}
+var versionOrder = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy"}
 
 const perDBTimeout = 2 * time.Minute
 
@@ -70,9 +82,23 @@ func main() {
 		migDir = "migrations"
 	}
 
-	recreateSQL, err := os.ReadFile("scripts/recreate_schema.sql")
-	if err != nil {
-		fatal("read recreate_schema.sql: %v", err)
+	// 破坏性重置：默认关闭，且对生产库硬拒绝。
+	destructive := os.Getenv("RESET_DESTRUCTIVE") == "1"
+	prod := looksLikeProd(path, fc)
+	if destructive && prod {
+		fatal("REFUSED: RESET_DESTRUCTIVE=1 但目标疑似生产环境 (config=%q)。"+
+			"生产库禁止 DROP 重建，请去掉 RESET_DESTRUCTIVE。", path)
+	}
+
+	var recreateSQL []byte
+	if destructive {
+		recreateSQL, err = os.ReadFile("scripts/recreate_schema.sql")
+		if err != nil {
+			fatal("read recreate_schema.sql: %v", err)
+		}
+		fmt.Println("!! RESET_DESTRUCTIVE=1: 将 DROP 并重建测试库业务表 !!")
+	} else {
+		fmt.Println("== 安全模式：只补建缺失的库 + 迁移，不删除任何数据 ==")
 	}
 
 	for _, v := range versionOrder {
@@ -89,10 +115,12 @@ func main() {
 			// Fallback message when bootstrap also fails.
 			fmt.Printf("  (ensureDatabase warning for %s: %v; assuming it exists — if next step fails, CREATE DATABASE manually in RDS console)\n", dbName, err)
 		}
-		fmt.Printf("== %s: drop legacy tables on %s ==\n", v, dbName)
-		if err := execSQL(ctx, dsn(fv, dbName), string(recreateSQL)); err != nil {
-			cancel()
-			fatal("%s recreate: %v", v, err)
+		if destructive {
+			fmt.Printf("== %s: [DESTRUCTIVE] drop + recreate tables on %s ==\n", v, dbName)
+			if err := execSQL(ctx, dsn(fv, dbName), string(recreateSQL)); err != nil {
+				cancel()
+				fatal("%s recreate: %v", v, err)
+			}
 		}
 		if err := migrateAndSeed(ctx, fv, v, dbName, migDir); err != nil {
 			cancel()
@@ -101,7 +129,25 @@ func main() {
 		cancel()
 		fmt.Printf("%s (%s) OK\n", v, dbName)
 	}
-	fmt.Println("\nDone. All configured version databases rebuilt.")
+	if destructive {
+		fmt.Println("\nDone. Test databases rebuilt (destructive).")
+	} else {
+		fmt.Println("\nDone. Missing databases created + migrations applied. 现有数据未改动。")
+	}
+}
+
+// looksLikeProd 判定目标是否为生产环境，用于硬拒绝破坏性重置。
+// 判据：配置文件名含 "prod"，或任一库名含 "_prod_"。
+func looksLikeProd(path string, fc fileConfig) bool {
+	if strings.Contains(strings.ToLower(path), "prod") {
+		return true
+	}
+	for _, v := range fc.Versions {
+		if strings.Contains(v.Database.Name, "_prod_") {
+			return true
+		}
+	}
+	return false
 }
 
 // bootstrapDBName picks an existing configured database for CREATE DATABASE

@@ -166,18 +166,19 @@ type RangeResult struct {
 // 接口完全一致 (x1 信封格式)，仅靠路由名区分，各自独立上游。x1 同时充当后台登录
 // 的控制面 (admin 账号 + JWT)。zlf 转接租赁分V2-D (守信 shouxin168) 上游；blk 转接
 // 黑名单因子V35 (应诺尔 enol) 上游；swfp 聚合税务+发票四产品码 (企业维度,
-// creditCode 入参, 见 upstream/entcredit.go)；rlbd1 转接人脸身份证比对一所 (数脉
-// facecompare 上游，name+idCard+image|url 入参，见 upstream/facecompare.go)；
+// creditCode 入参, 见 upstream/entcredit.go)；rlbd1/rlbd2 转接人脸身份证比对一所
+// (数脉 facecompare 上游，name+idCard+image|url 入参，见 upstream/facecompare.go；
+// rlbd1/rlbd2 同一上游接口、各自独立的 appId/appSecret 与独立库/统计)；
 // sfzhy 转接身份证三要素核验 (idverify 上游，name+idCard+profilePicture 入参，
 // 见 upstream/idverify.go)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "sfzhy"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "sfzhy"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -207,6 +208,8 @@ func DemoAppKey(route string) string {
 		return "y890swfp"
 	case "rlbd1":
 		return "y89rlbd1"
+	case "rlbd2":
+		return "y89rlbd2"
 	case "sfzhy":
 		return "y89sfzhy"
 	default:

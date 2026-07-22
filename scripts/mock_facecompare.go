@@ -1,13 +1,13 @@
 //go:build ignore
 
 // Mock 人脸身份证比对一所 (数脉) upstream implementing
-// POST /v4/face_id_card/yisuo/compare (form) for rlbd1 full-link testing.
+// POST /v4/face_id_card/yisuo/compare (form) for rlbd1/rlbd2 full-link testing.
 // Run: go run scripts/mock_facecompare.go
 //
 // Verifies sign = md5(appid&timestamp&app_security), then routes:
-//   - bad sign               -> code 400 参数错误 (上游侧错误 -> 网关 505062)
-//   - idcard == unpaidIDCard -> code 200 / incorrect 107 (照片质量不合格, 不收费)
-//   - otherwise              -> code 200 / incorrect 100 (比对成功) + rich data
+//   - bad sign / unknown appid -> code 400 参数错误 (上游侧错误 -> 网关 505062)
+//   - idcard == unpaidIDCard    -> code 200 / incorrect 107 (照片质量不合格, 不收费)
+//   - otherwise                 -> code 200 / incorrect 100 (比对成功) + rich data
 package main
 
 import (
@@ -32,10 +32,14 @@ func md5hex(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// demoCreds 允许 rlbd1/rlbd2 等多路由共用同一 mock，各自独立 appId/appSecret。
+var demoCreds = map[string]string{
+	"demo-rlbd1-appid": "demo-rlbd1-secret",
+	"demo-rlbd2-appid": "demo-rlbd2-secret",
+}
+
 func main() {
 	addr := env("MOCK_FACECOMPARE_ADDR", ":9117")
-	appID := env("RLBD1_APP_ID", "demo-rlbd1-appid")
-	appSecret := env("RLBD1_APP_SECRET", "demo-rlbd1-secret")
 	// 约定「不收费」触发用身份证号（合法 18 位格式，供测试驱动 incorrect=107 场景）。
 	unpaidIDCard := env("RLBD1_UNPAID_IDCARD", "000000000000000007")
 
@@ -47,11 +51,12 @@ func main() {
 		idcard := r.FormValue("idcard")
 		name := r.FormValue("name")
 
+		appSecret, ok := demoCreds[gotAppID]
 		want := md5hex(gotAppID + "&" + timestamp + "&" + appSecret)
 
 		var resp map[string]any
 		switch {
-		case gotAppID != appID || sign != want:
+		case !ok || sign != want:
 			resp = map[string]any{"msg": "参数错误", "success": false, "code": 400, "data": map[string]any{}}
 		case idcard == unpaidIDCard:
 			resp = map[string]any{

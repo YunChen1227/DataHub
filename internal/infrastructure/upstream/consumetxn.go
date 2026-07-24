@@ -56,13 +56,34 @@ func NewConsumeTxn(cfg ConsumeTxnConfig, httpClient *http.Client) *ConsumeTxnCli
 }
 
 type consumeTxnResponse struct {
-	Code  string `json:"code"`
-	Msg   string `json:"msg"`
-	Reqno string `json:"reqno"`
+	Code  flexString `json:"code"`
+	Msg   string     `json:"msg"`
+	Reqno string     `json:"reqno"`
 	Data  struct {
 		ResultData json.RawMessage `json:"resultdata"`
-		Result     string          `json:"result"`
+		Result     flexString      `json:"result"`
 	} `json:"data"`
+}
+
+// flexString accepts upstream JSON fields as string or number (data-bean 实际返回 code/result 为数字)。
+type flexString string
+
+func (f *flexString) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		*f = ""
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*f = flexString(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err == nil {
+		*f = flexString(n.String())
+		return nil
+	}
+	return fmt.Errorf("flexString: invalid JSON %s", string(b))
 }
 
 // Query performs the signed JSON POST to 消费交易特征 and normalizes the response:
@@ -146,14 +167,14 @@ func (c *ConsumeTxnClient) Query(ctx context.Context, req *model.UpstreamRequest
 	if err := json.Unmarshal(raw, &cr); err != nil {
 		return nil, fmt.Errorf("decode consumetxn body: %w", err)
 	}
-	if cr.Code != "0" {
+	if string(cr.Code) != "0" {
 		// 非 0 应答码：我方在上游侧的账户/参数/系统问题，视为上游侧错误 (不计费)，
 		// 由 orchestrator 走 re-query/对账兜底。
 		return nil, fmt.Errorf("consumetxn 上游错误 code=%s msg=%s", cr.Code, cr.Msg)
 	}
 
 	uid := cr.Reqno
-	switch cr.Data.Result {
+	switch string(cr.Data.Result) {
 	case "0":
 		return &model.UpstreamResult{
 			Code:  "001",

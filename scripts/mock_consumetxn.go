@@ -4,10 +4,11 @@
 // full-link testing. Run: go run scripts/mock_consumetxn.go
 //
 // Verifies sign = MD5(过滤空值后升序 "k=v&k=v..."（procode/sceneid/reqtime/nonce
-// 与 params 扁平化后一起）+ "&appkey=" + appkey), then routes:
-//   - unknown sceneid / bad sign -> code "1001" 签名校验失败 (上游侧错误 -> 网关 505062)
-//   - mobile == notFoundMobile   -> code "0" / data.result "1" 未查得 (不计费 -> 999)
-//   - otherwise                  -> code "0" / data.result "0" 查得 + rich resultdata
+// 与 params 扁平化后一起）+ "&appkey=" + appkey), then routes (code/result 为
+// JSON 数字，对齐真实 data-bean)：
+//   - unknown sceneid / bad sign -> code 1001 签名校验失败 (上游侧错误 -> 网关 505062)
+//   - mobile == notFoundMobile   -> code 0 / data.result 1 未查得 (不计费 -> 999)
+//   - otherwise                  -> code 0 / data.result 0 查得 + rich resultdata
 package main
 
 import (
@@ -83,24 +84,26 @@ func main() {
 		sb.WriteString(appKey)
 		want := md5hex(sb.String())
 
+		// 注意：真实 data-bean 的 code/result 为 JSON 数字（非字符串），mock 与其
+		// 保持一致，令回归用例覆盖与生产同一条数字解析路径；错误应答 data 为 null。
 		var resp map[string]any
 		switch {
 		case req.SceneID != sceneID || req.Sign != want:
-			resp = map[string]any{"code": "1001", "msg": "签名校验失败", "reqno": "xfjy-mock-1001"}
+			resp = map[string]any{"code": 1001, "msg": "签名校验失败", "reqno": "xfjy-mock-1001", "data": nil}
 		case req.Params["mobile"] == notFoundMobile:
 			resp = map[string]any{
-				"code":  "0",
+				"code":  0,
 				"msg":   "请求成功",
 				"reqno": "xfjy-mock-999",
-				"data":  map[string]any{"result": "1"},
+				"data":  map[string]any{"result": 1},
 			}
 		default:
 			resp = map[string]any{
-				"code":  "0",
+				"code":  0,
 				"msg":   "请求成功",
 				"reqno": "xfjy-mock-001",
 				"data": map[string]any{
-					"result": "0",
+					"result": 0,
 					"resultdata": map[string]any{
 						"consumeLevel":    "高",
 						"txnCount6m":      128,

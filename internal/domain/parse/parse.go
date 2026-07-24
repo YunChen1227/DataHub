@@ -141,6 +141,40 @@ func ParseIDVerify(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	}, nil
 }
 
+// ParseConsumeTxn 校验 xfjy (消费交易特征) 入参。上游 data-bean 把 params 下的
+// name/idcard/mobile/authlet 全部标为选填（接口文档「是否必填」列均为「否」），
+// 故网关不强制某个具体字段必填（与上游必填口径一致，不臆造多余的必填约束）；
+// 仅做两件事：① 对已提供的 idCard/mobile 校验格式（避免明显非法值触发无谓上游
+// 调用）；② 要求至少提供一个查询要素 (name/idCard/mobile)，否则请求无实际查询
+// 目标，前置拦截不调上游/不计费。失败返回 busiCode 1007 数据请求异常。
+// 字段名对齐上游 params：name/idcard/mobile/authlet（authlet=终端授权书编号）。
+func ParseConsumeTxn(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+	if cmd == nil {
+		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
+	}
+	name := strings.TrimSpace(cmd.Name)
+	idCard := strings.ToUpper(strings.TrimSpace(cmd.IDCard))
+	mobile := strings.TrimSpace(cmd.Mobile)
+	authlet := strings.TrimSpace(cmd.Authlet)
+
+	if name == "" && idCard == "" && mobile == "" {
+		return nil, errs.New(errs.BusiDataRequestErr, "name/idCard/mobile 至少提供一个")
+	}
+	if idCard != "" && !idCardRe.MatchString(idCard) && !idCard15Re.MatchString(idCard) {
+		return nil, errs.New(errs.BusiDataRequestErr, "idCard 格式非法")
+	}
+	if mobile != "" && !mobileRe.MatchString(mobile) {
+		return nil, errs.New(errs.BusiDataRequestErr, "mobile 格式非法")
+	}
+	return &model.UpstreamRequest{
+		Name:    name,
+		IDCard:  idCard,
+		Mobile:  mobile,
+		Authlet: authlet,
+		Reqid:   NewReqid(),
+	}, nil
+}
+
 // reqidSeq guarantees in-process uniqueness even when the wall clock does not
 // advance between two rapid calls (Windows time.Now() can have coarse ~ms
 // granularity, so consecutive UnixNano() values may be identical and cause

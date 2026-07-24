@@ -1,7 +1,7 @@
 ﻿# DataHub fixed test-suite entrypoint (Windows / PowerShell).
 #
 # Flow: make result dir test_res/<date> -> build + start mock gama(:9112) +
-# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_entcredit(:9116) + mock_facecompare(:9117) + mock_idverify(:9118) + relay(:8080,
+# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_entcredit(:9116) + mock_facecompare(:9117) + mock_idverify(:9118) + mock_consumetxn(:9119) + relay(:8080,
 # live Aliyun PG+Redis) -> wait /healthz -> (optional) start real-gama relay(:8090)
 # -> run test/cases/*.go in order -> aggregate REPORT.md -> stop services.
 #
@@ -59,6 +59,7 @@ try {
     $entcreditExe = Join-Path $resultDir "mock_entcredit.exe"
     $facecompareExe = Join-Path $resultDir "mock_facecompare.exe"
     $idverifyExe  = Join-Path $resultDir "mock_idverify.exe"
+    $consumetxnExe = Join-Path $resultDir "mock_consumetxn.exe"
     $relayExe     = Join-Path $resultDir "relay.exe"
     Write-Host "building mocks + relay ..."
     go build -o $mockExe ./scripts/mock_gama.go
@@ -75,6 +76,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build mock_facecompare failed" }
     go build -o $idverifyExe ./scripts/mock_idverify.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_idverify failed" }
+    go build -o $consumetxnExe ./scripts/mock_consumetxn.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_consumetxn failed" }
     go build -o $relayExe ./cmd/relay
     if ($LASTEXITCODE -ne 0) { throw "go build relay failed" }
 
@@ -110,6 +113,9 @@ try {
 
     $idverify = Start-Process -FilePath $idverifyExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_idverify.log") -RedirectStandardError (Join-Path $resultDir "mock_idverify.err.log")
     [void]$procs.Add($idverify)
+
+    $consumetxn = Start-Process -FilePath $consumetxnExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_consumetxn.log") -RedirectStandardError (Join-Path $resultDir "mock_consumetxn.err.log")
+    [void]$procs.Add($consumetxn)
 
     $relay = Start-Process -FilePath $relayExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "relay.log") -RedirectStandardError (Join-Path $resultDir "relay.err.log")
     [void]$procs.Add($relay)

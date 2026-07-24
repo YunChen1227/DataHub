@@ -20,6 +20,9 @@ type QueryCommand struct {
 	URL   string `json:"url"`
 	// sfzhy (身份证三要素核验) 入参：人像照片 base64(≤50K)，配合 name/idCard。
 	ProfilePicture string `json:"profilePicture"`
+	// xfjy (消费交易特征) 入参：授权书编号 authlet，配合 name/idcard/mobile
+	// （字段名对齐上游 data-bean params：name/idcard/mobile/authlet）。
+	Authlet string `json:"authlet"`
 }
 
 // SignedRequest carries the request envelope material needed for MD5 signature
@@ -58,7 +61,9 @@ type UpstreamRequest struct {
 	URL   string
 	// sfzhy (身份证三要素核验) 用 ProfilePicture(base64) + Name/IDCard。
 	ProfilePicture string
-	Reqid          string
+	// xfjy (消费交易特征) 用 Authlet(终端授权书编号) + Name/IDCard/Mobile。
+	Authlet string
+	Reqid   string
 }
 
 // UpstreamResult is the normalized upstream response (DESIGN §6). 唯一上游伽马把原生
@@ -170,15 +175,17 @@ type RangeResult struct {
 // (数脉 facecompare 上游，name+idCard+image|url 入参，见 upstream/facecompare.go；
 // rlbd1/rlbd2 同一上游接口、各自独立的 appId/appSecret 与独立库/统计)；
 // sfzhy 转接身份证三要素核验 (idverify 上游，name+idCard+profilePicture 入参，
-// 见 upstream/idverify.go)。
+// 见 upstream/idverify.go)；xfjy 转接消费交易特征 (consumetxn 上游 data-bean，
+// JSON POST + MD5 sign，name/idcard/mobile/authlet 入参，有查得/查无，
+// 见 upstream/consumetxn.go)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -212,6 +219,8 @@ func DemoAppKey(route string) string {
 		return "y89rlbd2"
 	case "sfzhy":
 		return "y89sfzhy"
+	case "xfjy":
+		return "y890xfjy"
 	default:
 		return "demo-" + route
 	}

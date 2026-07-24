@@ -14,7 +14,7 @@ import (
 // 完整凭证。kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8) |
 // rental(租赁分V2-D, zlf) | blacklist(黑名单因子V35, blk) | entcredit(税务发票聚合, swfp)。
 type upstreamConfig struct {
-	kind    string // gama | income | rental | blacklist | entcredit | facecompare | idverify
+	kind    string // gama | income | rental | blacklist | entcredit | facecompare | idverify | consumetxn
 	baseURL string
 	// gama (伽马) / blacklist (黑名单因子V35) / entcredit (税务发票聚合) 凭证
 	appID          string
@@ -358,7 +358,8 @@ func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
 }
 
 // defaultKind picks the upstream client family by version: x1→gama, zlf→rental,
-// blk→blacklist, swfp→entcredit, rlbd1/rlbd2→facecompare, sfzhy→idverify, others→income.
+// blk→blacklist, swfp→entcredit, rlbd1/rlbd2→facecompare, sfzhy→idverify,
+// xfjy→consumetxn, others→income.
 func defaultKind(version string) string {
 	switch version {
 	case "x1":
@@ -373,6 +374,8 @@ func defaultKind(version string) string {
 		return "facecompare"
 	case "sfzhy":
 		return "idverify"
+	case "xfjy":
+		return "consumetxn"
 	default:
 		return "income"
 	}

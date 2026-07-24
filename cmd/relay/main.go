@@ -286,6 +286,10 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	case upstream.ProviderIDVerify:
 		// sfzhy 身份证三要素核验：name+idCard(15/18)+profilePicture 均必填。
 		orch.WithParser(parse.ParseIDVerify)
+	case upstream.ProviderConsumeTxn:
+		// xfjy 消费交易特征：上游 params 全选填，网关仅校验格式并要求至少一个
+		// 查询要素 (name/idCard/mobile)，对齐上游必填口径不臆造多余必填。
+		orch.WithParser(parse.ParseConsumeTxn)
 	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upClient, billSvc, quotaSvc, cfg.requeryInterval, log)
 
@@ -403,6 +407,16 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			BaseURL:   uc.baseURL,
 			AppID:     uc.appID,
 			AppSecret: uc.appSecret,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderConsumeTxn:
+		// xfjy 消费交易特征 (data-bean)：sceneid=appID、appkey=appSecret、
+		// procode 默认 fk3002（可经 apiKey 覆盖）。
+		client := upstream.NewConsumeTxn(upstream.ConsumeTxnConfig{
+			BaseURL: uc.baseURL,
+			SceneID: uc.appID,
+			AppKey:  uc.appSecret,
+			Procode: uc.apiKey,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderGama, "":

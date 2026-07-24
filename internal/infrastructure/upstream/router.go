@@ -11,4 +11,5 @@ const (
 	ProviderEntCredit   = "entcredit"   // swfp: 税务+发票四产品码聚合
 	ProviderFaceCompare = "facecompare" // rlbd1: 人脸身份证比对一所 (数脉)
 	ProviderIDVerify    = "idverify"    // sfzhy: 身份证三要素核验
+	ProviderConsumeTxn  = "consumetxn"  // xfjy: 消费交易特征 (data-bean)
 )

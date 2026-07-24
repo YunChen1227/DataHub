@@ -21,6 +21,8 @@ var (
 	idCard15Re = regexp.MustCompile(`^\d{15}$`)
 	// 统一社会信用代码 (GB 32100)：18 位，字符集不含 I/O/S/V/Z（不做校验位运算）。
 	creditCodeRe = regexp.MustCompile(`^[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}$`)
+	// xfjy 授权书编号 authlet：由数字+字母组成（data-bean fk3002 字段说明）。
+	authletRe = regexp.MustCompile(`^[0-9A-Za-z]+$`)
 )
 
 // Parse runs参数校验; failures return busiCode 1007 数据请求异常 (我方拦截, 不调
@@ -141,13 +143,14 @@ func ParseIDVerify(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	}, nil
 }
 
-// ParseConsumeTxn 校验 xfjy (消费交易特征) 入参。上游 data-bean 把 params 下的
-// name/idcard/mobile/authlet 全部标为选填（接口文档「是否必填」列均为「否」），
-// 故网关不强制某个具体字段必填（与上游必填口径一致，不臆造多余的必填约束）；
-// 仅做两件事：① 对已提供的 idCard/mobile 校验格式（避免明显非法值触发无谓上游
-// 调用）；② 要求至少提供一个查询要素 (name/idCard/mobile)，否则请求无实际查询
-// 目标，前置拦截不调上游/不计费。失败返回 busiCode 1007 数据请求异常。
-// 字段名对齐上游 params：name/idcard/mobile/authlet（authlet=终端授权书编号）。
+// ParseConsumeTxn 校验 xfjy (消费交易特征) 入参。字段口径严格对齐上游 data-bean
+// fk3002 的 params 契约：name/idcard/mobile/authlet 四个私有字段，其中
+// authlet（终端授权书编号：被查个人主体授予机构查询本身信息的授权代码，由数字+
+// 字母组成）为**认证必填**——缺失将无法通过上游合规校验，故网关前置强制必填、
+// 缺失即拦截不调上游/不计费（不同上游字段与必填口径各不相同，此处以本上游为准）。
+// 校验规则：① authlet 必填且须为数字+字母；② 至少提供一个身份要素
+// (name/idCard/mobile)，否则请求无实际查询目标；③ 对已提供的 idCard/mobile
+// 校验格式，避免明显非法值触发无谓上游调用。失败返回 busiCode 1007 数据请求异常。
 func ParseConsumeTxn(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	if cmd == nil {
 		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
@@ -157,6 +160,12 @@ func ParseConsumeTxn(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	mobile := strings.TrimSpace(cmd.Mobile)
 	authlet := strings.TrimSpace(cmd.Authlet)
 
+	if authlet == "" {
+		return nil, errs.New(errs.BusiDataRequestErr, "authlet(授权书编号) 必填")
+	}
+	if !authletRe.MatchString(authlet) {
+		return nil, errs.New(errs.BusiDataRequestErr, "authlet(授权书编号) 格式非法, 须由数字与字母组成")
+	}
 	if name == "" && idCard == "" && mobile == "" {
 		return nil, errs.New(errs.BusiDataRequestErr, "name/idCard/mobile 至少提供一个")
 	}

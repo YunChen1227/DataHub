@@ -87,11 +87,16 @@ func main() {
 		Procode: u.APIKey,
 	}, httpClient)
 	fmt.Printf("  endpoint=%s sceneid=%s...\n", u.BaseURL, trunc(u.AppID, 8))
+	authlet := os.Getenv("XFJY_AUTHLET")
+	if authlet == "" {
+		authlet = "AUTH20260724XFJY01"
+	}
 	result, err := client.Query(ctx, &model.UpstreamRequest{
-		Name:   "张三",
-		IDCard: "330129199109094312",
-		Mobile: "13809091009",
-		Reqid:  "probe-xfjy",
+		Name:    "张三",
+		IDCard:  "330129199109094312",
+		Mobile:  "13809091009",
+		Authlet: authlet, // 授权书编号 (认证必填)
+		Reqid:   "probe-xfjy",
 	})
 	if err != nil {
 		fmt.Printf("  FAIL: %v\n", err)

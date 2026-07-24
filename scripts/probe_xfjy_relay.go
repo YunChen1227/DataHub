@@ -36,10 +36,15 @@ func main() {
 	st, _, raw := harness.Call("GET", "/healthz", nil, nil)
 	fmt.Printf("  healthz: HTTP %d body=%q\n", st, raw)
 
+	authlet := os.Getenv("XFJY_AUTHLET")
+	if authlet == "" {
+		authlet = "AUTH20260724XFJY01"
+	}
 	body := map[string]string{
-		"name":   "张三",
-		"idCard": "330129199109094312",
-		"mobile": "13809091009",
+		"name":    "张三",
+		"idCard":  "330129199109094312",
+		"mobile":  "13809091009",
+		"authlet": authlet, // 授权书编号 (认证必填)
 	}
 	r := harness.Query("xfjy", appKey, secret, body, nil)
 	fmt.Printf("  querySrmxXFJY: HTTP %d errorCode=%s bodyCode=%s\n", r.HTTPStatus, r.ErrorCode, r.BodyCode)

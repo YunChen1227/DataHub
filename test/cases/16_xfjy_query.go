@@ -18,9 +18,10 @@ const version = "xfjy"
 
 func base() map[string]string {
 	return map[string]string{
-		"name":   "张三",
-		"idCard": "330129199109094312",
-		"mobile": "13809091009",
+		"name":    "张三",
+		"idCard":  "330129199109094312",
+		"mobile":  "13809091009",
+		"authlet": "AUTH20260724XFJY01", // 授权书编号 (认证必填)
 	}
 }
 
@@ -59,13 +60,25 @@ func main() {
 	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, badi, nil)
 	rec.Check("身份证非法", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
 
-	// 无任何查询要素 (name/idCard/mobile 均缺失)：网关前置拦截，不调用上游。
-	empty := map[string]string{"authlet": "abc123"}
+	// 授权书编号 authlet 缺失：认证必填，网关前置拦截，不调用上游。
+	noAuth := base()
+	delete(noAuth, "authlet")
+	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, noAuth, nil)
+	rec.Check("缺失授权书编号", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
+
+	// 授权书编号格式非法 (含非字母数字字符)：网关前置拦截。
+	badAuth := base()
+	badAuth["authlet"] = "auth-001!"
+	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, badAuth, nil)
+	rec.Check("授权书编号非法", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
+
+	// 无任何查询要素 (name/idCard/mobile 均缺失, 但 authlet 合法)：网关前置拦截。
+	empty := map[string]string{"authlet": "AUTH20260724XFJY01"}
 	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, empty, nil)
 	rec.Check("无查询要素拦截", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
 
-	// 仅 idCard（其余选填省略）应被接受，走成功查得。
-	only := map[string]string{"idCard": "330129199109094312"}
+	// 仅 idCard + authlet（其余选填省略）应被接受，走成功查得。
+	only := map[string]string{"idCard": "330129199109094312", "authlet": "AUTH20260724XFJY01"}
 	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, only, nil)
 	rec.Check("仅 idCard 查得", "errorCode=0 & body.code=001",
 		r.ErrorCode == "0" && r.BodyCode == "001", r.Raw)

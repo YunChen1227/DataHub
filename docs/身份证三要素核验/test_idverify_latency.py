@@ -15,7 +15,7 @@
   # 多次统计 min/max/avg/p50/p95
   python test_idverify_latency.py --name 张三 --id-card 420101198012010011 --photo face.jpg --repeat 10 --interval 0.5
 
-依赖: pip install requests
+依赖: 无（仅 Python 3 标准库，无需 pip install）
 """
 
 from __future__ import annotations
@@ -29,10 +29,10 @@ import statistics
 import sys
 import time
 import uuid
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
-
-import requests
 
 DEFAULT_BASE_URL = "https://api.cqcucc.com:8443/api/idCardThreeElements"
 
@@ -111,25 +111,33 @@ def call_once(
         "signature": sign_idverify(sign_params, app_secret),
     }
 
-    t0 = time.perf_counter()
-    resp = requests.post(
+    raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
         base_url,
+        data=raw_body,
         headers={"Content-Type": "application/json;charset=UTF-8"},
-        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        timeout=timeout,
+        method="POST",
     )
+    t0 = time.perf_counter()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = resp.status
+            text = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        status = e.code
+        text = e.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as e:
+        raise ConnectionError(str(e.reason)) from e
     client_ms = (time.perf_counter() - t0) * 1000.0
-    requests_ms = resp.elapsed.total_seconds() * 1000.0
 
     try:
-        payload = resp.json()
+        payload = json.loads(text)
     except json.JSONDecodeError:
-        payload = {"_raw": resp.text[:500]}
+        payload = {"_raw": text[:500]}
 
     return {
         "client_ms": client_ms,
-        "requests_ms": requests_ms,
-        "http_status": resp.status_code,
+        "http_status": status,
         "response": payload,
         "out_biz_no": out_biz_no,
     }
@@ -144,8 +152,7 @@ def fmt_result(resp: dict[str, Any]) -> str:
     result = data.get("Result", "")
     extra = f" Result={result}" if result != "" else ""
     return (
-        f"Code={code} IsCharge={charge} client_ms={resp['client_ms']:.1f} "
-        f"requests_ms={resp['requests_ms']:.1f}{extra} Message={msg}"
+        f"Code={code} IsCharge={charge} client_ms={resp['client_ms']:.1f}{extra} Message={msg}"
     )
 
 
@@ -202,7 +209,7 @@ def main() -> int:
                 out_biz_no=out_biz_no,
                 timeout=args.timeout,
             )
-        except requests.RequestException as e:
+        except (ConnectionError, TimeoutError, urllib.error.URLError) as e:
             print(f"[#{i + 1}/{args.repeat}] REQUEST ERROR: {e}")
             if i + 1 < args.repeat and args.interval > 0:
                 time.sleep(args.interval)

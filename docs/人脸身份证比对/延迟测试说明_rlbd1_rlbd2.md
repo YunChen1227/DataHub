@@ -55,7 +55,6 @@ sign = MD5(待签名串).hexdigest()
 | 指标 | 含义 |
 |------|------|
 | `client_ms` | 客户端 `perf_counter()` 包裹的整个 HTTP 往返 |
-| `requests_ms` | `requests` 库的 `response.elapsed` |
 | `server_ms` | 响应中的 `head.time`（网关侧处理耗时） |
 
 ---
@@ -64,11 +63,9 @@ sign = MD5(待签名串).hexdigest()
 
 文件：`docs/人脸身份证比对/test_rlbd_latency.py`
 
-### 2.1 安装依赖
+### 2.1 运行环境
 
-```bash
-pip install requests
-```
+服务器需有 Python 3（`python3 --version`）。脚本**仅用标准库，无需 pip install**。
 
 ### 2.2 环境变量
 
@@ -123,7 +120,7 @@ python test_rlbd_latency.py \
 endpoint: http://aiszcloud.cn:8080/v1/openapi/zlx/querySrmxRLBD1
 repeat: 10  interval: 0.5s  timeout: 15.0s
 
-[#1/10] errorCode=0 body.code=001 client_ms=1243.2 requests_ms=1239.8 server_ms=1186 logId=a1b2c3d4
+[#1/10] errorCode=0 body.code=001 client_ms=1243.2 server_ms=1186 logId=a1b2c3d4
 ...
 
 --- 耗时汇总 client_ms (客户端全链路, 单位 ms) ---
@@ -140,7 +137,7 @@ count=10  min=1050.0  max=1280.0  avg=1165.2  p50=1158.0  p95=1265.0
 import hashlib
 import json
 import time
-import requests
+import urllib.request
 
 def sign_body(body: dict, app_secret: str) -> str:
     parts = [f"{k}{v}" for k, v in sorted(body.items()) if v]
@@ -160,16 +157,16 @@ def query_rlbd(base_url, route, app_key, app_secret, name, id_card, url="", imag
         "sign": sign_body(body, app_secret),
         "body": body,
     }
-
-    t0 = time.perf_counter()
-    resp = requests.post(
-        base_url.rstrip("/") + path,
+    raw_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        base_url.rstrip("/") + path, data=raw_body,
         headers={"Content-Type": "application/json; charset=utf-8"},
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        timeout=15,
+        method="POST",
     )
-    client_ms = (time.perf_counter() - t0) * 1000
-    data = resp.json()
+    t0 = time.perf_counter()
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        client_ms = (time.perf_counter() - t0) * 1000
+        data = json.loads(resp.read().decode("utf-8"))
     server_ms = (data.get("head") or {}).get("time")
     print(f"client_ms={client_ms:.1f} server_ms={server_ms} errorCode={(data.get('head') or {}).get('errorCode')}")
     return data

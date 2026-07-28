@@ -16,7 +16,7 @@
   export RLBD2_APP_SECRET="your_app_secret"
   python test_rlbd_latency.py --route rlbd2 --name 张三 --id-card 330129199109094312 --photo face.jpg --repeat 10
 
-依赖: pip install requests
+依赖: 无（仅 Python 3 标准库，无需 pip install）
 """
 
 from __future__ import annotations
@@ -29,10 +29,10 @@ import os
 import statistics
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
-
-import requests
 
 DEFAULT_BASE_URL = "http://aiszcloud.cn:8080"
 
@@ -113,20 +113,30 @@ def call_once(
         "body": body,
     }
 
-    t0 = time.perf_counter()
-    resp = requests.post(
-        base_url.rstrip("/") + path,
+    url = base_url.rstrip("/") + path
+    raw_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=raw_body,
         headers={"Content-Type": "application/json; charset=utf-8"},
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        timeout=timeout,
+        method="POST",
     )
+    t0 = time.perf_counter()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = resp.status
+            text = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        status = e.code
+        text = e.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as e:
+        raise ConnectionError(str(e.reason)) from e
     client_ms = (time.perf_counter() - t0) * 1000.0
-    requests_ms = resp.elapsed.total_seconds() * 1000.0
 
     try:
-        data = resp.json()
+        data = json.loads(text)
     except json.JSONDecodeError:
-        data = {"_raw": resp.text[:500]}
+        data = {"_raw": text[:500]}
 
     head = data.get("head") or {}
     body_resp = data.get("body") or {}
@@ -134,9 +144,8 @@ def call_once(
 
     return {
         "client_ms": client_ms,
-        "requests_ms": requests_ms,
         "server_ms": server_ms,
-        "http_status": resp.status_code,
+        "http_status": status,
         "error_code": head.get("errorCode"),
         "error_msg": head.get("errorMsg"),
         "log_id": head.get("logId"),
@@ -150,8 +159,7 @@ def fmt_result(r: dict[str, Any]) -> str:
     server_part = f" server_ms={r['server_ms']}" if r.get("server_ms") is not None else ""
     return (
         f"errorCode={r.get('error_code')} body.code={r.get('body_code')} "
-        f"client_ms={r['client_ms']:.1f} requests_ms={r['requests_ms']:.1f}{server_part} "
-        f"logId={r.get('log_id')}"
+        f"client_ms={r['client_ms']:.1f}{server_part} logId={r.get('log_id')}"
     )
 
 
@@ -209,7 +217,7 @@ def main() -> int:
                 body=body,
                 timeout=args.timeout,
             )
-        except requests.RequestException as e:
+        except (ConnectionError, TimeoutError, urllib.error.URLError) as e:
             print(f"[#{i + 1}/{args.repeat}] REQUEST ERROR: {e}")
             if i + 1 < args.repeat and args.interval > 0:
                 time.sleep(args.interval)

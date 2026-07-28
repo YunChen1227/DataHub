@@ -75,12 +75,22 @@ def percentile(values: list[float], p: float) -> float:
 
 def resolve_credentials(route: str, app_key: str | None, app_secret: str | None) -> tuple[str, str]:
     route_upper = route.upper()
-    key = app_key or os.getenv(f"RLBD_{route_upper}_APP_KEY") or os.getenv("RLBD_APP_KEY")
-    secret = app_secret or os.getenv(f"RLBD_{route_upper}_APP_SECRET") or os.getenv("RLBD_APP_SECRET")
+    key = (
+        app_key
+        or os.getenv(f"{route_upper}_APP_KEY")
+        or os.getenv(f"RLBD_{route_upper}_APP_KEY")
+        or os.getenv("RLBD_APP_KEY")
+    )
+    secret = (
+        app_secret
+        or os.getenv(f"{route_upper}_APP_SECRET")
+        or os.getenv(f"RLBD_{route_upper}_APP_SECRET")
+        or os.getenv("RLBD_APP_SECRET")
+    )
     if not key or not secret:
         raise ValueError(
             f"请设置 --app-key / --app-secret，或环境变量 "
-            f"RLBD_{route_upper}_APP_KEY / RLBD_{route_upper}_APP_SECRET"
+            f"{route_upper}_APP_KEY / {route_upper}_APP_SECRET"
         )
     return key, secret
 

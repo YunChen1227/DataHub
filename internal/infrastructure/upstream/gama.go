@@ -139,6 +139,7 @@ func (c *GamaClient) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 			Msg:   "成功",
 			UID:   gr.SeqNo,
 			Reqid: req.Reqid,
+			LogID: gr.SeqNo, // 伽马仅 seqNo 一个标识，UID/LogID 同填供后台对账
 			Range: gr.Data.Result.Score,
 		}, nil
 	case gamaBusiNotFound:
@@ -147,6 +148,7 @@ func (c *GamaClient) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 			Msg:   "查无结果",
 			UID:   gr.SeqNo,
 			Reqid: req.Reqid,
+			LogID: gr.SeqNo,
 		}, nil
 	default:
 		// 1001/1002/1003/1006/1007/1009… 均为我方在伽马侧的账户/参数/系统问题,

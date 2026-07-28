@@ -148,6 +148,7 @@ func (c *RentalClient) Query(ctx context.Context, req *model.UpstreamRequest) (*
 			Msg:   "成功",
 			UID:   rr.RespOrder,
 			Reqid: req.Reqid,
+			LogID: rr.RespOrder, // 只有 respOrder(订单号)一个上游标识，UID/LogID 同填供后台对账
 			Range: parseRentalScore(rr.RespData),
 		}, nil
 	case rentalCodeNotFound:
@@ -156,6 +157,7 @@ func (c *RentalClient) Query(ctx context.Context, req *model.UpstreamRequest) (*
 			Msg:   "查无结果",
 			UID:   rr.RespOrder,
 			Reqid: req.Reqid,
+			LogID: rr.RespOrder,
 		}, nil
 	default:
 		// SW0001/SW0003/SW003x/SW004x/SW001x/SW10xx/SW9999 等均为我方在上游侧的

@@ -70,6 +70,7 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 		label   string
 		section aggSection
 		uid     string
+		logid   string
 	}
 	results := make([]sub, len(a.sources))
 	var wg sync.WaitGroup
@@ -79,18 +80,22 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 			defer wg.Done()
 			s := a.sources[i]
 			res, err := s.Port.Query(ctx, req)
-			results[i] = sub{label: s.Label, section: classify(res, err), uid: uidOf(res)}
+			results[i] = sub{label: s.Label, section: classify(res, err), uid: uidOf(res), logid: logidOf(res)}
 		}(i)
 	}
 	wg.Wait()
 
 	var okCnt, emptyCnt, errCnt int
 	uid := ""
+	logid := ""
 	sections := make(map[string]aggSection, len(results))
 	for _, r := range results {
 		sections[r.label] = r.section
 		if uid == "" && r.uid != "" {
 			uid = r.uid
+		}
+		if logid == "" && r.logid != "" {
+			logid = r.logid
 		}
 		switch r.section.Status {
 		case "ok":
@@ -114,16 +119,16 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 		if err != nil {
 			return nil, fmt.Errorf("聚合序列化失败: %w", err)
 		}
-		return &model.UpstreamResult{Code: "002", Msg: "部分数据源成功", UID: uid, Reqid: req.Reqid, Range: string(merged)}, nil
+		return &model.UpstreamResult{Code: "002", Msg: "部分数据源成功", UID: uid, Reqid: req.Reqid, LogID: logid, Range: string(merged)}, nil
 	case okCnt > 0:
 		merged, err := json.Marshal(sections)
 		if err != nil {
 			return nil, fmt.Errorf("聚合序列化失败: %w", err)
 		}
-		return &model.UpstreamResult{Code: "001", Msg: "成功", UID: uid, Reqid: req.Reqid, Range: string(merged)}, nil
+		return &model.UpstreamResult{Code: "001", Msg: "成功", UID: uid, Reqid: req.Reqid, LogID: logid, Range: string(merged)}, nil
 	default:
 		// 全部查无：与单上游 999 一致，range 恒空 (DESIGN §7.4)。
-		return &model.UpstreamResult{Code: "999", Msg: "查无结果", UID: uid, Reqid: req.Reqid}, nil
+		return &model.UpstreamResult{Code: "999", Msg: "查无结果", UID: uid, Reqid: req.Reqid, LogID: logid}, nil
 	}
 }
 
@@ -155,6 +160,13 @@ func uidOf(res *model.UpstreamResult) string {
 		return ""
 	}
 	return res.UID
+}
+
+func logidOf(res *model.UpstreamResult) string {
+	if res == nil {
+		return ""
+	}
+	return res.LogID
 }
 
 // Requery：单源直通；多源聚合暂不做逐源对账，返回 Reachable=false 保持 PENDING

@@ -107,9 +107,10 @@ func (c *EntCreditClient) Query(ctx context.Context, req *model.UpstreamRequest)
 	sec, orderNo := c.callProduct(ctx, c.cfg.Product, req)
 	switch sec.Status {
 	case "ok":
-		return &model.UpstreamResult{Code: "001", Msg: "成功", UID: orderNo, Reqid: req.Reqid, Range: string(sec.Data)}, nil
+		// 只有 orderNo 一个上游标识，UID/LogID 同填供后台「上游logId」对账。
+		return &model.UpstreamResult{Code: "001", Msg: "成功", UID: orderNo, Reqid: req.Reqid, LogID: orderNo, Range: string(sec.Data)}, nil
 	case "empty":
-		return &model.UpstreamResult{Code: "999", Msg: "查无结果", UID: orderNo, Reqid: req.Reqid}, nil
+		return &model.UpstreamResult{Code: "999", Msg: "查无结果", UID: orderNo, Reqid: req.Reqid, LogID: orderNo}, nil
 	default:
 		// 失败也带上游状态码原值(sec.Raw)与订单号落审计供对账追查。
 		return nil, busiErr(sec.Raw, fmt.Sprintf("产品 %s 失败: %s", c.cfg.Product, sec.Error), orderNo, "")

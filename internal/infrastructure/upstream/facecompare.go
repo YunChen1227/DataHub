@@ -140,6 +140,7 @@ func (c *FaceCompareClient) Query(ctx context.Context, req *model.UpstreamReques
 		Msg:   "成功",
 		UID:   data.OrderNo,
 		Reqid: req.Reqid,
+		LogID: data.OrderNo, // 只有 orderNo(订单号)一个上游标识，UID/LogID 同填供后台对账
 		Range: compactJSON(fr.Data),
 	}, nil
 }

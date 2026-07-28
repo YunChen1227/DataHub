@@ -216,6 +216,10 @@ func (o *QueryOrchestrator) respondX1(out queryOutcome, requestID string, rec *m
 // body is not cached yet, so a查得数据 replay echoes body.code 001 with an empty
 // range (TODO: cache the full result keyed by reqid for byte-identical replays).
 func (o *QueryOrchestrator) replay(l *model.Ledger, requestID string, rec *model.AuditRecord, latencyMs int64) *model.QueryResponse {
+	// 幂等重放也回填台账里的上游标识，保证「上游uid/上游logId」列不因命中缓存而空。
+	rec.CalledUpstream = true
+	rec.UpstreamUID = l.UpstreamUID
+	rec.UpstreamLogID = l.UpstreamLogID
 	if l.CountedService {
 		rec.BusiCode = int(errs.BusiSuccess)
 		rec.BusiMsg = "success"

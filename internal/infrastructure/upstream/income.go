@@ -115,6 +115,7 @@ func (c *IncomeClient) Query(ctx context.Context, req *model.UpstreamRequest) (*
 			Msg:   "成功",
 			UID:   ir.UID,
 			Reqid: reqid,
+			LogID: ir.UID, // 经济能力仅 uid(流水号) 一个上游标识，UID/LogID 同填供后台对账
 			Range: ir.Result.Range,
 		}, nil
 	case "999":
@@ -123,6 +124,7 @@ func (c *IncomeClient) Query(ctx context.Context, req *model.UpstreamRequest) (*
 			Msg:   "查无结果",
 			UID:   ir.UID,
 			Reqid: reqid,
+			LogID: ir.UID,
 		}, nil
 	default:
 		// 002/003/004/005/006/008/009/011/012/013/020 等均为我方在上游侧的账户/

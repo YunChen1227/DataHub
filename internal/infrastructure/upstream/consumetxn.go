@@ -173,6 +173,7 @@ func (c *ConsumeTxnClient) Query(ctx context.Context, req *model.UpstreamRequest
 		return nil, busiErr(string(cr.Code), cr.Msg, cr.Reqno, cr.Reqno)
 	}
 
+	// reqno 是上游唯一请求号，UID/LogID 同填——成功/查无都要能在后台「上游logId」对账。
 	uid := cr.Reqno
 	switch string(cr.Data.Result) {
 	case "0":
@@ -181,6 +182,7 @@ func (c *ConsumeTxnClient) Query(ctx context.Context, req *model.UpstreamRequest
 			Msg:   "成功",
 			UID:   uid,
 			Reqid: req.Reqid,
+			LogID: cr.Reqno,
 			Range: compactJSON(cr.Data.ResultData),
 		}, nil
 	case "1":
@@ -189,6 +191,7 @@ func (c *ConsumeTxnClient) Query(ctx context.Context, req *model.UpstreamRequest
 			Msg:   "未查得",
 			UID:   uid,
 			Reqid: req.Reqid,
+			LogID: cr.Reqno,
 		}, nil
 	default:
 		// result 非 0/1：语义未定义，按上游侧异常处理（不计费）。

@@ -135,6 +135,7 @@ func (c *BlacklistClient) Query(ctx context.Context, req *model.UpstreamRequest)
 			Msg:   "成功",
 			UID:   br.SeqNo,
 			Reqid: req.Reqid,
+			LogID: br.SeqNo, // 只有 seqNo(流水号)一个上游标识，UID/LogID 同填供后台对账
 			Range: compactJSON(br.Data.Result),
 		}, nil
 	case blacklistBusiNotFound:
@@ -143,6 +144,7 @@ func (c *BlacklistClient) Query(ctx context.Context, req *model.UpstreamRequest)
 			Msg:   "未查得",
 			UID:   br.SeqNo,
 			Reqid: req.Reqid,
+			LogID: br.SeqNo,
 		}, nil
 	default:
 		// 1001/1002/1003/1004/1005/1006/1007/1009 均为我方在应诺尔侧的账户/参数/

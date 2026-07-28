@@ -139,11 +139,13 @@ func (c *IDVerifyClient) Query(ctx context.Context, req *model.UpstreamRequest) 
 	if uid == "" {
 		uid = ir.RequestId
 	}
+	// LogID 恒填上游 RequestId（请求号），成功也要能在后台「上游logId」列对账追查。
 	return &model.UpstreamResult{
 		Code:  "001",
 		Msg:   "成功",
 		UID:   uid,
 		Reqid: req.Reqid,
+		LogID: ir.RequestId,
 		Range: compactJSON(ir.Data),
 	}, nil
 }

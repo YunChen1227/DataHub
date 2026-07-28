@@ -52,18 +52,28 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
 - **上游归一化**：上游客户端实现 `port.UpstreamPort`，把响应归一化为
   `model.UpstreamResult`：查得 → `Code:"001"`；查无 → `Code:"999"`；上游侧错误
   （账户/参数/系统问题）→ 返回 `error`（不计费，走复查/对账兜底）。
-- **失败也要可追查（铁律）**：当上游"已应答但以非成功业务码拒绝/失败"时，**必须**
-  返回 `*model.UpstreamError`（用 `busiErr`/`busiErrf` 助手构造，见
-  [upstream/errors.go](internal/infrastructure/upstream/errors.go)），把上游返回的
-  **code / msg / uid(订单号) / logID(请求号)** 全部带上——**禁止**用裸
-  `fmt.Errorf` 把这些标识丢进一个字符串。orchestrator 会在失败路径（含最终
-  PENDING）用 `errors.As` 取出这些字段写入审计（`UpstreamCode/UpstreamUID/
-  UpstreamLogID/ErrMsg`，管理后台「操作记录」可见），使运营能凭上游订单号/请求号
-  向上游对账、追查失败原因。**仅**纯网络/传输失败（上游不可达、读超时，没有上游
-  标识可填）才继续用 `fmt.Errorf`。落地时想清楚该上游响应里哪个字段是"订单号"、
-  哪个是"请求/日志号"（如 idverify 的 `OutBizNo`/`RequestId`、consumetxn 的
-  `reqno`、gama/blacklist 的 `seqNo`、rental 的 `respOrder`），成功与失败两条路径
-  都要填。
+- **上游 requestId 无论成功失败都必须落审计（铁律，违反即返工）**：管理后台「操作
+  记录」有 `上游uid`(`UpstreamUID`) 与 `上游logId`(`UpstreamLogID`) 两列，运营靠它们
+  拿上游单号向上游对账。**每一条响应路径**——查得(001)、查无(999)、上游业务失败——
+  都必须把上游返回的请求号/订单号带出来，一条都不能漏：
+  1. **成功 / 查无路径**：构造 `model.UpstreamResult` 时 `UID` 填上游订单号、`LogID`
+     填上游请求/流水号。**上游只有一个标识时，`UID` 与 `LogID` 同填该值**（宁可重复，
+     也不能让 `上游logId` 列为空）。所有 `return &model.UpstreamResult{...}` 都要带
+     `LogID`——包括 999 分支、聚合 `aggregate.go` 的合并结果（`logidOf` 取任一子源）。
+  2. **失败路径（非成功业务码）**：**必须**返回 `*model.UpstreamError`（用
+     `busiErr`/`busiErrf` 助手构造，见
+     [upstream/errors.go](internal/infrastructure/upstream/errors.go)），把上游
+     **code / msg / uid(订单号) / logID(请求号)** 全带上——**禁止**用裸 `fmt.Errorf`
+     把这些标识丢进字符串。orchestrator 会在失败路径（含最终 PENDING）用 `errors.As`
+     取出写入审计。
+  3. **仅**纯网络/传输失败（上游不可达、读超时，压根没有上游标识）才用 `fmt.Errorf`。
+  4. 落地前先在响应结构里认清"哪个字段是订单号、哪个是请求/日志号"，再成功/失败两条
+     路径都填。既有映射参考：idverify `OutBizNo`(uid)/`RequestId`(logId)；consumetxn
+     `reqno`(uid=logId)；gama/blacklist `seqNo`(uid=logId)；income `uid`(uid=logId，
+     注意 `reqid` 是我方回显不算)；rental `respOrder`(uid=logId)；facecompare/entcredit
+     `orderNo`(uid=logId)。
+  5. 幂等重放（命中台账）也要回填：`orchestrator.replay` 从 `Ledger.UpstreamUID/
+     UpstreamLogID` 回填审计，别让命中缓存的请求这两列变空。
 - **入参与上游严格对齐（铁律，违反即返工）**：本服务是纯转发网关——
   0. **字段集合以「本上游」参数表为唯一依据，禁止照搬既有路由**：每个上游要的
      字段都不一样。开工前先把上游参数表里的**每一个私有字段**（含授权书编号/
@@ -112,8 +122,9 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
    `Query`（归一化到 001/999/error）+ `Requery`（未联调前返回
    `&model.RequeryResult{Reachable: false}`，与既有上游一致）。
    富对象透出用 blacklist.go 里现成的 `compactJSON`。
-   - **成功路径**：`model.UpstreamResult` 的 `UID` 填上游订单号/流水号（`seqNo`/
-     `OutBizNo`/`respOrder`…），有独立请求号时填 `LogID`。
+   - **成功/查无路径**：`model.UpstreamResult` 的 `UID` 填上游订单号/流水号（`seqNo`/
+     `OutBizNo`/`respOrder`…），`LogID` **必填**上游请求/日志号；上游只有一个标识时
+     `UID`/`LogID` 同填（见上「上游 requestId 无论成功失败都必须落审计」铁律）。
    - **失败路径（非成功业务码）**：一律 `return nil, busiErr(...)` /
      `busiErrf(...)`（见上「失败也要可追查」铁律），把上游 code/msg/订单号/请求号
      带全；不要用 `fmt.Errorf`。只有网络不可达/读超时才用 `fmt.Errorf`。

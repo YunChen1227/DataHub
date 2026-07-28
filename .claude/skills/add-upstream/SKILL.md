@@ -24,7 +24,9 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
 2. **上游 kind 名** `<kind>`：上游客户端家族名（如 `rental`、`blacklist`），用作
    Go 文件名、Provider 常量、config 的 `kind` 值。
 3. **上游协议细节**：endpoint、HTTP 方法、签名/加密方式、请求参数、响应结构、
-   「查得 / 查无 / 上游侧错误」分别对应的响应码。
+   「查得 / 查无 / 上游侧错误」分别对应的响应码。**响应里哪个字段是"订单号"、
+   哪个是"请求/日志号"也要弄清**——成功与失败都要把它们记进审计（`UID`/`LogID`），
+   否则失败时无法向上游对账追查（见下「失败也要可追查」铁律）。
    - **请求参数必须逐字段抄全上游参数表**：字段名 + 类型 + **必填/选填** + 含义，
      一个不落。尤其警惕**易被忽略的授权/合规类字段**（如「授权书编号 authlet」
      「授权码」「授权日期」「查询原因码 reasoncode」「业务流水号」等）——它们常
@@ -50,6 +52,18 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
 - **上游归一化**：上游客户端实现 `port.UpstreamPort`，把响应归一化为
   `model.UpstreamResult`：查得 → `Code:"001"`；查无 → `Code:"999"`；上游侧错误
   （账户/参数/系统问题）→ 返回 `error`（不计费，走复查/对账兜底）。
+- **失败也要可追查（铁律）**：当上游"已应答但以非成功业务码拒绝/失败"时，**必须**
+  返回 `*model.UpstreamError`（用 `busiErr`/`busiErrf` 助手构造，见
+  [upstream/errors.go](internal/infrastructure/upstream/errors.go)），把上游返回的
+  **code / msg / uid(订单号) / logID(请求号)** 全部带上——**禁止**用裸
+  `fmt.Errorf` 把这些标识丢进一个字符串。orchestrator 会在失败路径（含最终
+  PENDING）用 `errors.As` 取出这些字段写入审计（`UpstreamCode/UpstreamUID/
+  UpstreamLogID/ErrMsg`，管理后台「操作记录」可见），使运营能凭上游订单号/请求号
+  向上游对账、追查失败原因。**仅**纯网络/传输失败（上游不可达、读超时，没有上游
+  标识可填）才继续用 `fmt.Errorf`。落地时想清楚该上游响应里哪个字段是"订单号"、
+  哪个是"请求/日志号"（如 idverify 的 `OutBizNo`/`RequestId`、consumetxn 的
+  `reqno`、gama/blacklist 的 `seqNo`、rental 的 `respOrder`），成功与失败两条路径
+  都要填。
 - **入参与上游严格对齐（铁律，违反即返工）**：本服务是纯转发网关——
   0. **字段集合以「本上游」参数表为唯一依据，禁止照搬既有路由**：每个上游要的
      字段都不一样。开工前先把上游参数表里的**每一个私有字段**（含授权书编号/
@@ -98,6 +112,11 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
    `Query`（归一化到 001/999/error）+ `Requery`（未联调前返回
    `&model.RequeryResult{Reachable: false}`，与既有上游一致）。
    富对象透出用 blacklist.go 里现成的 `compactJSON`。
+   - **成功路径**：`model.UpstreamResult` 的 `UID` 填上游订单号/流水号（`seqNo`/
+     `OutBizNo`/`respOrder`…），有独立请求号时填 `LogID`。
+   - **失败路径（非成功业务码）**：一律 `return nil, busiErr(...)` /
+     `busiErrf(...)`（见上「失败也要可追查」铁律），把上游 code/msg/订单号/请求号
+     带全；不要用 `fmt.Errorf`。只有网络不可达/读超时才用 `fmt.Errorf`。
 
 4. **[cmd/relay/config.go](cmd/relay/config.go)**
    - 若需要新的凭证字段：`upstreamConfig` 与 `fileUpstream` 各加字段（能复用

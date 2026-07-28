@@ -4,6 +4,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -142,10 +143,26 @@ func (o *QueryOrchestrator) runCore(ctx context.Context, lic *model.LicenseView,
 	result, callErr := o.upstream.Query(ctx, upReq)
 	var decision *model.BillingDecision
 	if callErr != nil {
+		// 失败也全量落审计：若上游"已应答但以业务码拒绝"(model.UpstreamError)，
+		// 把上游返回的 code/uid(订单号)/logId(请求号) 记进审计，便于向上游对账追查
+		// (即便随后 PENDING)。纯网络不可达没有这些标识，仅记 ErrMsg。
+		var ue *model.UpstreamError
+		if errors.As(callErr, &ue) {
+			rec.CalledUpstream = true // 上游确已应答(业务失败)，属"已调用上游"
+			rec.UpstreamCode = ue.Code
+			rec.UpstreamUID = ue.UID
+			rec.UpstreamLogID = ue.LogID
+		}
+		rec.ErrMsg = callErr.Error()
 		log.Warn("upstream call failed, re-querying by reqid", "err", callErr)
 		rr, rqErr := o.upstream.Requery(ctx, upReq.Reqid)
 		if rqErr != nil || rr == nil || !rr.Reachable {
-			rec.ErrMsg = "上游超时/复查未决，PENDING 待对账"
+			// 保留上游错误详情(rec.ErrMsg 已含 code/msg/uid/logId)，追加未决说明。
+			if rec.ErrMsg == "" {
+				rec.ErrMsg = "上游超时/复查未决，PENDING 待对账"
+			} else {
+				rec.ErrMsg += " | 复查未决，PENDING 待对账"
+			}
 			log.Warn("re-query unresolved, leaving PENDING for reconciliation", "err", rqErr)
 			return queryOutcome{appErr: errs.New(errs.BusiDataRequestErr, "")}
 		}

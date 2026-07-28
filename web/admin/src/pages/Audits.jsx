@@ -57,7 +57,7 @@ export default function Audits({ version }) {
             <tr>
               <th>时间</th><th>requestId(seqNo)</th><th>appKey</th><th>来源IP</th>
               <th>调用上游</th><th>查得数据</th><th>计费</th>
-              <th>busiCode</th><th>上游code</th><th>上游uid</th>
+              <th>busiCode</th><th>上游code</th><th>上游uid</th><th>上游logId</th>
               <th>耗时(ms)</th><th>入参(脱敏)</th><th>tradeNo/reqid</th><th>错误</th>
             </tr>
           </thead>
@@ -74,6 +74,7 @@ export default function Audits({ version }) {
                 <td>{a.busiCode}</td>
                 <td>{a.upstreamCode || '-'}</td>
                 <td>{a.upstreamUid || '-'}</td>
+                <td className="muted">{a.upstreamLogId || '-'}</td>
                 <td>{a.latencyMs}</td>
                 <td className="muted">{[a.nameMask, a.idCardMask, a.mobileMask].filter(Boolean).join(' / ')}</td>
                 <td className="muted">{[a.tradeNo, a.reqid].filter(Boolean).join(' / ')}</td>
@@ -81,7 +82,7 @@ export default function Audits({ version }) {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan="14" className="muted">暂无记录</td></tr>
+              <tr><td colSpan="15" className="muted">暂无记录</td></tr>
             )}
           </tbody>
         </table>

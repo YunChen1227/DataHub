@@ -160,7 +160,8 @@ func (c *RentalClient) Query(ctx context.Context, req *model.UpstreamRequest) (*
 	default:
 		// SW0001/SW0003/SW003x/SW004x/SW001x/SW10xx/SW9999 等均为我方在上游侧的
 		// 认证/验签/解密/限额/参数/系统问题, 视为上游侧错误: 不计费, 兜底处理。
-		return nil, fmt.Errorf("rental 上游错误 resp_code=%s resp_msg=%s", rr.RespCode, rr.RespMsg)
+		// 失败也带上游 respOrder(订单号)落审计供对账追查。
+		return nil, busiErr(rr.RespCode, rr.RespMsg, rr.RespOrder, rr.RespOrder)
 	}
 }
 

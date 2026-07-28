@@ -129,7 +129,7 @@ func (c *GamaClient) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 		return nil, fmt.Errorf("decode gama body: %w", err)
 	}
 	if gr.Code != 0 {
-		return nil, fmt.Errorf("gama 响应异常 code=%d msg=%s", gr.Code, gr.Msg)
+		return nil, busiErrf(gr.Code, gr.Msg, gr.SeqNo, gr.SeqNo)
 	}
 
 	switch gr.Data.BusiCode {
@@ -151,7 +151,8 @@ func (c *GamaClient) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 	default:
 		// 1001/1002/1003/1006/1007/1009… 均为我方在伽马侧的账户/参数/系统问题,
 		// 视为上游侧错误：不计费, 交由 orchestrator 走 re-query/对账兜底。
-		return nil, fmt.Errorf("gama 上游错误 busiCode=%d msg=%s", gr.Data.BusiCode, gr.Data.BusiMsg)
+		// 失败也带上游 seqNo(流水号)落审计供对账追查。
+		return nil, busiErrf(gr.Data.BusiCode, gr.Data.BusiMsg, gr.SeqNo, gr.SeqNo)
 	}
 }
 

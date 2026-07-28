@@ -124,7 +124,7 @@ func (c *FaceCompareClient) Query(ctx context.Context, req *model.UpstreamReques
 	if fr.Code != 200 {
 		// 400 参数错误 / 500 系统错误 / 501 第三方异常 / 60x 账户与权限问题：
 		// 均为我方在上游侧的账户/参数/系统问题, 视为上游侧错误 (不计费)。
-		return nil, fmt.Errorf("facecompare 上游错误 code=%d msg=%s", fr.Code, fr.Msg)
+		return nil, busiErrf(fr.Code, fr.Msg, "", "")
 	}
 
 	var data faceCompareData
@@ -132,7 +132,8 @@ func (c *FaceCompareClient) Query(ctx context.Context, req *model.UpstreamReques
 	if !faceComparePaidCodes[data.Incorrect] {
 		// 104/106/107/108/113 数据非法/系统异常/照片质量/图片过大/服务异常: 不收费,
 		// 归一为上游侧错误交由 orchestrator 走 re-query/对账兜底。
-		return nil, fmt.Errorf("facecompare 上游不收费结论 incorrect=%d msg=%s", data.Incorrect, fr.Msg)
+		// 失败也带上游 orderNo(订单号)落审计供对账追查。
+		return nil, busiErrf(data.Incorrect, fr.Msg, data.OrderNo, "")
 	}
 	return &model.UpstreamResult{
 		Code:  "001",

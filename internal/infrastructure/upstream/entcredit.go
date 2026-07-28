@@ -111,7 +111,8 @@ func (c *EntCreditClient) Query(ctx context.Context, req *model.UpstreamRequest)
 	case "empty":
 		return &model.UpstreamResult{Code: "999", Msg: "查无结果", UID: orderNo, Reqid: req.Reqid}, nil
 	default:
-		return nil, fmt.Errorf("entcredit 产品 %s 失败 (reqid=%s): %s", c.cfg.Product, req.Reqid, sec.Error)
+		// 失败也带上游状态码原值(sec.Raw)与订单号落审计供对账追查。
+		return nil, busiErr(sec.Raw, fmt.Sprintf("产品 %s 失败: %s", c.cfg.Product, sec.Error), orderNo, "")
 	}
 }
 

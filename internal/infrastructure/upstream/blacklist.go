@@ -125,7 +125,7 @@ func (c *BlacklistClient) Query(ctx context.Context, req *model.UpstreamRequest)
 		return nil, fmt.Errorf("decode blacklist body: %w", err)
 	}
 	if br.Code != 0 {
-		return nil, fmt.Errorf("blacklist 响应异常 code=%d msg=%s", br.Code, br.Msg)
+		return nil, busiErrf(br.Code, br.Msg, br.SeqNo, br.SeqNo)
 	}
 
 	switch br.Data.BusiCode {
@@ -147,7 +147,8 @@ func (c *BlacklistClient) Query(ctx context.Context, req *model.UpstreamRequest)
 	default:
 		// 1001/1002/1003/1004/1005/1006/1007/1009 均为我方在应诺尔侧的账户/参数/
 		// 系统问题, 视为上游侧错误: 不计费, 交由 orchestrator 走 re-query/对账兜底。
-		return nil, fmt.Errorf("blacklist 上游错误 busiCode=%d msg=%s", br.Data.BusiCode, br.Data.BusiMsg)
+		// 失败也带上游 seqNo(流水号)落审计供对账追查。
+		return nil, busiErrf(br.Data.BusiCode, br.Data.BusiMsg, br.SeqNo, br.SeqNo)
 	}
 }
 

@@ -3,6 +3,8 @@
 // it never participates in import cycles.
 package model
 
+import "fmt"
+
 // QueryCommand is the parsed client request body. 个人三要素路由用 mobile(必)/
 // idCard(必)/name(选)；swfp (税务发票聚合) 用 creditCode(统一社会信用代码，必)——
 // 字段名直接对齐上游真实入参名 (证通 entcreditapi args.creditCode；2026-07-08
@@ -85,6 +87,39 @@ type RequeryResult struct {
 	Reachable bool
 	Result    *UpstreamResult // nil when upstream confirms "未执行/未扣费"
 }
+
+// UpstreamError 表示上游"已应答但以业务码明确拒绝/失败"的错误（区别于网络不可达）。
+// 它承载上游返回的可追查标识，供 orchestrator 写入审计——即便请求最终落 PENDING，
+// 也能凭 UID(上游订单号) / LogID(上游请求号) 向上游对账、向上追查失败原因。
+// 上游客户端在遇到"非成功业务码"时应返回本类型（而非裸 fmt.Errorf），字段尽量填全：
+//   - Code：上游业务/状态码原值（如 "461"/"1002"/"SW0001"/"4"）
+//   - Msg ：上游返回的错误消息
+//   - UID ：上游订单号（对账用，如 OutBizNo/seqNo/respOrder/orderNo）
+//   - LogID：上游请求/日志号（对账用，如 RequestId/reqno）
+// 纯网络/传输失败（上游不可达、读超时）不用本类型——那时没有上游标识可填。
+type UpstreamError struct {
+	Code  string
+	Msg   string
+	UID   string
+	LogID string
+	Err   error // 可选底层原因
+}
+
+func (e *UpstreamError) Error() string {
+	s := fmt.Sprintf("上游业务失败 code=%s msg=%s", e.Code, e.Msg)
+	if e.UID != "" {
+		s += " uid=" + e.UID
+	}
+	if e.LogID != "" {
+		s += " logId=" + e.LogID
+	}
+	if e.Err != nil {
+		s += ": " + e.Err.Error()
+	}
+	return s
+}
+
+func (e *UpstreamError) Unwrap() error { return e.Err }
 
 // BillingState is the ledger lifecycle state (DESIGN §7.3). There is no UNKNOWN
 // terminal state — PENDING is always resolved by re-query or reconciliation.

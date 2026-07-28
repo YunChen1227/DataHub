@@ -127,7 +127,12 @@ func (c *IDVerifyClient) Query(ctx context.Context, req *model.UpstreamRequest) 
 	if ir.Code != 0 {
 		// 401–463 客户端错误 / 501–504 服务端错误：均为我方在上游侧的账户/参数/
 		// 照片/系统问题，视为上游侧错误 (不计费)，由 orchestrator 走 re-query/对账。
-		return nil, fmt.Errorf("idverify 上游错误 Code=%d Message=%s ErrorAddress=%s", ir.Code, ir.Message, ir.ErrorAddress)
+		// 失败也带上游标识(RequestId=请求号 / OutBizNo=订单号)落审计，供对账追查。
+		msg := ir.Message
+		if ir.ErrorAddress != "" {
+			msg += " errAddr=" + ir.ErrorAddress
+		}
+		return nil, busiErrf(ir.Code, msg, ir.OutBizNo, ir.RequestId)
 	}
 
 	uid := ir.OutBizNo

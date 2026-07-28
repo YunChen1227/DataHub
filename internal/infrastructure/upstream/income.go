@@ -127,7 +127,8 @@ func (c *IncomeClient) Query(ctx context.Context, req *model.UpstreamRequest) (*
 	default:
 		// 002/003/004/005/006/008/009/011/012/013/020 等均为我方在上游侧的账户/
 		// 参数/系统问题, 视为上游侧错误：不计费, 交由 orchestrator 走对账兜底。
-		return nil, fmt.Errorf("income 上游错误 code=%s msg=%s", ir.Code, ir.Msg)
+		// 失败也带上游 uid/reqid 落审计供对账追查。
+		return nil, busiErr(ir.Code, ir.Msg, ir.UID, ir.Reqid)
 	}
 }
 

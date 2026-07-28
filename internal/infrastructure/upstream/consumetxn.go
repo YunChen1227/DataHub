@@ -169,8 +169,8 @@ func (c *ConsumeTxnClient) Query(ctx context.Context, req *model.UpstreamRequest
 	}
 	if string(cr.Code) != "0" {
 		// 非 0 应答码：我方在上游侧的账户/参数/系统问题，视为上游侧错误 (不计费)，
-		// 由 orchestrator 走 re-query/对账兜底。
-		return nil, fmt.Errorf("consumetxn 上游错误 code=%s msg=%s", cr.Code, cr.Msg)
+		// 由 orchestrator 走 re-query/对账兜底。失败也带上游 reqno(请求号) 落审计供追查。
+		return nil, busiErr(string(cr.Code), cr.Msg, cr.Reqno, cr.Reqno)
 	}
 
 	uid := cr.Reqno
@@ -192,7 +192,7 @@ func (c *ConsumeTxnClient) Query(ctx context.Context, req *model.UpstreamRequest
 		}, nil
 	default:
 		// result 非 0/1：语义未定义，按上游侧异常处理（不计费）。
-		return nil, fmt.Errorf("consumetxn 未知 result=%q msg=%s", cr.Data.Result, cr.Msg)
+		return nil, busiErr(string(cr.Code), fmt.Sprintf("未知 result=%q msg=%s", cr.Data.Result, cr.Msg), cr.Reqno, cr.Reqno)
 	}
 }
 

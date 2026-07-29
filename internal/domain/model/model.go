@@ -25,6 +25,9 @@ type QueryCommand struct {
 	// xfjy (消费交易特征) 入参：授权书编号 authlet，配合 name/idcard/mobile
 	// （字段名对齐上游 data-bean params：name/idcard/mobile/authlet）。
 	Authlet string `json:"authlet"`
+	// tsfx (投诉分析识别名单) 入参：命中级别策略 poly（C1 高危/C2 敏感/C3 一般），
+	// 配合 mobile（字段名对齐上游 kfongtech api.complaint.query 的 poly/mobile）。
+	Poly string `json:"poly"`
 }
 
 // SignedRequest carries the request envelope material needed for MD5 signature
@@ -65,7 +68,9 @@ type UpstreamRequest struct {
 	ProfilePicture string
 	// xfjy (消费交易特征) 用 Authlet(终端授权书编号) + Name/IDCard/Mobile。
 	Authlet string
-	Reqid   string
+	// tsfx (投诉分析识别名单) 用 Poly(命中级别 C1/C2/C3) + Mobile。
+	Poly  string
+	Reqid string
 }
 
 // UpstreamResult is the normalized upstream response (DESIGN §6). 唯一上游伽马把原生
@@ -212,15 +217,17 @@ type RangeResult struct {
 // sfzhy 转接身份证三要素核验 (idverify 上游，name+idCard+profilePicture 入参，
 // 见 upstream/idverify.go)；xfjy 转接消费交易特征 (consumetxn 上游 data-bean，
 // JSON POST + MD5 sign，name/idcard/mobile/authlet 入参，有查得/查无，
-// 见 upstream/consumetxn.go)。
+// 见 upstream/consumetxn.go)；tsfx 转接投诉分析识别名单 (complaint 上游 kfongtech，
+// JSON POST + AES 加密 param + MD5 sign，mobile/poly 入参，data gzip 压缩，
+// 调用成功即计费、命中状态经 result.range 透出，见 upstream/complaint.go)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -256,6 +263,8 @@ func DemoAppKey(route string) string {
 		return "y89sfzhy"
 	case "xfjy":
 		return "y890xfjy"
+	case "tsfx":
+		return "y89tsfx"
 	default:
 		return "demo-" + route
 	}

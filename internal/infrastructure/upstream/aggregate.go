@@ -3,8 +3,10 @@ package upstream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/datahub/relay/internal/domain/model"
@@ -71,6 +73,8 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 		section aggSection
 		uid     string
 		logid   string
+		code    string
+		msg     string
 	}
 	results := make([]sub, len(a.sources))
 	var wg sync.WaitGroup
@@ -80,7 +84,21 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 			defer wg.Done()
 			s := a.sources[i]
 			res, err := s.Port.Query(ctx, req)
-			results[i] = sub{label: s.Label, section: classify(res, err), uid: uidOf(res), logid: logidOf(res)}
+			sb := sub{label: s.Label, section: classify(res, err)}
+			// 失败也要可追查（铁律）：子源"已应答但业务失败"时携带的上游订单号/
+			// 请求号在 *model.UpstreamError 里，必须捞出来，不能只从成功 res 取
+			// （res 为 nil 会丢标识，正是「上游uid/logId 列为空」的根因）。
+			if err != nil {
+				var ue *model.UpstreamError
+				if errors.As(err, &ue) {
+					sb.uid, sb.logid, sb.code, sb.msg = ue.UID, ue.LogID, ue.Code, ue.Msg
+				} else {
+					sb.msg = err.Error()
+				}
+			} else if res != nil {
+				sb.uid, sb.logid = res.UID, res.LogID
+			}
+			results[i] = sb
 		}(i)
 	}
 	wg.Wait()
@@ -108,9 +126,24 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 	}
 	slog.Debug("upstream aggregate", "reqid", req.Reqid, "ok", okCnt, "empty", emptyCnt, "err", errCnt)
 
-	// 全部失败 → error（对外 505062，交由 orchestrator 走复查/对账）。
+	// 全部失败 → error（对外 505062，交由 orchestrator 走复查/对账）。失败也要可
+	// 追查（铁律）：必须返回 *model.UpstreamError（busiErr）把子源上游订单号/请求号
+	// (uid/logid) 与业务码带出，orchestrator 才能落进审计的「上游uid/上游logId/上游
+	// code」列——禁止用裸 fmt.Errorf（那会丢掉所有上游标识，三列变空）。
 	if errCnt == len(results) {
-		return nil, fmt.Errorf("聚合上游全部数据源失败 (reqid=%s)", req.Reqid)
+		code := ""
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("聚合上游全部数据源失败 (reqid=%s)", req.Reqid))
+		for _, r := range results {
+			if code == "" && r.code != "" {
+				code = r.code
+			}
+			b.WriteString(fmt.Sprintf(" | %s: code=%s %s", r.label, r.code, r.msg))
+		}
+		if code == "" {
+			code = "aggregate_all_failed"
+		}
+		return nil, busiErr(code, b.String(), uid, logid)
 	}
 
 	switch {
@@ -153,20 +186,6 @@ func classify(res *model.UpstreamResult, err error) aggSection {
 	default:
 		return aggSection{Status: "error", Error: fmt.Sprintf("子源返回非预期 code=%s msg=%s", res.Code, res.Msg)}
 	}
-}
-
-func uidOf(res *model.UpstreamResult) string {
-	if res == nil {
-		return ""
-	}
-	return res.UID
-}
-
-func logidOf(res *model.UpstreamResult) string {
-	if res == nil {
-		return ""
-	}
-	return res.LogID
 }
 
 // Requery：单源直通；多源聚合暂不做逐源对账，返回 Reachable=false 保持 PENDING

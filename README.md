@@ -11,12 +11,13 @@
 - **对外（下游，rlbd2=人脸身份证比对一所·独立凭证）**：`POST /v1/openapi/zlx/querySrmxRLBD2`，对外契约与 rlbd1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），独立成域（独立库/统计/license）。详见 [`docs/API_接口文档与使用手册_rlbd2.pdf`](docs/API_接口文档与使用手册_rlbd2.pdf)。
 - **对外（下游，sfzhy=身份证三要素核验）**：`POST /v1/openapi/zlx/querySrmxSFZHY`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`+`idCard`(15/18 位)+`profilePicture`(base64 人像照片)；核验结果富对象（`Result`/`ResultMessage`/`ImageScore`）整体 **JSON 序列化为字符串**经 `result.range` 透出。三要素核验无「查无」概念，故不产生 `999`。
 - **对外（下游，xfjy=消费交易特征）**：`POST /v1/openapi/zlx/querySrmxXFJY`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`/`idCard`/`mobile`/`authlet`（均选填，至少提供一个查询要素）；消费交易特征富对象整体 **JSON 序列化为字符串**经 `result.range` 透出。区分「查得」（`001` 计费）与「查无」（`999` 不计费）。
+- **对外（下游，tsfx=投诉分析识别名单）**：`POST /v1/openapi/zlx/querySrmxTSFX`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `mobile`+`poly`（命中级别 `C1`/`C2`/`C3`，均必填）；命中结果数组整体 **JSON 序列化为字符串**经 `result.range` 透出（每条含 `callee`/`forbid`）。本路由**只要调用成功即 `001` 计费**，是否命中体现在 `forbid`（无 `999` 查无码）。
 
 > **额度策略（v0.6+）**：已**取消额度限制**——不限制客户调用次数；系统仅**统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。维度②（上游配额/调用计数/对账作业）已在 v0.7 **彻底移除**。
 
 > **IP 准入（v0.7）**：网关**不再**做全局/每用户 IP 白名单校验；来源 IP 仅写入审计日志。生产环境由**阿里云 ECS 安全组**等网络层控制访问。
 
-> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `swfp` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
+> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `swfp` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` / `tsfx` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
 
 - **对内（上游，按版本路由）**：每个版本各自对接一个上游，归一化为统一的 `UpstreamResult`（`001`查得 /`999`查无）：
   - `x1` → **伽马分层分**（`gama`，《伽马分层分_定制版》PDF：`POST /enol/api/v1/doCheck`，MD5 加签 JSON 信封）。
@@ -28,6 +29,7 @@
   - `rlbd2` → **人脸身份证比对一所 / 数脉（独立凭证）**（同 `rlbd1` 的 `facecompare` 上游接口与协议，仅换一套 `appId/appSecret`，独立成域）。
   - `sfzhy` → **身份证三要素核验**（`idverify`，`POST /api/idCardThreeElements` **JSON** 提交；`signature = SHA256(升序 k=v&… + "&AppSecret=" + 商户密钥)`，明文传 `name/idCard/profilePicture`；`Code=0` 归一 `001`（Result 0–5 均计费），`Code≠0` 归一上游侧错误；响应富对象序列化透出 `result.range`）。
   - `xfjy` → **消费交易特征 / data-bean**（`consumetxn`，`POST /` **JSON** 提交；公共参数 `procode(fk3002)/sceneid/reqtime/nonce/sign`，`sign = MD5(过滤空值升序 k=v&… + "&appkey=" + appkey)`，私有参数 `params{name/idcard/mobile/authlet}`；`code=0 且 result=0` 归一 `001`（计费），`result=1` 归一 `999`（查无不计费），`code≠0` 归一上游侧错误；响应 `data.resultdata` 富对象序列化透出 `result.range`）。
+  - `tsfx` → **投诉分析识别名单 / kfongtech**（`complaint`，`POST /inlet/api` **JSON** 提交；外层 `{apiKey, param, sign}`，`param` 为业务参数 `{method/version/poly/mobile}` **AES 加密**、`sign` 为外层签名，响应 `data` 为 **gzip 压缩**的命中结果数组；`code=0000` 归一 `001`（**调用成功即计费**，命中状态 `forbid` 随结果数组透出 `result.range`），`code≠0000` 归一上游侧错误。本上游无「查无(999)」概念）。
   保留 `upstream.Router` 抽象，每版本一个单 provider 路由。
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，架构图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
@@ -166,7 +168,7 @@ storage:
   driver: "postgres"             # 生产必须为 postgres
   migrationsDir: "migrations"    # 相对 relay 工作目录；启动时自动跑 DDL
 
-# 存储按域独立：x1/v8v9/zlf/blk/swfp/rlbd1/rlbd2/sfzhy/xfjy 各一套 PG 库 + Redis 逻辑库。
+# 存储按域独立：x1/v8v9/zlf/blk/swfp/rlbd1/rlbd2/sfzhy/xfjy/tsfx 各一套 PG 库 + Redis 逻辑库。
 # 上游按 upstreams 列表配置：单源路由列表长度 1；聚合路由 (swfp) 长度 N，每个子源自带
 # 完整凭证，主程序并发调所有子源后按判定表聚合（≥1查得→001计费 / 全查无→999 /
 # 部分成功→002不计费 / 全失败→505062）。同一路由所有子源 kind 必须一致。

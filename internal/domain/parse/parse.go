@@ -23,6 +23,8 @@ var (
 	creditCodeRe = regexp.MustCompile(`^[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}$`)
 	// xfjy 授权书编号 authlet：由数字+字母组成（data-bean fk3002 字段说明）。
 	authletRe = regexp.MustCompile(`^[0-9A-Za-z]+$`)
+	// tsfx 命中级别策略 poly：C1 高危 / C2 敏感 / C3 一般（kfongtech 参数表枚举）。
+	polyRe = regexp.MustCompile(`^C[123]$`)
 )
 
 // Parse runs参数校验; failures return busiCode 1007 数据请求异常 (我方拦截, 不调
@@ -181,6 +183,31 @@ func ParseConsumeTxn(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 		Mobile:  mobile,
 		Authlet: authlet,
 		Reqid:   NewReqid(),
+	}, nil
+}
+
+// ParseComplaint 校验 tsfx (投诉分析识别名单) 入参。字段口径严格对齐上游 kfongtech
+// api.complaint.query 的业务参数表：mobile（手机号，必填）+ poly（命中级别策略，
+// 必填，枚举 C1/C2/C3）。method/version 为固定常量由上游客户端填充，非下游入参。
+// 校验规则：① mobile 必填且须为 11 位手机号；② poly 必填且须为 C1/C2/C3。
+// 失败返回 busiCode 1007 数据请求异常（我方前置拦截，不调上游/不计费）。
+func ParseComplaint(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+	if cmd == nil {
+		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
+	}
+	mobile := strings.TrimSpace(cmd.Mobile)
+	poly := strings.ToUpper(strings.TrimSpace(cmd.Poly))
+
+	if !mobileRe.MatchString(mobile) {
+		return nil, errs.New(errs.BusiDataRequestErr, "mobile 格式非法")
+	}
+	if !polyRe.MatchString(poly) {
+		return nil, errs.New(errs.BusiDataRequestErr, "poly(命中级别) 必填, 须为 C1/C2/C3 之一")
+	}
+	return &model.UpstreamRequest{
+		Mobile: mobile,
+		Poly:   poly,
+		Reqid:  NewReqid(),
 	}, nil
 }
 

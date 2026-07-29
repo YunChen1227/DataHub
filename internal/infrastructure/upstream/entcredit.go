@@ -112,8 +112,9 @@ func (c *EntCreditClient) Query(ctx context.Context, req *model.UpstreamRequest)
 	case "empty":
 		return &model.UpstreamResult{Code: "999", Msg: "查无结果", UID: orderNo, Reqid: req.Reqid, LogID: orderNo}, nil
 	default:
-		// 失败也带上游状态码原值(sec.Raw)与订单号落审计供对账追查。
-		return nil, busiErr(sec.Raw, fmt.Sprintf("产品 %s 失败: %s", c.cfg.Product, sec.Error), orderNo, "")
+		// 失败也带上游状态码原值(sec.Raw)与订单号(orderNo)落审计供对账追查。
+		// 上游只有 orderNo 一个标识，UID/LogID 同填——绝不能让「上游logId」列为空。
+		return nil, busiErr(sec.Raw, fmt.Sprintf("产品 %s 失败: %s", c.cfg.Product, sec.Error), orderNo, orderNo)
 	}
 }
 
@@ -206,16 +207,22 @@ func (c *EntCreditClient) callProduct(ctx context.Context, product string, req *
 	if err := json.Unmarshal(raw, &er); err != nil {
 		return fail(fmt.Sprintf("decode body (http %d): %s", resp.StatusCode, err.Error()))
 	}
+	// 上游已应答（无论成功/业务失败）后的失败也要把 orderNo(上游订单号)带出，
+	// 供聚合器与审计对账追查——绝不能像纯网络失败那样丢标识（失败也要可追查·铁律）。
+	failResp := func(raw, msg string) (entCreditSection, string) {
+		return entCreditSection{Status: "error", Raw: raw, Error: msg}, er.OrderNo
+	}
+
 	// 附录错误码表：00000 = 查询成功；其余 (E0001-E1027) 均视为该数据源失败。
 	if er.ResultCode != "00000" {
-		return fail(fmt.Sprintf("resultCode=%s desc=%s", er.ResultCode, er.ResultDesc))
+		return failResp(er.ResultCode, fmt.Sprintf("resultCode=%s desc=%s", er.ResultCode, er.ResultDesc))
 	}
 
 	// resultData 结构随产品码变化 (<产品码>Status / <产品码>Data)；状态码
 	// 4=查询成功有结果 / 1=查询成功无结果 / 3=查询失败 (docs 附录"状态码"表)。
 	var resultData map[string]json.RawMessage
 	if err := json.Unmarshal(er.ResultData, &resultData); err != nil {
-		return fail("decode resultData: " + err.Error())
+		return failResp(er.ResultCode, "decode resultData: "+err.Error())
 	}
 	var status string
 	if s, ok := resultData[product+"Status"]; ok {
@@ -225,19 +232,19 @@ func (c *EntCreditClient) callProduct(ctx context.Context, product string, req *
 	case "4":
 		dataNode, ok := resultData[product+"Data"]
 		if !ok || len(dataNode) == 0 {
-			return fail("状态码4但缺少 " + product + "Data")
+			return failResp(status, "状态码4但缺少 "+product+"Data")
 		}
 		// <产品码>Data.result[].data 是 base64 编码的明细 JSON（PDF 样例展示）。
 		// 解开 base64 后透出明细本体，客户拿到即可用（单条→对象，多条→数组）。
 		decoded, err := decodeEntCreditData(dataNode)
 		if err != nil {
-			return fail("解码明细失败: " + err.Error())
+			return failResp(status, "解码明细失败: "+err.Error())
 		}
 		return entCreditSection{Status: "ok", Raw: status, Data: decoded}, er.OrderNo
 	case "1":
 		return entCreditSection{Status: "empty", Raw: status}, er.OrderNo
 	default:
-		return fail(fmt.Sprintf("状态码=%s (预期4/1)", status))
+		return failResp(status, fmt.Sprintf("状态码=%s (预期4/1)", status))
 	}
 }
 

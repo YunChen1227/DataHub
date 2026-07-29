@@ -376,6 +376,8 @@ func defaultKind(version string) string {
 		return "idverify"
 	case "xfjy":
 		return "consumetxn"
+	case "tsfx":
+		return "complaint"
 	default:
 		return "income"
 	}

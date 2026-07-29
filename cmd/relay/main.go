@@ -290,6 +290,9 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// xfjy 消费交易特征：上游 params 全选填，网关仅校验格式并要求至少一个
 		// 查询要素 (name/idCard/mobile)，对齐上游必填口径不臆造多余必填。
 		orch.WithParser(parse.ParseConsumeTxn)
+	case upstream.ProviderComplaint:
+		// tsfx 投诉分析识别名单：mobile + poly(C1/C2/C3) 均必填 (对齐 kfongtech 契约)。
+		orch.WithParser(parse.ParseComplaint)
 	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upClient, billSvc, quotaSvc, cfg.requeryInterval, log)
 
@@ -417,6 +420,16 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			SceneID: uc.appID,
 			AppKey:  uc.appSecret,
 			Procode: uc.apiKey,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderComplaint:
+		// tsfx 投诉分析识别名单 (kfongtech)：apiKey=Apikey、aesKey=param AES 密钥、
+		// appSecret=sign 密钥 (复用既有凭证字段，不新增 config 字段)。
+		client := upstream.NewComplaint(upstream.ComplaintConfig{
+			BaseURL:    uc.baseURL,
+			APIKey:     uc.apiKey,
+			AESKey:     uc.aesKey,
+			SignSecret: uc.appSecret,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderGama, "":

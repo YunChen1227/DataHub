@@ -71,9 +71,23 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
      路径都填。既有映射参考：idverify `OutBizNo`(uid)/`RequestId`(logId)；consumetxn
      `reqno`(uid=logId)；gama/blacklist `seqNo`(uid=logId)；income `uid`(uid=logId，
      注意 `reqid` 是我方回显不算)；rental `respOrder`(uid=logId)；facecompare/entcredit
-     `orderNo`(uid=logId)。
+     `orderNo`(uid=logId)；complaint `token`(uid=logId)。
   5. 幂等重放（命中台账）也要回填：`orchestrator.replay` 从 `Ledger.UpstreamUID/
      UpstreamLogID` 回填审计，别让命中缓存的请求这两列变空。
+  6. **聚合路由（`aggregate.go`，多子源）失败路径同样铁律，且最易踩坑**：
+     - 采集子源标识时**必须同时从「成功结果」和「失败错误」两头取**——子源失败时
+       `Query` 返回 `(nil, err)`，`res` 为 nil，只从 `res` 取 uid/logid 会**全空**！
+       必须对 `err` 做 `errors.As(&*model.UpstreamError)` 取出 `UID/LogID/Code/Msg`。
+     - **全部子源失败**（`errCnt==len`）**禁止**返回裸 `fmt.Errorf("...全部失败...")`
+       （那会让 orchestrator 无法 `errors.As`，导致 `调用上游=否` + 上游 code/uid/logId
+       三列全空）——**必须**返回 `busiErr(code, 汇总msg, uid, logid)`，其中 uid/logid
+       取任一子源的上游标识、code 取任一子源业务码。
+     - 部分成功(002)/全查无(999)分支也要把从**失败子源**捞到的 uid/logid 一并纳入
+       采集（首个非空即可）。回归测试见
+       [upstream/aggregate_test.go](internal/infrastructure/upstream/aggregate_test.go)
+       （`TestAggregatorAllFailedCarriesUpstreamIDs`），改聚合逻辑后必须保持它通过。
+     - 前提：单产品 client（如 `entcredit.go`）在**上游已应答但业务失败**时，`fail` 分支
+       也要回传上游响应里的 `orderNo`（别写死空串）——否则聚合器无从捞起。
 - **入参与上游严格对齐（铁律，违反即返工）**：本服务是纯转发网关——
   0. **字段集合以「本上游」参数表为唯一依据，禁止照搬既有路由**：每个上游要的
      字段都不一样。开工前先把上游参数表里的**每一个私有字段**（含授权书编号/
@@ -164,7 +178,8 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
 
 9. **新建 `scripts/mock_<kind>.go`** — 参考 [scripts/mock_blacklist.go](scripts/mock_blacklist.go)
    的结构（`//go:build ignore` + 单文件 main）。监听下一个空闲端口
-   （已占用：gama 9112 / income 9113 / rental 9114 / blacklist 9115，顺延）。
+   （已占用：gama 9112 / income 9113 / rental 9114 / blacklist 9115 / entcredit 9116 /
+   facecompare 9117 / idverify 9118 / consumetxn 9119 / complaint 9120，顺延）。
    必须模拟：验签通过的查得、特定手机号（惯例 `13800000000`）查无、坏签名报错。
 10. **[scripts/recreate_databases.go](scripts/recreate_databases.go)** —
     `versionOrder` 追加 `"<route>"`。

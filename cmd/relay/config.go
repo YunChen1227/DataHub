@@ -41,6 +41,8 @@ type upstreamConfig struct {
 	// label 是本子源在聚合 range 里的段名 (如 invoice1/tax1)；聚合路由 (len>1) 用，
 	// 单源路由可省。为空时由 client 按 product/下标缺省。
 	label string
+	// optional 标记可选子源：下游 scope=basic 时跳过 (swfp 源5 销项数据)。
+	optional bool
 }
 
 // ossConfig holds aliyun OSS 凭证 for uploading the租赁分授权书 (rental 专用)。
@@ -169,6 +171,8 @@ type fileUpstream struct {
 	Product         string `yaml:"product"` // entcredit: 本子源的单个产品码
 	// label：本子源在聚合 range 里的段名 (invoice1/tax1…)；聚合路由用，单源可省。
 	Label string `yaml:"label"`
+	// optional：可选子源，下游 scope=basic 时跳过 (swfp 源5 销项数据)。
+	Optional bool `yaml:"optional"`
 }
 
 // fileOSS mirrors the rental upstream's oss YAML block.
@@ -294,9 +298,13 @@ func loadConfig() (config, error) {
 			ups = append(ups, toUpstreamConfig(fu, v))
 		}
 		// 同一路由所有子源 kind 必须一致 (入参校验器/信封按路由统一，见 buildRouteStack)。
-		for i := 1; i < len(ups); i++ {
-			if ups[i].kind != ups[0].kind {
-				return config{}, fmt.Errorf("version %s: upstreams 各子源 kind 必须一致 (%q vs %q)", v, ups[0].kind, ups[i].kind)
+		// 例外：swfp 有契约映射层 (upstream.SwfpContract)，允许混接 entcredit(源1-4)
+		// + salesdata(源5)；参数校验器仍按首个子源 kind (entcredit→ParseCreditCode) 选择。
+		if v != "swfp" {
+			for i := 1; i < len(ups); i++ {
+				if ups[i].kind != ups[0].kind {
+					return config{}, fmt.Errorf("version %s: upstreams 各子源 kind 必须一致 (%q vs %q)", v, ups[0].kind, ups[i].kind)
+				}
 			}
 		}
 
@@ -354,6 +362,7 @@ func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
 		secretAccessKey: fu.SecretAccessKey,
 		product:         fu.Product,
 		label:           fu.Label,
+		optional:        fu.Optional,
 	}
 }
 

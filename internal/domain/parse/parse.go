@@ -70,7 +70,9 @@ func ParseWithName(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 // ParseCreditCode 校验 swfp 入参 (creditCode 必填，统一社会信用代码；字段名对齐
 // 上游证通 entcreditapi 的 args.creditCode——2026-07-08 上游 E1000 报错明确指出
 // 必填字段名为 creditCode，不是官方 demo 文档示例里的 entInfo，不臆造中间层字段
-// 名)。失败返回 busiCode 1007 数据请求异常 (我方拦截, 不调上游/不计费)。
+// 名)。可选入参 scope（调用范围）："all"(缺省)=全部数据源 / "basic"=仅基础数据源
+// (跳过可选的源5 销项数据)；其余取值拦截。失败返回 busiCode 1007 数据请求异常
+// (我方拦截, 不调上游/不计费)。
 func ParseCreditCode(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	if cmd == nil {
 		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
@@ -79,8 +81,17 @@ func ParseCreditCode(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	if !creditCodeRe.MatchString(creditCode) {
 		return nil, errs.New(errs.BusiDataRequestErr, "creditCode 格式非法")
 	}
+	scope := strings.ToLower(strings.TrimSpace(cmd.Scope))
+	switch scope {
+	case "", model.ScopeAll:
+		scope = model.ScopeAll
+	case model.ScopeBasic:
+	default:
+		return nil, errs.New(errs.BusiDataRequestErr, "scope 取值非法, 须为 all 或 basic")
+	}
 	return &model.UpstreamRequest{
 		CreditCode: creditCode,
+		Scope:      scope,
 		Reqid:      NewReqid(),
 	}, nil
 }

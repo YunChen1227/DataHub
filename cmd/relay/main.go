@@ -314,11 +314,17 @@ func buildUpstreams(route string, ucs []upstreamConfig, httpClient *http.Client,
 		if err != nil {
 			return nil, "", err
 		}
-		sources = append(sources, upstream.LabeledUpstream{Label: labelFor(uc, i), Port: client})
+		sources = append(sources, upstream.LabeledUpstream{Label: labelFor(uc, i), Port: client, Optional: uc.optional})
 	}
 	agg, err := upstream.NewAggregator(sources)
 	if err != nil {
 		return nil, "", err
+	}
+	// swfp 有明确的下游返回值文档 (docs/税票分析接口文档.xlsx)：套契约映射层，把
+	// 聚合分段结果整理为 xlsx 两段结构 + 按源分组 + sourceStatus（严格白名单）。
+	// 其余路由无返回值文档，保持原样透传聚合结果。
+	if route == "swfp" {
+		return upstream.NewSwfpContract(agg), ucs[0].kind, nil
 	}
 	return agg, ucs[0].kind, nil
 }
@@ -331,6 +337,9 @@ func labelFor(uc upstreamConfig, idx int) string {
 	}
 	if uc.kind == upstream.ProviderEntCredit && uc.product != "" {
 		return upstream.EntCreditLabel(uc.product)
+	}
+	if uc.kind == upstream.ProviderSalesData {
+		return "sales" // swfp 契约层按此段名映射为源5
 	}
 	return fmt.Sprintf("%s%d", uc.kind, idx+1)
 }
@@ -430,6 +439,15 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			APIKey:     uc.apiKey,
 			AESKey:     uc.aesKey,
 			SignSecret: uc.appSecret,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderSalesData:
+		// swfp 源5 销项数据 (凯盈云 crestv)：appId=AppID、appSecret=AppKey (兼作
+		// AES 密钥，复用既有凭证字段)。baseURL 为业务接口前缀 (…/api/ws)。
+		client := upstream.NewSalesData(upstream.SalesDataConfig{
+			BaseURL: uc.baseURL,
+			AppID:   uc.appID,
+			AppKey:  uc.appSecret,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderGama, "":

@@ -30,3 +30,42 @@ func pkcs5Pad(data []byte, blockSize int) []byte {
 	pad := blockSize - len(data)%blockSize
 	return append(data, bytes.Repeat([]byte{byte(pad)}, pad)...)
 }
+
+// aesECBDecryptBase64 is the inverse of aesECBEncryptBase64: Base64 解码后按块
+// AES/ECB 解密并去除 PKCS5 填充。销项数据 (salesdata) 上游应答 ReqData 解密用。
+func aesECBDecryptBase64(cipherB64 string, key []byte) ([]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(cipherB64)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("aes new cipher (key len=%d): %w", len(key), err)
+	}
+	bs := block.BlockSize()
+	if len(raw) == 0 || len(raw)%bs != 0 {
+		return nil, fmt.Errorf("密文长度 %d 不是块大小 %d 的整数倍", len(raw), bs)
+	}
+	out := make([]byte, len(raw))
+	for i := 0; i < len(raw); i += bs {
+		block.Decrypt(out[i:i+bs], raw[i:i+bs])
+	}
+	return pkcs5Unpad(out, bs)
+}
+
+// pkcs5Unpad strips PKCS5/PKCS7 padding, validating the pad bytes.
+func pkcs5Unpad(data []byte, blockSize int) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("空明文")
+	}
+	pad := int(data[len(data)-1])
+	if pad <= 0 || pad > blockSize || pad > len(data) {
+		return nil, fmt.Errorf("非法填充长度 %d", pad)
+	}
+	for _, b := range data[len(data)-pad:] {
+		if int(b) != pad {
+			return nil, fmt.Errorf("填充字节不一致")
+		}
+	}
+	return data[:len(data)-pad], nil
+}

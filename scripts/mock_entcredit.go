@@ -51,25 +51,87 @@ const (
 	requestURI = "/ectcispserver/api/entcreditapi/query"
 )
 
-// sampleData 按产品码返回一段明细样例（结构参照四份 PDF 解码后的字段风格）。
+// sampleData 按产品码返回一段明细样例。结构对齐四份 PDF 样例 base64 解码后的真实
+// 形态：发票产品 {nsrjbxx, nsrfpxx{五个 List}}、税务产品 {nsrjbxx, nsrswxx{四个
+// List}}；并故意携带 xlsx 契约之外的字段（如 kphzxxList 的 yxhpje/yxhpsl），供
+// swfp 契约层白名单过滤做回归。
 func sampleData(prodCode string) map[string]any {
+	nsrjbxx := map[string]string{
+		"nsrsbh": creditCodeNormal, "nsrmc": "重庆某某科技有限公司", "hymcdl": "批发和零售业",
+		"cybm": "3", "kyrq": "2018-06-01", "nsrzt": "正常", "zzsnsrlx": "2",
+		"qydyckpsj": "2024-04-11", "sjjyys": "14", "szdjsswjgdm": "13500233",
+		"szdjsswjgmc": "国家税务总局某区税务局",
+	}
 	switch prodCode {
-	case "P0130081":
-		return map[string]any{"nsrfpxx": map[string]any{"khxsdqList": []map[string]string{
-			{"ljse": "44.09", "kpqj": "2025-04-30", "nsrsbh": creditCodeNormal, "jyje": "4452.61"},
-		}}}
-	case "P0130083":
-		return map[string]any{"nsrfpxx": map[string]any{"syhzxxList": []map[string]string{
-			{"ljkpcs": "1", "kpqj": "2025-05-31", "nsrsbh": creditCodeNormal, "ljkpjebhs": "172.28"},
-		}}}
-	case "P0130082":
-		return map[string]any{"nsrswxx": map[string]any{"sbsjList": []map[string]string{
-			{"sssjq": "2026-01-01", "nsrsbh": creditCodeNormal, "ynse": "1.71", "ybtse": "1.71"},
-		}}}
-	default: // P0130084
-		return map[string]any{"nsrswxx": map[string]any{"jksjList": []map[string]string{
-			{"sssjq": "2025-10-01", "nsrsbh": creditCodeNormal, "bys": "19066.99"},
-		}}}
+	case "P0130081", "P0130083": // 发票数据聚合 part1/part2（同构）
+		return map[string]any{
+			"nsrjbxx": nsrjbxx,
+			"nsrfpxx": map[string]any{
+				"syhzxxList": []map[string]string{{
+					"ssyf": "2025-05", "nsrsbh": creditCodeNormal, "kpqj": "2025-05-31",
+					"xfnsrsbh": "92222401MA16M04W14", "xfmc": "某某洗浴城", "xfsl": "1",
+					"ljkpcs": "1", "ljkpjebhs": "172.28", "ljse": "1.72", "kpcszb": "1",
+					"kpjezb": "1.00000", "kpjepmbhs": "1", "hpjebhs": "0", "hpsl": "0",
+					"hpse": "0", "fpjebhs": "0", "fpsl": "0", "fpse": "0",
+				}},
+				"xyhzxxList": []map[string]string{{
+					"ssyf": "2025-04", "nsrsbh": creditCodeNormal, "kpqj": "2025-04-30",
+					"gfnsrsbh": "91500233MA5YQWQ44M", "gfnsrmc": "重庆众合共赢科技有限公司",
+					"gfsl": "1", "ljkpcs": "1", "ljkpjebhs": "4408.52", "ljse": "44.09",
+					"kpcszb": "1", "kpjezb": "1.00000", "kpjepmbhs": "1", "hpjebhs": "0",
+					"hpsl": "0", "hpse": "0", "fpjebhs": "0", "fpsl": "0", "fpse": "0",
+				}},
+				"spxxList": []map[string]string{{
+					"ssyf": "2025-04", "nsrsbh": creditCodeNormal, "hwhlwmc": "现代服务",
+					"sl": "0.010000", "spzsl": "1", "spzje": "4408.52", "spzse": "44.09",
+					"gxfxdhwhlwbmzls": "1", "sphlwzslzb": "1.00000", "sphlwzjezb": "1.00000",
+					"jyjezbpm": "1",
+				}},
+				"khxsdqList": []map[string]string{{
+					"ssyf": "2025-04", "nsrsbh": creditCodeNormal, "kpqj": "2025-04-30",
+					"gfdjssl": "1", "jycs": "1", "jycszb": "1", "kpjebhs": "4408.52",
+					"jyje": "4452.61", "jyjezb": "1.00000", "jyjepm": "1",
+					"gfdjsxzqydm": "5002", "gfdjsxzqymc": "重庆市县", "ljse": "44.09",
+				}},
+				"kphzxxList": []map[string]string{{
+					"ssyf": "2026-05", "kpqj": "2026-05-31", "nsrsbh": creditCodeNormal,
+					"ljkpcs": "0", "kpje": "0", "ljse": "0", "hpsl": "0", "hpje": "0",
+					"hpse": "0", "fpsl": "0", "fpje": "0", "fpse": "0", "dzzgkpjejlp": "0",
+					"dzzgkpjehhfp": "0", "dykptsqb": "0", "dykptslp": "null",
+					"zjybkpsj": "", "dqlxwjyjlts": "999",
+					"yxhpje": "0", "yxhpsl": "0", // xlsx 之外的字段：契约层必须剔除
+				}},
+			},
+		}
+	default: // P0130082 / P0130084 税务数据聚合 part1/part2（同构）
+		return map[string]any{
+			"nsrjbxx": nsrjbxx,
+			"nsrswxx": map[string]any{
+				"sbsjList": []map[string]string{{
+					"nsrsbh": creditCodeNormal, "sbrq": "2026-04-10", "sfzl": "增值税小规模申报表",
+					"sssjq": "2026-01-01", "sssjz": "2026-03-31", "qbxssr": "57.09",
+					"ysxssr": "57.09", "ynse": "1.71", "yjse": "0.0", "ybtse": "1.71",
+					"jmse": "0.0", "sbqx": "2026-03-16",
+				}},
+				"lrbxxList": []map[string]string{{
+					"nsrsbh": creditCodeNormal, "sbrq": "2026-04-10", "sssjq": "2026-01-01",
+					"sssjz": "2026-03-31", "xmmc": "营业收入", "bnljje": "57.09", "bys": "57.09",
+					"mc": "1",
+				}},
+				"zcfzbxxList": []map[string]any{{
+					"nsrsbh": creditCodeNormal, "sbrq": "2026-04-10", "sssjq": "2026-01-01",
+					"sssjz": "2026-03-31", "cwbblxdm": "", "zlbsxlmc": "", "ewbxh": "",
+					"zcxmmc": "货币资金", "qmyezc": 23000.44, "ncyezc": 23000.44,
+					"fzhsyzqyxmmc": "短期借款", "qmyeqy": 0.0, "ncyeqy": 0.0,
+					"sbqx": "2026-03-16", // xlsx 之外的字段：契约层必须剔除
+				}},
+				"zsbxxList": []map[string]any{{
+					"nsrsbh": creditCodeNormal, "sssjq": "2025-01-01", "sssjz": "2025-12-31",
+					"jkfsrq": "", "jkzt": "无需扣款", "zsxm": "财务报表", "skzl": "其他税款",
+					"sjje": 0, "sl": "", "rkrq": "",
+				}},
+			},
+		}
 	}
 }
 

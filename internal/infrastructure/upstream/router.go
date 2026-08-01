@@ -13,4 +13,5 @@ const (
 	ProviderIDVerify    = "idverify"    // sfzhy: 身份证三要素核验
 	ProviderConsumeTxn  = "consumetxn"  // xfjy: 消费交易特征 (data-bean)
 	ProviderComplaint   = "complaint"   // tsfx: 投诉分析识别名单 (kfongtech)
+	ProviderSalesData   = "salesdata"   // swfp 第五子源: 销项数据 (凯盈云 crestv)
 )

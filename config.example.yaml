@@ -150,9 +150,13 @@ versions:
     redis:
       <<: *redis_base
       db: 4
-  # swfp 是聚合路由：4 个 entcredit 子源（证通 entcreditapi 四产品码）并发查询后聚合。
-  # 每个子源自带完整凭证——即使同平台同凭证也各写一份（子源完全独立）。label 是该子源
-  # 在聚合 range 里的段名；product 是产品码。四产品：发票 part1/2 + 税务 part1/2。
+  # swfp 是聚合路由：4 个 entcredit 子源（证通 entcreditapi 四产品码）+ 1 个可选的
+  # salesdata 子源（凯盈云销项数据）并发查询后聚合。每个子源自带完整凭证——即使同
+  # 平台同凭证也各写一份（子源完全独立）。label 是该子源的段名，契约层按 label 映射
+  # 为对下游脱敏的源编号：invoice1→源1 / invoice2→源2 / tax1→源3 / tax2→源4 / sales→源5。
+  # swfp 有明确下游返回值文档（docs/税票分析接口文档.xlsx）：输出经契约层按 xlsx 两段
+  # 结构（发票数据聚合/税务数据聚合）+ 按源分组 + sourceStatus 整理，严格白名单。
+  # 下游可选入参 scope："all"(缺省)=全部数据源 / "basic"=仅源1-4（跳过 optional 子源）。
   swfp:
     upstreams:
       - kind: "entcredit"
@@ -183,6 +187,12 @@ versions:
         orgCode: "REPLACE_WITH_SWFP_ORG_CODE"
         accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"
         secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"
+      - kind: "salesdata"     # 源5 销项数据（凯盈云 crestv，docs/销项数据接口文档V1.0.docx）
+        label: "sales"
+        optional: true        # 可选源：下游 scope=basic 时跳过（成本控制）
+        baseURL: "http://api2.crestv.com:32313/api/ws"   # 业务接口前缀（测试环境 api2-test...:32314）
+        appId: "REPLACE_WITH_SALESDATA_APP_ID"           # AppID（应用唯一 ID）
+        appSecret: "REPLACE_WITH_SALESDATA_APP_KEY"      # AppKey：鉴权凭证兼 AES 密钥（16/24/32 字节）
     database:
       <<: *pg_base
       name: "datahub_swfp_db"

@@ -28,6 +28,10 @@ type QueryCommand struct {
 	// tsfx (投诉分析识别名单) 入参：命中级别策略 poly（C1 高危/C2 敏感/C3 一般），
 	// 配合 mobile（字段名对齐上游 kfongtech api.complaint.query 的 poly/mobile）。
 	Poly string `json:"poly"`
+	// swfp (税务发票聚合) 可选入参：调用范围。"all"(缺省)=全部数据源(含源5 销项
+	// 数据)；"basic"=仅基础数据源(源1-4 发票/税务聚合)，不调可选源。字符串，非空时
+	// 参与 MD5 加签。
+	Scope string `json:"scope"`
 }
 
 // SignedRequest carries the request envelope material needed for MD5 signature
@@ -69,9 +73,18 @@ type UpstreamRequest struct {
 	// xfjy (消费交易特征) 用 Authlet(终端授权书编号) + Name/IDCard/Mobile。
 	Authlet string
 	// tsfx (投诉分析识别名单) 用 Poly(命中级别 C1/C2/C3) + Mobile。
-	Poly  string
+	Poly string
+	// swfp 调用范围（parse.ParseCreditCode 归一化后恒为 "all"/"basic"）："basic"
+	// 时聚合器跳过标记为 optional 的子源（源5 销项数据），仅调基础源。
+	Scope string
 	Reqid string
 }
+
+// Scope 取值（swfp 调用范围）。
+const (
+	ScopeAll   = "all"   // 全部数据源（含可选源），缺省
+	ScopeBasic = "basic" // 仅基础数据源（跳过 optional 子源）
+)
 
 // UpstreamResult is the normalized upstream response (DESIGN §6). 唯一上游伽马把原生
 // 响应归一化为此形态; Code 统一为 ("001" 查得 / "999" 查无) so billing + downstream body 统一。

@@ -36,6 +36,10 @@ type Service struct {
 	users  port.UserAdminRepository
 	audits port.AuditRepository
 	cfg    Config
+	// onLicenseChange 在用户被修改/删除/轮换密钥后回调（参数为 appKey），用于
+	// 即时失效鉴权层的 license 缓存（auth.Service.Invalidate），保证停用/换钥
+	// 不必等缓存 TTL 过期。可为 nil。
+	onLicenseChange func(appKey string)
 }
 
 func New(route string, admins port.AdminUserRepository, users port.UserAdminRepository, audits port.AuditRepository, cfg Config) *Service {
@@ -43,6 +47,19 @@ func New(route string, admins port.AdminUserRepository, users port.UserAdminRepo
 		cfg.TokenTTL = 8 * time.Hour
 	}
 	return &Service{route: route, admins: admins, users: users, audits: audits, cfg: cfg}
+}
+
+// WithLicenseChangeHook 注册 license 变更回调（装配层接 auth 缓存失效）。
+func (s *Service) WithLicenseChangeHook(fn func(appKey string)) *Service {
+	s.onLicenseChange = fn
+	return s
+}
+
+// notifyLicenseChange 触发变更回调（nil 安全）。
+func (s *Service) notifyLicenseChange(appKey string) {
+	if s.onLicenseChange != nil {
+		s.onLicenseChange(appKey)
+	}
 }
 
 // --- §16.1 auth ---
@@ -171,6 +188,7 @@ func (s *Service) UpdateUser(ctx context.Context, licenseID string, in UpdateUse
 	if err := s.users.UpdateUser(ctx, licenseID, status, mobile); err != nil {
 		return nil, err
 	}
+	s.notifyLicenseChange(cur.AppKey)
 	return s.users.GetUser(ctx, licenseID, s.route)
 }
 
@@ -182,7 +200,11 @@ func (s *Service) DeleteUser(ctx context.Context, licenseID string) error {
 	if cur == nil {
 		return ErrUserNotFound
 	}
-	return s.users.DeleteUser(ctx, licenseID)
+	if err := s.users.DeleteUser(ctx, licenseID); err != nil {
+		return err
+	}
+	s.notifyLicenseChange(cur.AppKey)
+	return nil
 }
 
 // RotateSecret regenerates the user's secret and returns the new plaintext once.
@@ -198,6 +220,7 @@ func (s *Service) RotateSecret(ctx context.Context, licenseID string) (string, e
 	if err := s.users.RotateSecret(ctx, licenseID, secret); err != nil {
 		return "", err
 	}
+	s.notifyLicenseChange(cur.AppKey)
 	return secret, nil
 }
 

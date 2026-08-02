@@ -29,6 +29,7 @@ type QueryOrchestrator struct {
 	billing  *billing.Service
 	upstream port.UpstreamPort
 	audit    port.AuditRepository
+	books    *Bookkeeper // 异步记账（结算+审计）；nil 时退化为同步（测试/未装配）
 	parseFn  func(*model.QueryCommand) (*model.UpstreamRequest, error)
 	log      *slog.Logger
 }
@@ -46,6 +47,13 @@ func (o *QueryOrchestrator) WithParser(fn func(*model.QueryCommand) (*model.Upst
 	if fn != nil {
 		o.parseFn = fn
 	}
+	return o
+}
+
+// WithBookkeeper 挂接异步记账器：结算 + 审计移出响应关键路径（每请求省 3-5 次
+// 串行 DB 写）。未挂接时保持旧行为（同步落库）。
+func (o *QueryOrchestrator) WithBookkeeper(b *Bookkeeper) *QueryOrchestrator {
+	o.books = b
 	return o
 }
 
@@ -69,15 +77,15 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 		IDCardMask: mask.IDCard(cmd.IDCard),
 		MobileMask: mask.Mobile(cmd.Mobile),
 	}
+	// 结算 + 审计在响应构造完成后统一提交（异步记账，见 Bookkeeper）。settleTok/
+	// settleDec 由 runCore 在拿到上游确定结论时填入；PENDING/失败路径保持 nil。
+	var settleTok *quota.ReserveToken
+	var settleDec *model.BillingDecision
 	defer func() {
 		rec.FoundData = rec.BusiCode == int(errs.BusiSuccess)
 		rec.LatencyMs = lat()
 		rec.CreatedAt = time.Now()
-		if o.audit != nil {
-			if err := o.audit.AppendAudit(ctx, rec); err != nil {
-				log.Error("append audit failed", "err", err)
-			}
-		}
+		o.submitBooks(settleTok, settleDec, rec, log)
 	}()
 
 	fail := func(busi errs.BusiCode, msg string) *model.QueryResponse {
@@ -109,9 +117,32 @@ func (o *QueryOrchestrator) Handle(ctx context.Context, signed *model.SignedRequ
 	rec.Reqid = upReq.Reqid
 	log = log.With("reqid", upReq.Reqid)
 
-	// 4-6. Idempotency + reserve + upstream + settle (shared core).
+	// 4-6. Idempotency + reserve + upstream (settle 移交异步记账).
 	out := o.runCore(ctx, lic, upReq, requestID, rec, log)
+	settleTok, settleDec = out.settleTok, out.settleDec
 	return o.respondX1(out, requestID, rec, lat())
+}
+
+// submitBooks 提交记账任务：装配了 Bookkeeper 时异步（入队即返回）；否则同步
+// 落库（保持旧行为，供测试与未装配场景）。同步路径用独立 ctx——本方法在响应
+// 即将写回时执行，请求 ctx 生命周期已不可依赖。
+func (o *QueryOrchestrator) submitBooks(tok *quota.ReserveToken, dec *model.BillingDecision, rec *model.AuditRecord, log *slog.Logger) {
+	if o.books != nil {
+		o.books.Submit(bookTask{token: tok, decision: dec, rec: rec})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if tok != nil && dec != nil {
+		if err := o.quota.Settle(ctx, tok, dec); err != nil {
+			log.Error("settle failed", "err", err)
+		}
+	}
+	if o.audit != nil {
+		if err := o.audit.AppendAudit(ctx, rec); err != nil {
+			log.Error("append audit failed", "err", err)
+		}
+	}
 }
 
 // queryOutcome is the normalized result of the post-auth core flow, shared by
@@ -120,13 +151,20 @@ type queryOutcome struct {
 	decision *model.BillingDecision // settled verdict (查得/查无/未扣费)
 	existing *model.Ledger          // idempotent hit (already BILLED)
 	appErr   *errs.AppError         // reserve/upstream-unresolved failure
+	// settleTok/settleDec 是移交异步记账的结算工作单（上游给出确定结论时成对
+	// 填入；PENDING/重放/失败路径为 nil，台账留待复查/对账）。
+	settleTok *quota.ReserveToken
+	settleDec *model.BillingDecision
 }
 
 // runCore runs the shared §4 steps after authentication: 幂等命中、开台账、上游
-// 调用(+按 reqid 复查)、结算。It updates the audit record's flow fields and applies
-// settlement; wire-format mapping is left to the caller.
+// 调用(+按 reqid 复查)。It updates the audit record's flow fields; settlement is
+// handed off to the async Bookkeeper (settleTok/settleDec)；wire-format mapping
+// is left to the caller.
 func (o *QueryOrchestrator) runCore(ctx context.Context, lic *model.LicenseView, upReq *model.UpstreamRequest, requestID string, rec *model.AuditRecord, log *slog.Logger) queryOutcome {
-	token, existing, err := o.quota.Begin(ctx, lic, o.route, upReq.Reqid, "", requestID)
+	// reqidIsFresh=true：reqid 由本次请求内部新生成（parse.NewReqid），幂等查询
+	// 必 miss，跳过该次 DB 读（关键路径优化，见 quota.Begin 注释）。
+	token, existing, err := o.quota.Begin(ctx, lic, o.route, upReq.Reqid, "", requestID, true)
 	if err != nil {
 		ae := errs.AsAppError(err)
 		rec.ErrMsg = ae.Error()
@@ -171,9 +209,8 @@ func (o *QueryOrchestrator) runCore(ctx context.Context, lic *model.LicenseView,
 		decision = o.billing.Decide(result)
 	}
 
-	if err := o.quota.Settle(ctx, token, decision); err != nil {
-		log.Error("settle failed", "err", err)
-	}
+	// 结算移出关键路径：这里只装配结算工作单，实际 Settle（Redis 计数 + PG 镜像
+	// + 台账 UPDATE）由 Bookkeeper 在响应写回后异步执行。
 	if decision.Result != nil {
 		rec.CalledUpstream = true
 		rec.UpstreamCode = decision.Result.Code
@@ -181,7 +218,7 @@ func (o *QueryOrchestrator) runCore(ctx context.Context, lic *model.LicenseView,
 		rec.UpstreamLogID = decision.Result.LogID
 	}
 	rec.Billed = decision.Returned
-	return queryOutcome{decision: decision}
+	return queryOutcome{decision: decision, settleTok: token, settleDec: decision}
 }
 
 // respondX1 maps a queryOutcome to the x1 head/body response (DESIGN §6.2/§7.4):

@@ -51,13 +51,20 @@ func (s *Service) ServiceQuotaView(ctx context.Context, lic *model.LicenseView, 
 //
 // 无额度限制：不再做任何上游预留，仅驱动台账 PENDING→BILLED/UNBILLED 状态机与幂等。
 // route 标记路由作用域 (共享 license 的 v8/v9 幂等/统计相互独立)。
-func (s *Service) Begin(ctx context.Context, lic *model.LicenseView, route, reqid, tradeNo, requestID string) (*ReserveToken, *model.Ledger, error) {
-	if existing, err := s.ledger.FindByReqid(ctx, lic.AppKey, route, reqid); err == nil && existing != nil {
-		if existing.State == model.StateBilled {
-			return nil, existing, nil
+//
+// reqidIsFresh：reqid 由本服务在本次请求内新生成（parse.NewReqid，当前所有路由
+// 均如此）时传 true——新生成的 reqid 不可能命中历史台账，幂等查询必 miss，直接
+// 跳过这次纯浪费的 DB 读（关键路径 -1 次 SELECT）。仅当未来出现「客户传入 reqid」
+// 的路由时才传 false 走完整幂等检查 + 重放。
+func (s *Service) Begin(ctx context.Context, lic *model.LicenseView, route, reqid, tradeNo, requestID string, reqidIsFresh bool) (*ReserveToken, *model.Ledger, error) {
+	if !reqidIsFresh {
+		if existing, err := s.ledger.FindByReqid(ctx, lic.AppKey, route, reqid); err == nil && existing != nil {
+			if existing.State == model.StateBilled {
+				return nil, existing, nil
+			}
+			// PENDING/UNBILLED: fall through to (re)open; reqid idempotency at the
+			// upstream guarantees no double-query on the re-query/recon path.
 		}
-		// PENDING/UNBILLED: fall through to (re)open; reqid idempotency at the
-		// upstream guarantees no double-query on the re-query/recon path.
 	}
 
 	l := &model.Ledger{

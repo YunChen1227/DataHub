@@ -68,6 +68,23 @@ func (s *Store) GetAppSecret(ctx context.Context, licenseID string) (string, err
 	return secret, nil
 }
 
+// FindByAppKeyWithSecret 是 auth 鉴权的快路径（license 与 app_secret_enc 同行，
+// 一条 SELECT 同时取回，替代 FindByAppKey + GetAppSecret 两次往返，见
+// auth.licenseWithSecretFinder）。查无返回 (nil, "", nil)。
+func (s *Store) FindByAppKeyWithSecret(ctx context.Context, appKey string) (*model.LicenseView, string, error) {
+	const q = `SELECT license_id, app_key, client_uuid, status, app_secret_enc FROM license WHERE app_key=$1`
+	var v model.LicenseView
+	var secret string
+	err := s.pool.QueryRow(ctx, q, appKey).Scan(&v.LicenseID, &v.AppKey, &v.ClientUUID, &v.Status, &secret)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return &v, secret, nil
+}
+
 // --- port.LedgerRepository ---
 
 const ledgerCols = `id, app_key, COALESCE(version,''), COALESCE(trade_no,''), reqid, request_id,

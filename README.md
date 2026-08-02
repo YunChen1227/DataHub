@@ -423,6 +423,7 @@ npm run build        # 产物输出到 web/admin/dist；访问 http://localhost:
 - ✅ 持久化：`memory`（开发）与 `postgres`+`redis`（生产/e2e）；`dev_db` / `prod_db` 同实例隔离。
 - ✅ 管理后台：管理员登录（JWT）、用户 CRUD（手机号/密钥时间/过期日期、检索）、`appKey/secret` 生成与轮换、审计日志（含 `?q=` 关键字过滤）、React+Vite SPA。
 - ✅ 固定测试套件（`test/run.ps1`，7 个 case；结果输出 `test_res/<date>/`）。
+- ✅ 端到端延迟优化（DESIGN 顶部「异步记账」变更说明）：结算+审计经 `application.Bookkeeper` 移出响应关键路径（背压降级同步、停机 drain）；鉴权 license+secret 单查询 + 按域 10s 进程缓存（后台变更即时失效）；内部生成 reqid 跳过必 miss 的幂等查询；上游 HTTP 连接池调优（`MaxIdleConnsPerHost=64`）。计数/审计为毫秒级最终一致。
 - 🚧 待完善：
   - 伽马 `Requery` 当前为 stub（`Reachable=false`），RequeryWorker 对伽马上游暂无实际复查能力。
   - `license.valid_to` 已存储并在后台展示，鉴权目前仅检查 `status==ACTIVE`（未按日期自动过期）。

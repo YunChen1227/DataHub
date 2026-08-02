@@ -47,15 +47,20 @@ type domainStorage struct {
 	adminRepo   port.AdminUserRepository
 	userRepo    port.UserAdminRepository
 	secrets     port.SecretProvider
-	cleanup     func()
+	// auth 是本域共享的鉴权服务（license+secret 进程内缓存）。按域而非按路由建：
+	// v8/v9 共用 v8v9 域的同一实例，后台在任一路由改 license 都能命中同一份缓存
+	// 失效（admin.WithLicenseChangeHook → auth.Invalidate）。
+	auth    *auth.Service
+	cleanup func()
 }
 
-// routeStack is one fully-wired route (独立 orchestrator + 后台服务 + 复查 worker)，
-// 接到其所属域的存储 + 自己的上游客户端。
+// routeStack is one fully-wired route (独立 orchestrator + 后台服务 + 复查 worker
+// + 异步记账器)，接到其所属域的存储 + 自己的上游客户端。
 type routeStack struct {
 	orch    *application.QueryOrchestrator
 	admin   *admin.Service
 	requery *job.RequeryWorker
+	books   *application.Bookkeeper
 }
 
 // domainOwner returns the route whose db/redis config seeds a domain's storage
@@ -115,7 +120,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	httpClient := &http.Client{Timeout: cfg.upstreamTimeout}
+	// 上游共享 HTTP client：显式 Transport 提高连接复用率。Go 默认
+	// MaxIdleConnsPerHost=2——swfp 一次请求就并发 5 路打同一主机，默认值会导致
+	// 反复新建 TCP+TLS 连接（每次 50-200ms 握手），是端到端延迟的大头之一。
+	httpClient := &http.Client{
+		Timeout: cfg.upstreamTimeout,
+		Transport: &http.Transport{
+			Proxy:               http.ProxyFromEnvironment,
+			MaxIdleConns:        256,
+			MaxIdleConnsPerHost: 64,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 5 * time.Second,
+			ForceAttemptHTTP2:   true,
+		},
+	}
 
 	// --- 存储隔离防呆校验后，按域开库 (v8/v9 共用 v8v9 域库)，再逐路由装配 ---
 	if err := checkStorageIsolation(cfg); err != nil {
@@ -146,6 +164,7 @@ func main() {
 
 	apiStacks := make(map[string]*api.VersionStack, len(model.Versions))
 	adminByRoute := make(map[string]*admin.Service, len(model.Versions))
+	bookkeepers := make([]*application.Bookkeeper, 0, len(model.Versions))
 	for _, route := range model.Versions {
 		ds := domainStores[model.RouteDomain(route)]
 		st, err := buildRouteStack(cfg, route, ds, httpClient, logger)
@@ -155,6 +174,7 @@ func main() {
 		}
 		apiStacks[route] = &api.VersionStack{Orch: st.orch, Admin: st.admin}
 		adminByRoute[route] = st.admin
+		bookkeepers = append(bookkeepers, st.books)
 		go st.requery.Run(ctx)
 		logger.Info("route stack ready", "route", route, "domain", model.RouteDomain(route),
 			"upstream", cfg.versions[route].upstreamKind(), "sources", len(cfg.versions[route].upstreams))
@@ -193,6 +213,12 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdownCtx)
+	// HTTP 已停止接收新请求后再 drain 异步记账队列：保证在途请求的结算/审计
+	// 全部落库（宁可多等几百毫秒，不丢计费凭证），随后 defer 里的 cleanup 才关库。
+	for _, b := range bookkeepers {
+		b.Close()
+	}
+	logger.Info("bookkeepers drained")
 }
 
 // buildDomainStorage opens the storage backend for one license 域 (DB+Redis or
@@ -233,19 +259,23 @@ func buildDomainStorage(ctx context.Context, cfg config, domain string, logger *
 			pg.Close()
 			return nil, fmt.Errorf("redis connect: %w", err)
 		}
-		return &domainStorage{
+		ds := &domainStorage{
 			licenseRepo: pg, ledgerRepo: pg, quotaRepo: rq, auditRepo: pg,
 			adminRepo: pg, userRepo: pg, secrets: secret.NewStore(pg),
 			cleanup: func() { rq.Close(); pg.Close() },
-		}, nil
+		}
+		ds.auth = auth.New(ds.licenseRepo, ds.secrets, auth.Md5Verifier{})
+		return ds, nil
 	default:
 		store := memory.New()
 		seedDemo(store, domain, cfg.demoAppSecret)
-		return &domainStorage{
+		ds := &domainStorage{
 			licenseRepo: store, ledgerRepo: store, quotaRepo: store, auditRepo: store,
 			adminRepo: store, userRepo: store, secrets: secret.NewStore(store),
 			cleanup: func() {},
-		}, nil
+		}
+		ds.auth = auth.New(ds.licenseRepo, ds.secrets, auth.Md5Verifier{})
+		return ds, nil
 	}
 }
 
@@ -260,15 +290,18 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		return nil, err
 	}
 
-	verifier := auth.Md5Verifier{}
-	authSvc := auth.New(ds.licenseRepo, ds.secrets, verifier)
+	authSvc := ds.auth // 域级共享（含 license 缓存；v8/v9 同域同缓存）
 	quotaSvc := quota.New(ds.quotaRepo, ds.ledgerRepo)
 	billSvc := billing.New(billing.DefaultTable())
 	adminSvc := admin.New(route, ds.adminRepo, ds.userRepo, ds.auditRepo, admin.Config{
 		JWTSecret: cfg.adminJWTSecret,
 		TokenTTL:  cfg.adminTokenTTL,
-	})
-	orch := application.NewQueryOrchestrator(route, authSvc, quotaSvc, billSvc, upClient, ds.auditRepo, log)
+	}).WithLicenseChangeHook(authSvc.Invalidate) // 后台改密/停用/删除即时失效鉴权缓存
+	// 异步记账：结算 + 审计移出响应关键路径（每请求省 3-5 次串行 DB 写）；
+	// 队列满降级同步，优雅停机时 drain（见 main 的 shutdown 顺序）。
+	books := application.NewBookkeeper(quotaSvc, ds.auditRepo, 0, 0, log)
+	orch := application.NewQueryOrchestrator(route, authSvc, quotaSvc, billSvc, upClient, ds.auditRepo, log).
+		WithBookkeeper(books)
 	// 网关校验口径必须与该路由上游的真实要求一致（必填字段前置拦截，不透传给
 	// 上游报错）。默认 parse.Parse (mobile必/idCard必/name选) 仅适用于与经济能力
 	// 同口径的上游 (gama/income)。聚合路由所有子源 kind 一致 (loadConfig 已校验)，
@@ -296,7 +329,7 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upClient, billSvc, quotaSvc, cfg.requeryInterval, log)
 
-	return &routeStack{orch: orch, admin: adminSvc, requery: requery}, nil
+	return &routeStack{orch: orch, admin: adminSvc, requery: requery, books: books}, nil
 }
 
 // buildUpstreams 把一条路由的上游子源列表装配成一个 port.UpstreamPort：逐条构建

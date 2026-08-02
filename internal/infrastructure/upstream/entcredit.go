@@ -82,16 +82,26 @@ func EntCreditLabel(product string) string {
 }
 
 // NewEntCredit builds a 证通 entcreditapi 单产品 client.
+// 官方 demo 的 getSingleSSLConnection() 关闭证书校验；部分环境用自签证书，保留
+// 同等行为以避免联调时握手失败。实现上**不得修改传入的共享 client**（旧版直接改
+// 共享 Transport，会把 InsecureSkipVerify 泄漏给所有路由）：复制 client + clone
+// Transport（继承连接池参数）后仅在副本上关闭证书校验。
 func NewEntCredit(cfg EntCreditConfig, httpClient *http.Client) *EntCreditClient {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	// 官方 demo 的 getSingleSSLConnection() 关闭证书校验；部分环境用自签证书，
-	// 这里保留同等行为以避免联调时握手失败（生产如需严格校验可在装配层另传 client）。
-	if httpClient.Transport == nil {
-		httpClient.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec
+	base, ok := httpClient.Transport.(*http.Transport)
+	if !ok || base == nil {
+		base = http.DefaultTransport.(*http.Transport)
 	}
-	return &EntCreditClient{cfg: cfg, http: httpClient}
+	tr := base.Clone()
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{} //nolint:gosec
+	}
+	tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec
+	own := *httpClient
+	own.Transport = tr
+	return &EntCreditClient{cfg: cfg, http: &own}
 }
 
 // entCreditSection is 单产品调用的归一中间结果 (callProduct 返回)。

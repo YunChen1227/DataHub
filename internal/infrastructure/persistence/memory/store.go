@@ -123,6 +123,23 @@ func (s *Store) GetAppSecret(_ context.Context, licenseID string) (string, error
 	return "", nil
 }
 
+// FindByAppKeyWithSecret 是 auth 鉴权的快路径（license 与 secret 同行一次取回，
+// 见 auth.licenseWithSecretFinder）。查无返回 (nil, "", nil)。
+func (s *Store) FindByAppKeyWithSecret(_ context.Context, appKey string) (*model.LicenseView, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	licenseID, ok := s.appKeyIndex[appKey]
+	if !ok {
+		return nil, "", nil
+	}
+	rec := s.licenses[licenseID]
+	if rec == nil {
+		return nil, "", nil
+	}
+	cp := rec.view
+	return &cp, rec.secret, nil
+}
+
 // --- port.QuotaRepository ---
 
 func (s *Store) ServiceUsed(_ context.Context, licenseID, route string) (int64, error) {

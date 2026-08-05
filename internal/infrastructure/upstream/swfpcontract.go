@@ -123,6 +123,27 @@ var swfpSalesXyhzMap = map[string]string{
 	"fpse":      "nullTaxAmtMonth",
 }
 
+// salesFieldAliases 收录源5 文档 (销项数据接口文档V1.0.docx) 自相矛盾的字段拼写：
+// 报文示例与字段表对同一字段给了两种写法，上游实际用哪种未经联调确认，两种都认。
+// key = 报文示例的写法（映射表里用的），value = 字段表的写法。
+var salesFieldAliases = map[string]string{
+	"invoiceDayMonth":    "invoceDayMonth",     // §4.1 字段表少一个 i
+	"buyerTaxpayerIdNum": "buyerTaxPayerIdNum", // §4.2 字段表 P 大写
+}
+
+// salesValue 取源5 条目的字段值，字段缺失时再试文档给出的另一种拼写。
+func salesValue(m map[string]any, field string) (any, bool) {
+	if v, ok := m[field]; ok {
+		return v, true
+	}
+	if alt, ok := salesFieldAliases[field]; ok {
+		if v, ok := m[alt]; ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
 // Query delegates to the aggregator then rewrites range into the xlsx 契约结构。
 func (c *SwfpContract) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
 	res, err := c.inner.Query(ctx, req)
@@ -259,7 +280,7 @@ func fillSalesSection(seg map[string]map[string]any, alias string, data map[stri
 			row["kpqj"] = monthLastDay(month)
 			row["nsrsbh"] = creditCode
 			for xlsxField, salesField := range swfpSalesKphzMap {
-				if v, ok := m[salesField]; ok {
+				if v, ok := salesValue(m, salesField); ok {
 					row[xlsxField] = str(v)
 				}
 			}
@@ -281,7 +302,7 @@ func fillSalesSection(seg map[string]map[string]any, alias string, data map[stri
 			row["kpqj"] = monthLastDay(month)
 			row["nsrsbh"] = creditCode
 			for xlsxField, salesField := range swfpSalesXyhzMap {
-				if v, ok := m[salesField]; ok {
+				if v, ok := salesValue(m, salesField); ok {
 					row[xlsxField] = str(v)
 				}
 			}

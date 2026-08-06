@@ -326,6 +326,10 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	case upstream.ProviderComplaint:
 		// tsfx 投诉分析识别名单：mobile + poly(C1/C2/C3) 均必填 (对齐 kfongtech 契约)。
 		orch.WithParser(parse.ParseComplaint)
+	case upstream.ProviderLXScore:
+		// lxf 灵犀分：上游 name/mobile/idCardNo 三项参数表都标"必传"，但文档 §2.2 明确
+		// 姓名缺省时传固定值 MD5("")，故实际必填口径为 mobile+idCardNo，name 选填——
+		// 恰与默认 parse.Parse 一致，无需专属校验器（此 case 仅为记录该判断依据）。
 	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upClient, billSvc, quotaSvc, cfg.requeryInterval, log)
 
@@ -481,6 +485,17 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			BaseURL: uc.baseURL,
 			AppID:   uc.appID,
 			AppKey:  uc.appSecret,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderLXScore:
+		// lxf 灵犀分 score_195_v1 (fullink)：appId=customerId(商户code)、
+		// apiKey=customerProdId(产品code)、appSecret=encryptKey(DES 密钥，兼作
+		// sign 加密与 data 解密；复用既有凭证字段，不新增 config 字段)。
+		client := upstream.NewLXScore(upstream.LXScoreConfig{
+			BaseURL:        uc.baseURL,
+			CustomerID:     uc.appID,
+			CustomerProdID: uc.apiKey,
+			EncryptKey:     uc.appSecret,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderGama, "":

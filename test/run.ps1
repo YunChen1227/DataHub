@@ -1,7 +1,7 @@
 ﻿# DataHub fixed test-suite entrypoint (Windows / PowerShell).
 #
 # Flow: make result dir test_res/<date> -> build + start mock gama(:9112) +
-# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_entcredit(:9116) + mock_facecompare(:9117) + mock_idverify(:9118) + mock_consumetxn(:9119) + mock_complaint(:9120) + mock_salesdata(:9121) + relay(:8080,
+# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_entcredit(:9116) + mock_facecompare(:9117) + mock_idverify(:9118) + mock_consumetxn(:9119) + mock_complaint(:9120) + mock_salesdata(:9121) + mock_lxscore(:9122) + relay(:8080,
 # live Aliyun PG+Redis) -> wait /healthz -> (optional) start real-gama relay(:8090)
 # -> run test/cases/*.go in order -> aggregate REPORT.md -> stop services.
 #
@@ -62,6 +62,7 @@ try {
     $consumetxnExe = Join-Path $resultDir "mock_consumetxn.exe"
     $complaintExe = Join-Path $resultDir "mock_complaint.exe"
     $salesdataExe = Join-Path $resultDir "mock_salesdata.exe"
+    $lxscoreExe   = Join-Path $resultDir "mock_lxscore.exe"
     $relayExe     = Join-Path $resultDir "relay.exe"
     Write-Host "building mocks + relay ..."
     go build -o $mockExe ./scripts/mock_gama.go
@@ -84,6 +85,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build mock_complaint failed" }
     go build -o $salesdataExe ./scripts/mock_salesdata.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_salesdata failed" }
+    go build -o $lxscoreExe ./scripts/mock_lxscore.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_lxscore failed" }
     go build -o $relayExe ./cmd/relay
     if ($LASTEXITCODE -ne 0) { throw "go build relay failed" }
 
@@ -128,6 +131,9 @@ try {
 
     $salesdata = Start-Process -FilePath $salesdataExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_salesdata.log") -RedirectStandardError (Join-Path $resultDir "mock_salesdata.err.log")
     [void]$procs.Add($salesdata)
+
+    $lxscore = Start-Process -FilePath $lxscoreExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_lxscore.log") -RedirectStandardError (Join-Path $resultDir "mock_lxscore.err.log")
+    [void]$procs.Add($lxscore)
 
     $relay = Start-Process -FilePath $relayExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "relay.log") -RedirectStandardError (Join-Path $resultDir "relay.err.log")
     [void]$procs.Add($relay)

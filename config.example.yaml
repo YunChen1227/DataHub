@@ -7,10 +7,10 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk/swfp/rlbd1/rlbd2/sfzhy/xfjy/tsfx) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX
-#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX
-# 存储按「域」划分：x1 / v8v9 / zlf / blk / swfp / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx 各域独占一套 DB + Redis 逻辑库。
+# 各版本 (x1/v9/v8/zlf/blk/swfp/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / swfp / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf 各域独占一套 DB + Redis 逻辑库。
 # v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
 # 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
 # 跨域使用 license 一律鉴权失败。启动时会做防呆校验：两个不同的域配置同一个数据库
@@ -22,9 +22,10 @@
 # sfzhy 转接身份证三要素核验：JSON POST + signature=SHA256(升序 k=v&... + "&AppSecret=" + 商户密钥)，name+idCard+profilePicture 入参。
 # xfjy 转接消费交易特征 (data-bean)：JSON POST + sign=MD5(过滤空值升序 k=v&... + "&appkey=" + appkey)，name/idcard/mobile/authlet 入参 (全选填，至少一个查询要素)；有查得(001)/查无(999)。
 # tsfx 转接投诉分析识别名单 (kfongtech)：JSON POST + 业务参数 param 走 AES 加密 + 外层 sign，响应 data 为 gzip 压缩结果集；mobile+poly(C1/C2/C3) 入参；调用成功即计费(001)，命中状态 forbid 随结果数组经 result.range 透出。
+# lxf 转接灵犀分 score_195_v1 (fullink)：JSON POST + sign=DES/CBC(升序 k=v&... , encryptKey) 大写 hex，name/mobile/idCardNo 传 MD5 摘要；响应 data 为 DES 密文，解密得 300-900 评分经 result.range 透出；分数=-1 视为查无(999)。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
-#   - 单源路由 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx)：列表长度 1。
+#   - 单源路由 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf)：列表长度 1。
 #   - 聚合路由 (swfp)：列表长度 N，每个子源自带完整凭证；主程序并发调所有子源、
 #     按判定表聚合 (≥1查得→001 计费 / 全查无→999 / 部分成功→002 不计费 / 全失败→505062)。
 #   同一路由内所有子源 kind 必须一致 (入参校验/信封按路由统一)。
@@ -267,3 +268,23 @@ versions:
     redis:
       <<: *redis_base
       db: 10
+  # lxf 对接「灵犀分 score_195_v1」(fullink)：JSON POST，八个字段全必传，
+  # name/mobile/idCardNo 传 MD5 摘要，sign = DES/CBC(按参数名升序拼的 k=v&… 串,
+  # encryptKey) 大写 hex；响应 data 为同一套 DES 密文，解密得 {"score_195_v1":"600"}。
+  # 独立成域（库 datahub_lxf_db / redis db11 / 独立 license 与统计）。
+  # 入参 mobile+idCard 必填、name 选填（缺省按上游要求传 MD5("")）。
+  # 计费：status=200 且分数≠-1 → 001 查得计费；分数=-1 → 999 查无；非 200 → 上游侧错误不计费。
+  # 注意：上游按源 IP 白名单放行（文档「注意事项」第 1 条），部署机出口 IP 需先报上游加白。
+  lxf:
+    upstreams:
+      - kind: "lxscore"
+        baseURL: "https://lxf.fullink.tech/report/encode"   # 生产环境
+        appId: "REPLACE_WITH_LXF_CUSTOMER_ID"        # 上游 customerId（商户 code）
+        apiKey: "REPLACE_WITH_LXF_CUSTOMER_PROD_ID"  # 上游 customerProdId（产品 code）
+        appSecret: "REPLACE_WITH_LXF_ENCRYPT_KEY"    # 上游 encryptKey（DES 密钥，兼作 sign 加密与 data 解密；须为 8 个字符或 16 个 hex 字符）
+    database:
+      <<: *pg_base
+      name: "datahub_lxf_db"
+    redis:
+      <<: *redis_base
+      db: 11

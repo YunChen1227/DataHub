@@ -232,15 +232,18 @@ type RangeResult struct {
 // JSON POST + MD5 sign，name/idcard/mobile/authlet 入参，有查得/查无，
 // 见 upstream/consumetxn.go)；tsfx 转接投诉分析识别名单 (complaint 上游 kfongtech，
 // JSON POST + AES 加密 param + MD5 sign，mobile/poly 入参，data gzip 压缩，
-// 调用成功即计费、命中状态经 result.range 透出，见 upstream/complaint.go)。
+// 调用成功即计费、命中状态经 result.range 透出，见 upstream/complaint.go)；
+// lxf 转接灵犀分 score_195_v1 (lxscore 上游 fullink，JSON POST + DES/CBC 签名，
+// name/mobile/idCardNo 取 MD5 摘要，响应 data 为 DES 密文、解密得 300-900 评分，
+// 评分经 result.range 透出，见 upstream/lxscore.go)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -278,6 +281,8 @@ func DemoAppKey(route string) string {
 		return "y890xfjy"
 	case "tsfx":
 		return "y89tsfx"
+	case "lxf":
+		return "y8909lxf"
 	default:
 		return "demo-" + route
 	}

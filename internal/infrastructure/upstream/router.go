@@ -14,4 +14,5 @@ const (
 	ProviderConsumeTxn  = "consumetxn"  // xfjy: 消费交易特征 (data-bean)
 	ProviderComplaint   = "complaint"   // tsfx: 投诉分析识别名单 (kfongtech)
 	ProviderSalesData   = "salesdata"   // swfp 第五子源: 销项数据 (凯盈云 crestv)
+	ProviderLXScore     = "lxscore"     // lxf: 灵犀分 score_195_v1 (fullink)
 )

@@ -73,8 +73,9 @@ func TestDesCbcRoundTrip(t *testing.T) {
 	}
 }
 
-// 待签名串必须按参数名 ASCII 升序拼接（文档 §2.5「把请求参数按照排序进行组装」），
-// 且与文档给出的示例开头逐字一致。
+// 待签名串必须按文档 §2.2 参数表的固定字段顺序拼接（customerId, customerProdId,
+// customerRequestId, name, mobile, idCardNo, timestamp），而非 ASCII 升序。
+// 经直连上游联调验证：升序拼串会被判 2031208 签名验证失败，文档顺序才通过。
 func TestLXScoreSignStr(t *testing.T) {
 	got := lxScoreSignStr(map[string]string{
 		"customerId":        "cid",
@@ -86,7 +87,7 @@ func TestLXScoreSignStr(t *testing.T) {
 		"timestamp":         "1682391550719",
 	})
 	want := "customerId=cid&customerProdId=pid&customerRequestId=rid" +
-		"&idCardNo=i&mobile=m&name=n&timestamp=1682391550719"
+		"&name=n&mobile=m&idCardNo=i&timestamp=1682391550719"
 	if got != want {
 		t.Fatalf("signStr =\n  %s\n期望\n  %s", got, want)
 	}

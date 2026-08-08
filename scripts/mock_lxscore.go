@@ -29,7 +29,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -60,15 +59,16 @@ func desEncryptHex(plain, key []byte) (string, error) {
 	return strings.ToUpper(hex.EncodeToString(out)), nil
 }
 
-// signStr 按参数名 ASCII 升序拼 k=v&k=v…（sign 自身不参与）。
+// signStr 按文档 §2.2 参数表的固定字段顺序拼 k=v&k=v…（sign 自身不参与）。
+// 与 upstream/lxscore.go 的 lxScoreSignStr 保持一致：真实上游按文档字段顺序验签，
+// 用字母序会被判 2031208。
 func signStr(params map[string]string) string {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
+	order := []string{
+		"customerId", "customerProdId", "customerRequestId",
+		"name", "mobile", "idCardNo", "timestamp",
 	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
+	parts := make([]string, 0, len(order))
+	for _, k := range order {
 		parts = append(parts, k+"="+params[k])
 	}
 	return strings.Join(parts, "&")

@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -252,18 +251,22 @@ func (c *LXScoreClient) decodeScore(data string, key []byte) (string, error) {
 	return "", fmt.Errorf("%s 字段类型非法", lxScoreField)
 }
 
-// lxScoreSignStr 按文档 §2.5「把请求参数按照排序进行组装」拼待签名串：参数名 ASCII
-// 升序，拼成 k=v&k=v…（sign 自身不参与）。结果形如
-// customerId=…&customerProdId=…&customerRequestId=…&idCardNo=…&mobile=…&name=…&timestamp=…
-// 与文档示例给出的开头 "customerId=xxx&customerProdId=xxx&customerRequestId=xxx&" 一致。
+// lxScoreSignStr 按文档 §2.2 参数表的固定字段顺序拼待签名串（**非字母序**）：
+//
+//	customerId=…&customerProdId=…&customerRequestId=…&name=…&mobile=…&idCardNo=…&timestamp=…
+//
+// 与文档示例开头 "customerId=xxx&customerProdId=xxx&customerRequestId=xxx&" 一致。
+// 经直连上游联调验证：字母序拼串会被上游判 2031208 签名验证失败；改用文档字段
+// 顺序后签名通过（改到 IP 白名单校验 2031209），故此处必须锁定文档顺序而非
+// sort.Strings 的 ASCII 升序（升序会把 idCardNo/mobile/name 排到 name 之前）。
+// sign 自身不参与签名。
 func lxScoreSignStr(params map[string]string) string {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
+	order := []string{
+		"customerId", "customerProdId", "customerRequestId",
+		"name", "mobile", "idCardNo", "timestamp",
 	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
+	parts := make([]string, 0, len(order))
+	for _, k := range order {
 		parts = append(parts, k+"="+params[k])
 	}
 	return strings.Join(parts, "&")

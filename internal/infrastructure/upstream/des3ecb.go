@@ -3,6 +3,7 @@ package upstream
 import (
 	"crypto/des" //nolint:gosec // 上游收入A_g版 (grgjj) 契约指定 3DES，非我方选型
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -31,6 +32,69 @@ func tripleDESKey(secB64 string) ([]byte, error) {
 		return nil, fmt.Errorf("3des 密钥长度非法 (Base64 解码后 %d 字节)，DESede 须为 24 字节", len(k))
 	}
 	return k, nil
+}
+
+// tripleDESKeyFlexible 把「获取秘钥」接口下发的 result.key 归一为 24 字节 DESede
+// 密钥。上游文档没有明确 key 的编码形态（只说"采用 3des+base64 加密方式"），联调
+// 前无法确定，故按 skill「凭证编码形态必须验算而非想当然」的要求，依次尝试三种最
+// 常见形态并只接受能得到恰好 24 字节的那一种：
+//   - 原始 24 个 ASCII 字符（直接当密钥字节）；
+//   - Base64 编码（解码后 24 字节）；
+//   - Hex 编码（解码后 24 字节，即 48 个十六进制字符）。
+// 三种都不成立则显式报错（禁止截断/补零静默降级）。真实 key 形态一旦联调确认，可
+// 把此函数收敛为唯一形态。
+func tripleDESKeyFlexible(s string) ([]byte, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, fmt.Errorf("3des 密钥为空")
+	}
+	if len(s) == 24 {
+		return []byte(s), nil
+	}
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil && len(b) == 24 {
+		return b, nil
+	}
+	if b, err := hex.DecodeString(s); err == nil && len(b) == 24 {
+		return b, nil
+	}
+	return nil, fmt.Errorf("3des 密钥无法归一为 24 字节 DESede 密钥 (原始长度 %d，既非 24 字节原文/也非 Base64/Hex(24))", len(s))
+}
+
+// tripleDESEncryptBase64Key/tripleDESDecryptBase64Key 与上面的 *Base64 版本等价，
+// 区别是直接接收已解好的 24 字节密钥（供动态获取的秘钥复用，避免再做一次 Base64
+// 往返）。
+func tripleDESEncryptBase64Key(plain, key []byte) (string, error) {
+	block, err := des.NewTripleDESCipher(key) //nolint:gosec // 上游契约指定
+	if err != nil {
+		return "", fmt.Errorf("3des new cipher: %w", err)
+	}
+	bs := block.BlockSize()
+	padded := pkcs5Pad(plain, bs)
+	out := make([]byte, len(padded))
+	for i := 0; i < len(padded); i += bs {
+		block.Encrypt(out[i:i+bs], padded[i:i+bs])
+	}
+	return base64.StdEncoding.EncodeToString(out), nil
+}
+
+func tripleDESDecryptBase64Key(cipherB64 string, key []byte) ([]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(cipherB64))
+	if err != nil {
+		return nil, fmt.Errorf("result base64 decode: %w", err)
+	}
+	block, err := des.NewTripleDESCipher(key) //nolint:gosec // 上游契约指定
+	if err != nil {
+		return nil, fmt.Errorf("3des new cipher: %w", err)
+	}
+	bs := block.BlockSize()
+	if len(raw) == 0 || len(raw)%bs != 0 {
+		return nil, fmt.Errorf("result 密文长度 %d 不是块大小 %d 的整数倍", len(raw), bs)
+	}
+	out := make([]byte, len(raw))
+	for i := 0; i < len(raw); i += bs {
+		block.Decrypt(out[i:i+bs], raw[i:i+bs])
+	}
+	return pkcs5Unpad(out, bs)
 }
 
 // tripleDESEncryptBase64 以 DESede/ECB/PKCS5Padding 加密并返回 Base64(std) 密文，

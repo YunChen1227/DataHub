@@ -104,6 +104,25 @@ func main() {
 		log.Fatalf("GRGJJ_3DES_KEY 非法：需 Base64(24 字节)，得 %d 字节 (err=%v)", len(key), err)
 	}
 
+	// 获取秘钥挡板：GET /yrzx/secKey/info?account&reqid&verify，verify=MD5(account+reqid+key)。
+	// 校验通过则下发 3DES 密钥（Base64 形态，与查询挡板用的同一把 key，令全链路可通）。
+	http.HandleFunc("/yrzx/secKey/info", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		acc, reqid, verify := q.Get("account"), q.Get("reqid"), q.Get("verify")
+		resp := map[string]any{"uid": "grgjj-sk-" + reqid, "reqid": reqid}
+		switch {
+		case acc != account:
+			resp["code"], resp["msg"] = "002", "账号不存在"
+		case !strings.EqualFold(verify, md5upper(acc+reqid+signKey)):
+			resp["code"], resp["msg"] = "013", "校验签名错误"
+		default:
+			resp["code"], resp["msg"] = "001", "成功"
+			resp["result"] = map[string]string{"key": keyB64} // 下发 Base64 形态的 24 字节密钥
+		}
+		log.Printf("secKey <- account=%s reqid=%s -> code=%v", acc, reqid, resp["code"])
+		writeJSON(w, resp)
+	})
+
 	http.HandleFunc("/yrzx/common/v2/credit/v2", func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		var req struct {
@@ -163,7 +182,7 @@ func main() {
 		writeJSON(w, resp)
 	})
 
-	fmt.Printf("mock 收入A_g版 upstream listening on %s (/yrzx/common/v2/credit/v2)\n", addr)
+	fmt.Printf("mock 收入A_g版 upstream listening on %s (/yrzx/secKey/info + /yrzx/common/v2/credit/v2)\n", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 

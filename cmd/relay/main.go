@@ -503,13 +503,14 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderIncomeAg:
-		// grgjj 收入A_g版 (yrzx)：account=账户、key=MD5 加签密钥、aesKey=3DES 密钥
-		// (Base64 编码，复用既有凭证字段，不新增 config 字段)。type 缺省 1106。
+		// grgjj 收入A_g版 (yrzx)：account=账户、key=商户 key（MD5 加签 + 换取动态 3DES
+		// 密钥）。3DES 密钥由上游「获取秘钥」接口动态下发，无需配置；aesKey 仅作联调/
+		// 本地 mock 的可选静态覆盖（填了则跳过获取秘钥）。type 缺省 1106。
 		client := upstream.NewIncomeAg(upstream.IncomeAgConfig{
-			BaseURL:      uc.baseURL,
-			Account:      uc.account,
-			SignKey:      uc.key,
-			TripleDESKey: uc.aesKey,
+			BaseURL:            uc.baseURL,
+			Account:            uc.account,
+			SignKey:            uc.key,
+			StaticTripleDESKey: uc.aesKey,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderGama, "":

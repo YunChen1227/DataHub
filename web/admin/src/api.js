@@ -6,7 +6,7 @@
 // 同步生效），仅统计与操作日志按路由各自独立。
 const BASE = '/admin/api'
 
-export const VERSIONS = ['x1', 'v9', 'v8', 'zlf', 'blk', 'swfp', 'rlbd1', 'rlbd2', 'sfzhy', 'xfjy', 'tsfx', 'lxf']
+export const VERSIONS = ['x1', 'v9', 'v8', 'zlf', 'blk', 'swfp', 'rlbd1', 'rlbd2', 'sfzhy', 'xfjy', 'tsfx', 'lxf', 'grgjj']
 
 let token = localStorage.getItem('adminToken') || ''
 let version = localStorage.getItem('adminVersion') || 'x1'

@@ -1,0 +1,85 @@
+{
+  "suite": "19_grgjj_query",
+  "title": "grgjj 主接口全场景 (收入A_g版 yrzx, 3DES data)",
+  "startedAt": "2026-08-13T15:33:41.9347934+08:00",
+  "endedAt": "2026-08-13T15:33:42.019533+08:00",
+  "cases": [
+    {
+      "name": "成功查得",
+      "status": "PASS",
+      "expected": "errorCode=0 \u0026 body.code=001 \u0026 range 含 cbjfzt (解密后业务对象)",
+      "actual": "{\"head\":{\"errorCode\":\"0\",\"logId\":\"msr7c1xh-y89grgjj-17de2b1a-QZCPAWQDG5\",\"time\":55,\"errorMsg\":\"success\",\"timestamp\":1786606422013},\"body\":{\"code\":\"001\",\"msg\":\"成功\",\"uid\":\"grgjj-mock-dknn4bl2rz7o1\",\"reqid\":\"dknn4bl2rz7o1\",\"verify\":\"\",\"result\":{\"range\":\"{\\\"cbjfzt\\\":\\\"1\\\",\\\"jfjs\\\":\\\"7\\\",\\\"jfsj\\\":\\\"202601\\\"}\"}}}\n",
+      "reason": ""
+    },
+    {
+      "name": "查无结果",
+      "status": "PASS",
+      "expected": "errorCode=0 \u0026 body.code=999",
+      "actual": "{\"head\":{\"errorCode\":\"0\",\"logId\":\"msr7c1z2-y89grgjj-6faeca93-HSIZSS4GGQ\",\"time\":0,\"errorMsg\":\"success\",\"timestamp\":1786606422015},\"body\":{\"code\":\"999\",\"msg\":\"无结果返回\",\"uid\":\"grgjj-mock-dknn4bm0mv882\",\"reqid\":\"dknn4bm0mv882\",\"verify\":\"\"}}\n",
+      "reason": ""
+    },
+    {
+      "name": "错误签名",
+      "status": "PASS",
+      "expected": "errorCode=505002 且无 body",
+      "actual": "{\"head\":{\"errorCode\":\"505002\",\"logId\":\"msr7c1z3-y89grgjj-0ccb5093-MJIFMBIFAJ\",\"time\":0,\"errorMsg\":\"账号信息异常\",\"timestamp\":1786606422015}}\n",
+      "reason": ""
+    },
+    {
+      "name": "未知 appKey",
+      "status": "PASS",
+      "expected": "errorCode=505004",
+      "actual": "{\"head\":{\"errorCode\":\"505004\",\"logId\":\"msr7c1z3-nonexist-eed8fb25-X45FRTSWE5\",\"time\":0,\"errorMsg\":\"账户信息不存在\",\"timestamp\":1786606422015}}\n",
+      "reason": ""
+    },
+    {
+      "name": "缺失 appKey",
+      "status": "PASS",
+      "expected": "errorCode=505001",
+      "actual": "{\"head\":{\"errorCode\":\"505001\",\"logId\":\"msr7c1z4-anon-3d8c197b-JFWPORUSWT\",\"time\":0,\"errorMsg\":\"appId 异常\",\"timestamp\":1786606422016}}\n",
+      "reason": ""
+    },
+    {
+      "name": "手机号非法",
+      "status": "PASS",
+      "expected": "errorCode=505062",
+      "actual": "{\"head\":{\"errorCode\":\"505062\",\"logId\":\"msr7c1z4-y89grgjj-4074c010-F23BEP6SB3\",\"time\":0,\"errorMsg\":\"mobile 格式非法\",\"timestamp\":1786606422016}}\n",
+      "reason": ""
+    },
+    {
+      "name": "缺失 mobile",
+      "status": "PASS",
+      "expected": "errorCode=505062",
+      "actual": "{\"head\":{\"errorCode\":\"505062\",\"logId\":\"msr7c1z5-y89grgjj-28e116e8-JMHJLJIZEJ\",\"time\":0,\"errorMsg\":\"mobile 格式非法\",\"timestamp\":1786606422017}}\n",
+      "reason": ""
+    },
+    {
+      "name": "身份证非法",
+      "status": "PASS",
+      "expected": "errorCode=505062",
+      "actual": "{\"head\":{\"errorCode\":\"505062\",\"logId\":\"msr7c1z5-y89grgjj-84258267-TWMOZQJLII\",\"time\":0,\"errorMsg\":\"idCard 格式非法\",\"timestamp\":1786606422017}}\n",
+      "reason": ""
+    },
+    {
+      "name": "缺失 idCard",
+      "status": "PASS",
+      "expected": "errorCode=505062",
+      "actual": "{\"head\":{\"errorCode\":\"505062\",\"logId\":\"msr7c1z5-y89grgjj-2431eee9-TVVQYQMO5I\",\"time\":0,\"errorMsg\":\"idCard 格式非法\",\"timestamp\":1786606422017}}\n",
+      "reason": ""
+    },
+    {
+      "name": "缺 name 拦截",
+      "status": "PASS",
+      "expected": "errorCode=505062",
+      "actual": "{\"head\":{\"errorCode\":\"505062\",\"logId\":\"msr7c1z6-y89grgjj-f5bde2b1-6PRDB42Z6Y\",\"time\":0,\"errorMsg\":\"name 不能为空\",\"timestamp\":1786606422018}}\n",
+      "reason": ""
+    },
+    {
+      "name": "二次成功查得",
+      "status": "PASS",
+      "expected": "errorCode=0 \u0026 body.code=001 \u0026 range 含 jfjs",
+      "actual": "{\"head\":{\"errorCode\":\"0\",\"logId\":\"msr7c1z6-y89grgjj-17de2b1a-Q6KDTDRZ4H\",\"time\":0,\"errorMsg\":\"success\",\"timestamp\":1786606422019},\"body\":{\"code\":\"001\",\"msg\":\"成功\",\"uid\":\"grgjj-mock-dknn4bm2yv2k4\",\"reqid\":\"dknn4bm2yv2k4\",\"verify\":\"\",\"result\":{\"range\":\"{\\\"cbjfzt\\\":\\\"1\\\",\\\"jfjs\\\":\\\"7\\\",\\\"jfsj\\\":\\\"202601\\\"}\"}}}\n",
+      "reason": ""
+    }
+  ]
+}

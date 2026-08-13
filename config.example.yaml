@@ -7,10 +7,10 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk/swfp/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF
-#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF
-# 存储按「域」划分：x1 / v8v9 / zlf / blk / swfp / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf 各域独占一套 DB + Redis 逻辑库。
+# 各版本 (x1/v9/v8/zlf/blk/swfp/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / swfp / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj 各域独占一套 DB + Redis 逻辑库。
 # v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
 # 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
 # 跨域使用 license 一律鉴权失败。启动时会做防呆校验：两个不同的域配置同一个数据库
@@ -23,6 +23,7 @@
 # xfjy 转接消费交易特征 (data-bean)：JSON POST + sign=MD5(过滤空值升序 k=v&... + "&appkey=" + appkey)，name/idcard/mobile/authlet 入参 (全选填，至少一个查询要素)；有查得(001)/查无(999)。
 # tsfx 转接投诉分析识别名单 (kfongtech)：JSON POST + 业务参数 param 走 AES 加密 + 外层 sign，响应 data 为 gzip 压缩结果集；mobile+poly(C1/C2/C3) 入参；调用成功即计费(001)，命中状态 forbid 随结果数组经 result.range 透出。
 # lxf 转接灵犀分 score_195_v1 (fullink)：JSON POST + sign=DES/CBC(升序 k=v&... , encryptKey) 大写 hex，name/mobile/idCardNo 传 MD5 摘要；响应 data 为 DES 密文，解密得 300-900 评分经 result.range 透出；分数=-1 视为查无(999)。
+# grgjj 转接收入A_g版 (yrzx)：JSON POST + data 走 3DES/ECB/PKCS5+base64 加密、verify=MD5(account+加密前JSON串+reqid+type+key) 大写，name/cid/mobile 入参；响应 result 为 3DES 密文，解密得 {cbjfzt,jfjs,jfsj} 经 result.range 透出；code 001 查得计费 / 999 查无 / 其余(002/003/004/…)上游侧错误。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
 #   - 单源路由 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf)：列表长度 1。
@@ -288,3 +289,23 @@ versions:
     redis:
       <<: *redis_base
       db: 11
+  # grgjj 对接「收入A_g版」(yrzx)：JSON POST，data 字段走 3DES/ECB/PKCS5Padding 加密后
+  # Base64（明文业务 JSON {name,cid,mobile}），verify=MD5(account+加密前JSON串+reqid+
+  # type+key).toUpperCase()；响应 result 为同一套 3DES 密文，解密得 {cbjfzt,jfjs,jfsj}
+  # 经 result.range 透出。独立成域（库 datahub_grgjj_db / redis db12 / 独立 license 与统计）。
+  # 入参 name+cid(身份证)+mobile 均必填（网关前置拦截）。code 001 查得计费 / 999 查无 /
+  # 其余(002 账号不存在/003 余额不足/004 未授权/…)视为上游侧错误不计费。
+  # 注意：本上游有两把独立凭证——key(MD5 加签密钥) 与 aesKey(3DES 密钥)，二者不同。
+  grgjj:
+    upstreams:
+      - kind: "incomeag"
+        baseURL: "REPLACE_WITH_GRGJJ_UPSTREAM_URL"   # 如 http://server:port/yrzx/common/v2/credit/v2（联调时提供）
+        account: "REPLACE_WITH_GRGJJ_ACCOUNT"        # 上游分配的账户 account
+        key: "REPLACE_WITH_GRGJJ_SIGN_KEY"           # MD5 verify 加签密钥（上游文档/demo 里的 key）
+        aesKey: "REPLACE_WITH_GRGJJ_3DES_KEY"        # 3DES 密钥（Base64 编码，解码后须为 24 字节 DESede 密钥）
+    database:
+      <<: *pg_base
+      name: "datahub_grgjj_db"
+    redis:
+      <<: *redis_base
+      db: 12

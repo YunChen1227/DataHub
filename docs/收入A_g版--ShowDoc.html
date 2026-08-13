@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<!-- saved from url=(0061)https://www.showdoc.com.cn/p/719b9151fdbc1dccaa6315a0425c2862 -->
+<html data-theme="light" lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width,viewport-fit=cover, initial-scale=1.0">
+    <meta name="renderer" content="webkit">
+    <meta http-equiv="X-UA-Compatible" content="edge">
+    <meta http-equiv="Expires" content="0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Cache-control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Cache" content="no-cache">
+    <link rel="apple-touch-icon" href="https://showdoc-server.cdn.dfyun.com.cn/logo/w_64.png">
+    <link rel="apple-touch-icon-precomposed" href="https://showdoc-server.cdn.dfyun.com.cn/logo/w_64.png">
+    <link rel="icon" href="https://showdoc-server.cdn.dfyun.com.cn/favicon.ico">
+    <title>收入A_g版--ShowDoc</title>
+    <meta name="keywords" content="在线API文档 技术文档 数据字典 在线手册">
+    <meta name="description" content="收入A_g版">
+    <script src="https://hm.baidu.com/hm.js?84e82fa31c8ca8671f6b6f972b7e54fb"></script><script src="./收入A_g版--ShowDoc_files/server-cdn-status.js.download"></script>
+    <script src="./收入A_g版--ShowDoc_files/cdn-status.js.download"></script>
+    <script type="text/javascript">
+      // ========================================
+      // 环境检测（优先执行）
+      // ========================================
+      var host = window.location.host
+      var port = window.location.port
+      
+      // 开发环境：Vite dev server（端口 8081）
+      var isDevEnv = (host.indexOf('localhost') > -1 || host.indexOf('127.0.0.1') > -1) && port === '8081'
+      
+      // 测试环境：构建后的代码 + 测试域名（不使用 CDN）
+      var isTestEnv = !isDevEnv && (
+        host.indexOf('wu.com') > -1 ||
+        host.indexOf('gaoyixia.com') > -1 ||
+        host.indexOf('test.showdoc') > -1 ||
+        host.indexOf('local.showdoc') > -1 ||
+        host.indexOf('sd.gaoyixia.com') > -1 ||
+        host.indexOf('127.0.0.1') > -1 ||
+        host.indexOf('192.168.') > -1 ||
+        host.indexOf('localhost') > -1
+      )
+
+      // ========================================
+      // 全局配置
+      // ========================================
+      if (isDevEnv) {
+        // 开发环境
+        window.DocConfig = {
+          server: '/server/index.php?s=',
+          originalServer: '/server/index.php?s=',
+          lang: 'zh-cn',
+          staticPath: '/'
+        }
+      } else if (isTestEnv) {
+        // 测试环境：使用本地资源（根目录）
+        window.DocConfig = {
+          server: '/server/index.php?s=',
+          originalServer: '/server/index.php?s=',
+          lang: 'zh-cn',
+          staticPath: '/'
+        }
+        // 构建产物里 chunk 的 preload base 仍硬编码为 CDN，
+        // 必须显式置本地，否则 preload 走 CDN 失败 → vite:preloadError → 反复 reload 死循环
+        window.__SHOWDOC_RES_BASE__ = '/'
+      } else {
+        // 生产环境（默认使用 CDN）
+        window.DocConfig = {
+          server: 'https://showdoc-server.cdn.dfyun.com.cn/server/index.php?s=',
+          originalServer: '/server/index.php?s=',
+          lang: 'zh-cn',
+          staticPath: 'https://showdoc.cdn.dfyun.com.cn/'
+        }
+
+        // 生产环境 CDN 容灾
+        // Server CDN 容灾
+        if (typeof window.SHOWDOC_SERVER_CDN_STASTUS == 'undefined') {
+          window.DocConfig.server = '/server/index.php?s='
+        }
+        // 静态资源 CDN 容灾
+        if (typeof window.SHOWDOC_CDN_STASTUS == 'undefined') {
+          window.DocConfig.staticPath = '/'
+          // Vite 构建产物（路由懒加载预加载 CSS/JS）的回退基址
+          window.__SHOWDOC_RES_BASE__ = '/'
+        }
+      }
+
+      // ========================================
+      // CDN 容灾状态机（sessionStorage 持久化，防 reload 死循环）
+      // ========================================
+      // 状态流转：'cdn'（默认）→ 'local'（CDN 失败）→ 'exhausted'（都失败）
+      // 关键：状态存 sessionStorage，跨 reload 存活；'local' 态开机即用本地基址
+      ;(function () {
+        var STATE_KEY = '__SHOWDOC_FB_STATE__'
+        var state
+        try {
+          state = window.sessionStorage.getItem(STATE_KEY) || 'cdn'
+        } catch (e) {
+          state = 'cdn'
+        }
+        window.__SHOWDOC_FB_STATE__ = state
+
+        // 上一轮已切本地：本次开机直接用本地基址（main module 从头走本地）
+        if (state === 'local') {
+          window.__SHOWDOC_RES_BASE__ = '/'
+          if (window.DocConfig) {
+            window.DocConfig.staticPath = '/'
+          }
+        }
+
+        // 统一恢复入口（error 监听器 + vite:preloadError 共同调用，唯一决策点）
+        // isLocal：失败的是否为本地资源（决定 local→exhausted 是否触发）
+        window.__showdocRecover = function (reason, isLocal) {
+          if (state === 'cdn') {
+            // 首次失败：CDN → 本地（不 reload，靠 changeCDNToRoot 动态加载本地入口）
+            state = 'local'
+            window.__SHOWDOC_FB_STATE__ = 'local'
+            try {
+              window.sessionStorage.setItem(STATE_KEY, 'local')
+            } catch (e) {}
+            window.__SHOWDOC_RES_BASE__ = '/'
+            if (window.DocConfig) {
+              window.DocConfig.staticPath = '/'
+            }
+            console.error('[CDN Fallback] CDN 资源失败，切换本地:', reason)
+            if (typeof changeCDNToRoot === 'function') {
+              changeCDNToRoot()
+            }
+          } else if (state === 'local' && isLocal) {
+            // 本地资源也失败：放弃，展示错误页（不再 reload）
+            // 注意：'local' 态下 CDN 资源失败是正常的（main entry 标签尚未被
+            // changeCDNToRoot 重写），只有本地资源失败才视为彻底失败
+            state = 'exhausted'
+            window.__SHOWDOC_FB_STATE__ = 'exhausted'
+            try {
+              window.sessionStorage.setItem(STATE_KEY, 'exhausted')
+            } catch (e) {}
+            console.error('[CDN Fallback] 本地资源也失败，放弃恢复:', reason)
+            __showdocFatal()
+          }
+          // 'exhausted' 或 'local'+非本地失败：不处理
+        }
+
+        // 致命错误兜底页（带重试按钮，清状态后刷新）
+        function __showdocFatal() {
+          var app = document.getElementById('app')
+          if (!app) return
+          app.innerHTML =
+            '<div style="display:flex;flex-direction:column;align-items:center;' +
+            'justify-content:center;height:60vh;font-family:sans-serif;color:#666;text-align:center;padding:20px">' +
+            '<p style="font-size:16px;margin-bottom:16px">页面资源加载失败，可能是网络或 CDN 问题。</p>' +
+            '<button onclick="try{sessionStorage.removeItem(\'' + STATE_KEY +
+            '\')}catch(e){}location.reload()" style="padding:8px 24px;font-size:14px;' +
+            'cursor:pointer;border:1px solid #ccc;background:#fff;border-radius:4px">重新加载</button>' +
+            '</div>'
+        }
+
+        // vite:preloadError：委托给统一恢复（不再盲目 reload）
+        // 通过 payload 消息判断失败的是 CDN 还是本地资源
+        window.addEventListener('vite:preloadError', function (event) {
+          event.preventDefault()
+          var msg =
+            event.payload && event.payload.message
+              ? event.payload.message
+              : 'preload error'
+          var isCdn = msg.indexOf('dfyun') > -1
+          window.__showdocRecover('preload: ' + msg, !isCdn)
+        })
+      })()
+    </script>
+    <script type="module" crossorigin="" src="./收入A_g版--ShowDoc_files/index-6ab8535d.js.download"></script>
+    <link rel="modulepreload" crossorigin="" href="https://showdoc.cdn.dfyun.com.cn/assets/vendor-7ab2964c.js">
+    <link rel="modulepreload" crossorigin="" href="https://showdoc.cdn.dfyun.com.cn/assets/vendor-vue-bd78a03d.js">
+    <link rel="modulepreload" crossorigin="" href="https://showdoc.cdn.dfyun.com.cn/assets/i18n-b2b74862.js">
+    <link rel="modulepreload" crossorigin="" href="https://showdoc.cdn.dfyun.com.cn/assets/components-9a8066b4.js">
+    <link rel="modulepreload" crossorigin="" href="https://showdoc.cdn.dfyun.com.cn/assets/core-95bd8274.js">
+    <link rel="modulepreload" crossorigin="" href="https://showdoc.cdn.dfyun.com.cn/assets/assets-2d25972b.js">
+    <link rel="stylesheet" href="./收入A_g版--ShowDoc_files/vendor-49dc2278.css">
+    <link rel="stylesheet" href="./收入A_g版--ShowDoc_files/vendor-vue-e0182f4b.css">
+    <link rel="stylesheet" href="./收入A_g版--ShowDoc_files/components-d0036a2a.css">
+    <link rel="stylesheet" href="./收入A_g版--ShowDoc_files/assets-f9cf066c.css">
+    <link rel="stylesheet" href="./收入A_g版--ShowDoc_files/index-726c1082.css">
+  <link rel="modulepreload" as="script" crossorigin="" href="https://showdoc.cdn.dfyun.com.cn/assets/views-a0b0d514.js"><link rel="stylesheet" href="./收入A_g版--ShowDoc_files/views-57b5ef4d.css"><script src="./收入A_g版--ShowDoc_files/jquery.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/raphael.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/d3@5.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/flowchart.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/purify.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/xss.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/marked.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/underscore.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/sequence-diagram.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/jquery.flowchart.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/jquery.mark.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/plantuml.js.download"></script><script src="./收入A_g版--ShowDoc_files/view.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/transform.min.js.download"></script><script src="./收入A_g版--ShowDoc_files/editormd.js.download"></script><link type="text/css" rel="stylesheet" href="./收入A_g版--ShowDoc_files/katex.min.css"><script src="./收入A_g版--ShowDoc_files/highlight.min.js.download"></script><script id="https:-showdoc-cdn-dfyun-com-cn-editor-md-katex-katex-min" type="text/javascript" src="./收入A_g版--ShowDoc_files/katex.min.js.download"></script></head>
+
+  <body class="grey-bg">
+    <div class="index-item-block">
+      <div>INDEX_HTML</div>
+      <div>ITEM_HTML</div>
+    </div>
+    <div id="app" data-v-app=""><div id="app-container" data-theme="light"><div data-v-4f32517d="" class="page-show"><!----><!----><div data-v-4f32517d="" class="content-wrapper"><div data-v-4f32517d="" class="doc-container" id="doc-container"><div data-v-4f32517d="" class="doc-title-box"><h2 data-v-4f32517d="" id="doc-title">收入A_g版</h2><div data-v-4f32517d="" class="title-actions"><i data-v-4f32517d="" class="fas fa-copy copy-markdown-btn"></i><i data-v-4f32517d="" class="fas fa-expand" id="full-page"></i></div></div><div data-v-4f32517d="" id="page_md_content" class="page_content_main"><div data-v-29535ee4="" data-v-4f32517d="" class="editormd-editor-adapter showdoc"><div data-v-29535ee4="" class="editor-wrapper"><div data-v-5c882415="" data-v-29535ee4="" id="editor-md-6zqry6we6" class="main-editor markdown-body editormd-html-preview"><h5 id="h5-u7B80u8981u63CFu8FF0" class="toc-anchor-0"><a name="简要描述" class="reference-link"></a><span class="header-link octicon octicon-link"></span>简要描述</h5><ul>
+<li>收入A_g版</li></ul>
+<h5 id="h5--url" class="toc-anchor-1"><a name="请求URL" class="reference-link"></a><span class="header-link octicon octicon-link"></span>请求URL</h5><ul>
+<li><code>http://server:port/yrzx/common/v2/credit/v2</code>(server:port在联调时提供)</li></ul>
+<h5 id="h5-u83B7u53D6u5BC6u94A5" class="toc-anchor-2"><a name="获取密钥" class="reference-link"></a><span class="header-link octicon octicon-link"></span>获取密钥</h5><ul>
+<li><code>https://www.showdoc.com.cn/p/eb985dca7743ec9fef0636e7ab4957c2</code></li></ul>
+<h5 id="h5-u5BF9u63A5u65B9u5F0F" class="toc-anchor-3"><a name="对接方式" class="reference-link"></a><span class="header-link octicon octicon-link"></span>对接方式</h5><ul>
+<li>请求方式：http/post</li><li>编码:UTF-8</li><li>输出格式：JSON</li><li>注：account与key由商户提供</li></ul>
+<h5 id="h5-u8F93u5165u53C2u6570" class="toc-anchor-4"><a name="输入参数" class="reference-link"></a><span class="header-link octicon octicon-link"></span>输入参数</h5><div style="width: 100%; overflow-x: auto;"><table data-table-layout="auto">
+<thead>
+<tr>
+<th style="text-align:left;">参数名称</th>
+<th style="text-align:left;">是否必填</th>
+<th style="text-align:left;">是否签名</th>
+<th style="text-align:left;">参数描述</th>
+</tr>
+</thead>
+<tbody>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">account</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">账户</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">type</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">接口类型（固定值:1106）</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">data</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">业务json串（通过3des+base64加密）</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">reqid</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">请求流水号不大于20位</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">verify</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">否</td>
+<td style="text-align:left;">签名Md5(account+data(加密前json串)+reqid+type+key).toUpperCase</td>
+</tr>
+</tbody>
+</table></div>
+<h5 id="h5-data-" class="toc-anchor-5"><a name="data输入参数" class="reference-link"></a><span class="header-link octicon octicon-link"></span>data输入参数</h5><div style="width: 100%; overflow-x: auto;"><table data-table-layout="fixed">
+<thead>
+<tr>
+<th style="text-align:left;">参数名称</th>
+<th style="text-align:left;">是否必填</th>
+<th style="text-align:left;">参数描述</th>
+</tr>
+</thead>
+<tbody>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">name</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">姓名</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">cid</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">身份证号</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">mobile</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">手机号</td>
+</tr>
+</tbody>
+</table></div>
+<h5 id="h5-u8FD4u56DEu53C2u6570" class="toc-anchor-6"><a name="返回参数" class="reference-link"></a><span class="header-link octicon octicon-link"></span>返回参数</h5><div style="width: 100%; overflow-x: auto;"><table data-table-layout="auto">
+<thead>
+<tr>
+<th style="text-align:left;">字段名称</th>
+<th style="text-align:left;">是否签名</th>
+<th style="text-align:left;">描述</th>
+</tr>
+</thead>
+<tbody>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">code</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">返回码，具体见返回码字典</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">msg</td>
+<td style="text-align:left;">否</td>
+<td style="text-align:left;">返回码的中文描述，具体见返回码字典</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">uid</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">流水号</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">reqid</td>
+<td style="text-align:left;">是</td>
+<td style="text-align:left;">接入方生成的唯一查询流水号，长度 20 位以内</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">result</td>
+<td style="text-align:left;">否</td>
+<td style="text-align:left;">业务返回串，加密字符串</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">verify</td>
+<td style="text-align:left;">否</td>
+<td style="text-align:left;">签名</td>
+</tr>
+</tbody>
+</table></div>
+<h6 id="h6-result-" class="toc-anchor-7"><a name="result二级节点" class="reference-link"></a><span class="header-link octicon octicon-link"></span>result二级节点</h6><div style="width: 100%; overflow-x: auto;"><table data-table-layout="fixed">
+<thead>
+<tr>
+<th style="text-align:left;">字段名称</th>
+<th style="text-align:left;">描述</th>
+</tr>
+</thead>
+<tbody>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">cbjfzt</td>
+<td style="text-align:left;">缴费状态（1：正常；2：封存 ； 3：销户；）</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">jfjs</td>
+<td style="text-align:left;">缴费基数，见收入A_g版字典</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">jfsj</td>
+<td style="text-align:left;">缴费时间</td>
+</tr>
+</tbody>
+</table></div>
+<h5 id="h5-u8FD4u56DEu7801u5B57u5178" class="toc-anchor-8"><a name="返回码字典" class="reference-link"></a><span class="header-link octicon octicon-link"></span>返回码字典</h5><div style="width: 100%; overflow-x: auto;"><table data-table-layout="fixed">
+<thead>
+<tr>
+<th style="text-align:left;">返回码</th>
+<th style="text-align:left;">描述</th>
+</tr>
+</thead>
+<tbody>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">001</td>
+<td style="text-align:left;">成功（计费）</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">999</td>
+<td style="text-align:left;">无结果返回</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">002</td>
+<td style="text-align:left;">账号不存在</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">003</td>
+<td style="text-align:left;">余额不足</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">004</td>
+<td style="text-align:left;">请给该账户授权</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">020</td>
+<td style="text-align:left;">参数为空或格式错误</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">009</td>
+<td style="text-align:left;">账号为空</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">011</td>
+<td style="text-align:left;">verify为空或格式错误</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">012</td>
+<td style="text-align:left;">接口错误，请联系提供商</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">013</td>
+<td style="text-align:left;">校验签名错误</td>
+</tr>
+</tbody>
+</table></div>
+<h5 id="h5--a_g-" class="toc-anchor-9"><a name="收入A_g版字典" class="reference-link"></a><span class="header-link octicon octicon-link"></span>收入A_g版字典</h5><div style="width: 100%; overflow-x: auto;"><table data-table-layout="fixed">
+<thead>
+<tr>
+<th style="text-align:left;">评分</th>
+<th style="text-align:left;">描述</th>
+</tr>
+</thead>
+<tbody>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">1</td>
+<td style="text-align:left;">0,1000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">2</td>
+<td style="text-align:left;">1000,2000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">3</td>
+<td style="text-align:left;">2000,3000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">4</td>
+<td style="text-align:left;">3000,4000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">5</td>
+<td style="text-align:left;">4000,5000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">6</td>
+<td style="text-align:left;">5000,6000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">7</td>
+<td style="text-align:left;">6000,7000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">8</td>
+<td style="text-align:left;">7000,8000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">9</td>
+<td style="text-align:left;">8000,9000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">10</td>
+<td style="text-align:left;">9000,10000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">11</td>
+<td style="text-align:left;">10000,12000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">12</td>
+<td style="text-align:left;">12000,14000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">13</td>
+<td style="text-align:left;">14000,16000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">14</td>
+<td style="text-align:left;">16000,18000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">15</td>
+<td style="text-align:left;">18000,20000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">16</td>
+<td style="text-align:left;">20000,25000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">17</td>
+<td style="text-align:left;">25000,30000</td>
+</tr>
+<tr style="background-color: var(--editormd-table-row-bg);">
+<td style="text-align:left;">18</td>
+<td style="text-align:left;">30000+</td>
+</tr>
+</tbody>
+</table></div>
+</div></div></div></div><!----></div></div><div data-v-4f32517d="" class="toc-side" style="right: auto; left: 1233px;"><div data-v-7aa7faaa="" data-v-4f32517d="" class="toc-container"><div data-v-7aa7faaa="" class="toc-toggle"><i data-v-7aa7faaa="" class="fas fa-list"></i></div><div data-v-7aa7faaa="" class="toc-list is-open"><div data-v-7aa7faaa="" class="toc-header"><span data-v-7aa7faaa="">目录</span><i data-v-7aa7faaa="" class="fas fa-times"></i></div><div data-v-7aa7faaa="" class="toc-content"><div data-v-7aa7faaa="" class="toc-item toc-level-5 is-active"><span data-v-7aa7faaa="">简要描述</span></div><div data-v-7aa7faaa="" class="toc-item toc-level-5"><span data-v-7aa7faaa="">请求URL</span></div><div data-v-7aa7faaa="" class="toc-item toc-level-5"><span data-v-7aa7faaa="">获取密钥</span></div><div data-v-7aa7faaa="" class="toc-item toc-level-5"><span data-v-7aa7faaa="">对接方式</span></div><div data-v-7aa7faaa="" class="toc-item toc-level-5"><span data-v-7aa7faaa="">输入参数</span></div><div data-v-7aa7faaa="" class="toc-item toc-level-5"><span data-v-7aa7faaa="">data输入参数</span></div><div data-v-7aa7faaa="" class="toc-item toc-level-5"><span data-v-7aa7faaa="">返回参数</span></div><div data-v-7aa7faaa="" class="toc-item toc-level-6"><span data-v-7aa7faaa="">result二级节点</span></div><div data-v-7aa7faaa="" class="toc-item toc-level-5"><span data-v-7aa7faaa="">返回码字典</span></div><div data-v-7aa7faaa="" class="toc-item toc-level-5"><span data-v-7aa7faaa="">收入A_g版字典</span></div><!----><!----></div></div></div></div></div></div></div>
+
+    <!-- CDN 容灾脚本 -->
+    <script>
+      // CDN 容灾：CDN 不可用 或 上一轮已切本地 时，替换所有资源为本地路径
+      if (
+        typeof window.SHOWDOC_CDN_STASTUS == 'undefined' ||
+        window.__SHOWDOC_FB_STATE__ === 'local'
+      ) {
+        // 把全局变量中的静态资源路径改为本地
+        window.DocConfig.staticPath = '/'
+        changeCDNToRoot()
+        setTimeout(() => {
+          changeCDNToRoot()
+        }, 500)
+      }
+
+      // 修改资源路径从 CDN 到本地，并重新加载
+      function changeCDNToRoot() {
+        const loadScript = src => {
+          return new Promise((resolve, reject) => {
+            const scriptTag = document.createElement('script')
+            scriptTag.src = src
+            scriptTag.type = 'module'
+            scriptTag.crossOrigin = 'anonymous'
+            scriptTag.onload = resolve
+            scriptTag.onerror = reject
+            document.head.appendChild(scriptTag)
+          })
+        }
+
+        const loadStylesheet = href => {
+          return new Promise((resolve, reject) => {
+            const linkTag = document.createElement('link')
+            linkTag.href = href
+            linkTag.rel = 'stylesheet'
+            linkTag.onload = resolve
+            linkTag.onerror = reject
+            document.head.appendChild(linkTag)
+          })
+        }
+
+        const updateLinkTags = async () => {
+          // 转换为数组，避免 HTMLCollection live 更新问题
+          const links = Array.from(document.getElementsByTagName('link'))
+          
+          for (const linkTag of links) {
+            const href = linkTag.getAttribute('href')
+            const rel = (linkTag.getAttribute('rel') || '').toLowerCase()
+
+            // 只处理样式表；跳过 apple-touch-icon / icon / preconnect 等非样式 link
+            // 否则会把 png/ico 当 CSS 加载，strict mode 下报 MIME 类型错误并 reject 整条容灾链
+            if (href && href.includes('dfyun') && rel === 'stylesheet') {
+              const newHref = href.replace('https://showdoc.cdn.dfyun.com.cn/', '/')
+              await loadStylesheet(newHref)
+              
+              // 检查 parentNode 是否存在
+              if (linkTag.parentNode) {
+                linkTag.parentNode.removeChild(linkTag)
+              }
+            }
+          }
+        }
+
+        const updateScriptTags = async () => {
+          // 转换为数组，避免 HTMLCollection live 更新问题
+          const scripts = Array.from(document.getElementsByTagName('script'))
+          
+          for (const scriptTag of scripts) {
+            const src = scriptTag.getAttribute('src')
+
+            if (src && src.includes('dfyun') && !src.includes('showdoc-server')) {
+              const newSrc = src.replace('https://showdoc.cdn.dfyun.com.cn/', '/')
+              await loadScript(newSrc)
+              
+              // 检查 parentNode 是否存在
+              if (scriptTag.parentNode) {
+                scriptTag.parentNode.removeChild(scriptTag)
+              }
+            }
+          }
+        }
+
+        const updateImgTags = () => {
+          const imgs = Array.from(document.getElementsByTagName('img'))
+          
+          for (const imgTag of imgs) {
+            let src = imgTag.getAttribute('src')
+
+            if (src && src.includes('dfyun')) {
+              src = src.replace('https://showdoc.cdn.dfyun.com.cn/', '/')
+              imgTag.setAttribute('src', src)
+            }
+          }
+        }
+
+        updateLinkTags()
+          .then(() => {
+            return updateScriptTags()
+          })
+          .then(() => {
+            console.log('[CDN] 已切换到本地资源')
+            updateImgTags()
+          })
+          .catch(error => {
+            console.error('[CDN] 切换失败:', error)
+          })
+      }
+
+      // ========================================
+      // CDN 大文件截断兜底（委托给统一状态机）
+      // ========================================
+      // 捕获阶段监听两类信号：
+      //   1. 资源元素加载失败：script/link 的 onerror（不冒泡，必须捕获阶段）
+      //   2. 脚本 SyntaxError：内容损坏（被 CDN 截断 → 半截多字节 UTF-8 → 语法错误）
+      // 注意：只匹配 SyntaxError，不匹配业务运行时错误（TypeError/ReferenceError 等）。
+      //   因为 CDN 脚本运行时报错的 filename 必然含 dfyun，但那是业务 bug，不该触发切本地。
+      //   SyntaxError 是「脚本内容本身不合法」的唯一信号，对应 CDN 截断场景。
+      window.addEventListener('error', function (event) {
+        // 资源元素加载失败：提取 script/link 的 src/href
+        var target = event.target || event.srcElement
+        var url = ''
+        if (target && target.tagName) {
+          var tag = target.tagName.toUpperCase()
+          if (tag === 'SCRIPT' || tag === 'LINK') {
+            url = target.src || target.href || ''
+          }
+        }
+
+        // 命中条件：
+        //   - 资源 URL 含 dfyun（脚本/样式加载失败），或
+        //   - SyntaxError 且 filename 含 dfyun（脚本内容损坏）
+        // SyntaxError 判定（双保险，跨域脚本 error 对象可能为空只剩 message）：
+        //   1. event.error instanceof SyntaxError，或
+        //   2. event.message 含 'SyntaxError'
+        var msg = event.message || ''
+        var isSyntaxError =
+          (event.error && event.error instanceof SyntaxError) ||
+          msg.indexOf('SyntaxError') > -1
+        var hit =
+          (url && url.indexOf('dfyun') > -1) ||
+          (isSyntaxError && event.filename && event.filename.indexOf('dfyun') > -1)
+
+        if (!hit) return
+
+        var fbState = window.__SHOWDOC_FB_STATE__
+        if (fbState === 'cdn') {
+          // 首次：CDN → 本地
+          window.__showdocRecover(
+            url ? 'load: ' + url : 'syntax: ' + event.filename,
+            false
+          )
+        } else if (fbState === 'local') {
+          // 本地态下 CDN 标签竞态残留：强制重跑清理（CDN 失败在此态是正常的）
+          if (typeof changeCDNToRoot === 'function') {
+            changeCDNToRoot()
+          }
+        }
+        // 'exhausted'：忽略
+      }, true)
+    </script>
+
+
+    <!-- 防止被镜像站 -->
+    <script language="JavaScript">
+      var host = window.location.host
+      if (
+        host.indexOf('localhost') === -1 &&
+        host.indexOf('wu') === -1 &&
+        host.indexOf('showdoc') === -1 &&
+        host.indexOf('star7th.com') === -1 &&
+        host.indexOf('192.168.') === -1 &&
+        host.indexOf('gaoyixia.com') === -1 &&
+        host.indexOf('dongjingyu.cn') === -1 &&
+        host.indexOf('127.0.0.1') === -1
+      ) {
+        var href = window.location.href
+        var j = href.replace(new RegExp(host, 'g'), 'www.showdoc.com.cn')
+        window.location.href = j
+      }
+    </script>
+
+    <!-- 百度统计 -->
+    <script>
+      if (window.location.host == 'www.showdoc.com.cn') {
+        var _hmt = _hmt || []
+        ;(function() {
+          var hm = document.createElement('script')
+          hm.src = 'https://hm.baidu.com/hm.js?84e82fa31c8ca8671f6b6f972b7e54fb'
+          var s = document.getElementsByTagName('script')[0]
+          s.parentNode.insertBefore(hm, s)
+        })()
+      }
+    </script>
+
+    <!-- 主应用入口 -->
+    
+  
+<!----><div style="position: absolute; top: 0px; left: 0px; width: 100%;"><div><!----><div class="ant-tooltip ant-tooltip-placement-top" style="left: 10px; top: -947px; display: none;"><div class="ant-tooltip-content"><div class="ant-tooltip-arrow"><span class="ant-tooltip-arrow-content"></span></div><div class="ant-tooltip-inner" role="tooltip">复制页面内容为Markdown格式</div></div></div></div></div></body></html>

@@ -330,6 +330,10 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// lxf 灵犀分：上游 name/mobile/idCardNo 三项参数表都标"必传"，但文档 §2.2 明确
 		// 姓名缺省时传固定值 MD5("")，故实际必填口径为 mobile+idCardNo，name 选填——
 		// 恰与默认 parse.Parse 一致，无需专属校验器（此 case 仅为记录该判断依据）。
+	case upstream.ProviderIncomeAg:
+		// grgjj 收入A_g版：data 输入参数 name/cid/mobile 均标"是"(必填)，故网关前置
+		// 要求三要素齐全 (name 必填、mobile/idCard 合法)——用 ParseWithName。
+		orch.WithParser(parse.ParseWithName)
 	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upClient, billSvc, quotaSvc, cfg.requeryInterval, log)
 
@@ -496,6 +500,16 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			CustomerID:     uc.appID,
 			CustomerProdID: uc.apiKey,
 			EncryptKey:     uc.appSecret,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderIncomeAg:
+		// grgjj 收入A_g版 (yrzx)：account=账户、key=MD5 加签密钥、aesKey=3DES 密钥
+		// (Base64 编码，复用既有凭证字段，不新增 config 字段)。type 缺省 1106。
+		client := upstream.NewIncomeAg(upstream.IncomeAgConfig{
+			BaseURL:      uc.baseURL,
+			Account:      uc.account,
+			SignKey:      uc.key,
+			TripleDESKey: uc.aesKey,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderGama, "":

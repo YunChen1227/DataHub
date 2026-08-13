@@ -60,6 +60,58 @@ func tripleDESKeyFlexible(s string) ([]byte, error) {
 	return nil, fmt.Errorf("3des 密钥无法归一为 24 字节 DESede 密钥 (原始长度 %d，既非 24 字节原文/也非 Base64/Hex(24))", len(s))
 }
 
+// desedeExpand 把 8/16 字节密钥料补足为 24 字节 DESede：16→K1K2K1、8→K1K1K1、24 原样。
+// Java 常见做法：商户下发 16 字节双密钥，DESede 需 24 字节，取前 8 字节补到末尾。
+func desedeExpand(b []byte) ([]byte, error) {
+	switch len(b) {
+	case 24:
+		return b, nil
+	case 16:
+		out := make([]byte, 24)
+		copy(out, b)
+		copy(out[16:], b[:8]) // K1K2K1
+		return out, nil
+	case 8:
+		out := make([]byte, 24)
+		copy(out, b)
+		copy(out[8:], b)
+		copy(out[16:], b)
+		return out, nil
+	default:
+		return nil, fmt.Errorf("密钥料 %d 字节，无法补足为 8/16/24→24 字节 DESede", len(b))
+	}
+}
+
+// merchantDESedeKey 由商户 key（ASCII 字符串）得到解密「获取秘钥」下发密文所用的 24
+// 字节 DESede 密钥。商户 key 常为 16 字符（如 NO43H7l6R58c918B）→ 按 K1K2K1 补 24。
+func merchantDESedeKey(signKey string) ([]byte, error) {
+	return desedeExpand([]byte(signKey))
+}
+
+// deriveSessionKey 解出「获取秘钥」接口下发的动态 3DES 会话密钥。ShowDoc 明确「获取
+// 密钥……采用 3des+base64 加密方式」——即 result.key = Base64(3DES/ECB/PKCS5(真实密钥))，
+// 加密密钥为商户 key。故先用商户 key 解密 result.key 得到真实会话密钥；若解密/去填充
+// 失败（说明 result.key 实为明文密钥），退回按明文（原文/Base64/Hex 的 24 字节）归一。
+func deriveSessionKey(resultKey, signKey string) ([]byte, error) {
+	resultKey = strings.TrimSpace(resultKey)
+	if resultKey == "" {
+		return nil, fmt.Errorf("result.key 为空")
+	}
+	if mk, err := merchantDESedeKey(signKey); err == nil {
+		if plain, derr := tripleDESDecryptBase64Key(resultKey, mk); derr == nil {
+			// 解密成功：明文可能是 24 字节原始密钥、16/8 字节需补齐、或再套一层 Base64/Hex。
+			if k, kerr := desedeExpand(plain); kerr == nil {
+				return k, nil
+			}
+			if k, kerr := tripleDESKeyFlexible(strings.TrimSpace(string(plain))); kerr == nil {
+				return k, nil
+			}
+		}
+	}
+	// 回退：result.key 本身即明文密钥。
+	return tripleDESKeyFlexible(resultKey)
+}
+
 // tripleDESEncryptBase64Key/tripleDESDecryptBase64Key 与上面的 *Base64 版本等价，
 // 区别是直接接收已解好的 24 字节密钥（供动态获取的秘钥复用，避免再做一次 Base64
 // 往返）。

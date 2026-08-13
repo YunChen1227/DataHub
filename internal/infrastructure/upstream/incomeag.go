@@ -25,8 +25,9 @@ import (
 //
 // 两步协议（关键：3DES 密钥不是静态配置，而是先向「获取秘钥」接口动态换取）：
 //  1. 获取秘钥 GET {host}/yrzx/secKey/info?account&reqid&verify
-//     verify = MD5(account + reqid + key).toUpperCase()；响应 result.key 即 3DES
-//     密钥，24 小时后失效需重新获取。
+//     verify = MD5(account + reqid + key).toUpperCase()；响应 result.key 为「采用
+//     3des+base64 加密方式」下发的动态 3DES 会话密钥（用商户 key 解密得真实密钥，见
+//     deriveSessionKey），24 小时后失效需重新获取。
 //  2. 查询 POST {host}/yrzx/common/v2/credit/v2，请求体 {account,type,data,reqid,verify}：
 //     data   = Base64(3DES/ECB/PKCS5(加密前业务JSON {name,cid,mobile}))，密钥=步骤1的 key；
 //     verify = MD5(account + 加密前业务JSON串 + reqid + type + key).toUpperCase()，key=SignKey。
@@ -290,7 +291,9 @@ func (c *IncomeAgClient) getKey(ctx context.Context, reqid string) ([]byte, erro
 		return nil, busiErr(sr.Code, "获取秘钥失败: "+sr.Msg, sr.UID, sr.UID)
 	}
 
-	key, err := tripleDESKeyFlexible(sr.Result.Key)
+	// result.key 按 ShowDoc「获取密钥……采用 3des+base64 加密方式」用商户 key 解密得到
+	// 真实会话密钥（deriveSessionKey 内含明文回退），再用于查询 data 的 3DES 加解密。
+	key, err := deriveSessionKey(sr.Result.Key, c.cfg.SignKey)
 	if err != nil {
 		return nil, busiErr("E_SECKEY", "获取秘钥归一失败: "+err.Error(), sr.UID, sr.UID)
 	}

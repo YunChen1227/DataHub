@@ -7,10 +7,10 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk/swfp/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ
-#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...SWFP | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ
-# 存储按「域」划分：x1 / v8v9 / zlf / blk / swfp / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj 各域独占一套 DB + Redis 逻辑库。
+# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj 各域独占一套 DB + Redis 逻辑库。
 # v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
 # 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
 # 跨域使用 license 一律鉴权失败。启动时会做防呆校验：两个不同的域配置同一个数据库
@@ -26,9 +26,7 @@
 # grgjj 转接收入A_g版 (yrzx)：JSON POST + data 走 3DES/ECB/PKCS5+base64 加密、verify=MD5(account+加密前JSON串+reqid+type+key) 大写，name/cid/mobile 入参；响应 result 为 3DES 密文，解密得 {cbjfzt,jfjs,jfsj} 经 result.range 透出；code 001 查得计费 / 999 查无 / 其余(002/003/004/…)上游侧错误。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
-#   - 单源路由 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf)：列表长度 1。
-#   - 聚合路由 (swfp)：列表长度 N，每个子源自带完整凭证；主程序并发调所有子源、
-#     按判定表聚合 (≥1查得→001 计费 / 全查无→999 / 部分成功→002 不计费 / 全失败→505062)。
+#   - 单源路由：列表长度 1（当前所有路由均为单源）。
 #   同一路由内所有子源 kind 必须一致 (入参校验/信封按路由统一)。
 #
 # 注：durations 支持 Go 风格字符串，如 4s / 10s / 5m / 8h。
@@ -152,55 +150,6 @@ versions:
     redis:
       <<: *redis_base
       db: 4
-  # swfp 是聚合路由：4 个 entcredit 子源（证通 entcreditapi 四产品码）+ 1 个可选的
-  # salesdata 子源（凯盈云销项数据）并发查询后聚合。每个子源自带完整凭证——即使同
-  # 平台同凭证也各写一份（子源完全独立）。label 是该子源的段名，契约层按 label 映射
-  # 为对下游脱敏的源编号：invoice1→源1 / invoice2→源2 / tax1→源3 / tax2→源4 / sales→源5。
-  # swfp 有明确下游返回值文档（docs/税票分析接口文档.xlsx）：输出经契约层按 xlsx 两段
-  # 结构（发票数据聚合/税务数据聚合）+ 按源分组 + sourceStatus 整理，严格白名单。
-  # 下游可选入参 scope："all"(缺省)=全部数据源 / "basic"=仅源1-4（跳过 optional 子源）。
-  swfp:
-    upstreams:
-      - kind: "entcredit"
-        label: "invoice1"
-        product: "P0130081"                              # 发票数据聚合-part1
-        baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"   # 仅 endpoint（scheme+host[:port]），不含 requestUri
-        orgCode: "REPLACE_WITH_SWFP_ORG_CODE"            # 机构代码
-        accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"   # AK
-        secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"  # SK，Base64 编码
-      - kind: "entcredit"
-        label: "invoice2"
-        product: "P0130083"                              # 发票数据聚合-part2
-        baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"
-        orgCode: "REPLACE_WITH_SWFP_ORG_CODE"
-        accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"
-        secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"
-      - kind: "entcredit"
-        label: "tax1"
-        product: "P0130082"                              # 税务数据聚合-part1
-        baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"
-        orgCode: "REPLACE_WITH_SWFP_ORG_CODE"
-        accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"
-        secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"
-      - kind: "entcredit"
-        label: "tax2"
-        product: "P0130084"                              # 税务数据聚合-part2
-        baseURL: "REPLACE_WITH_SWFP_UPSTREAM_ENDPOINT"
-        orgCode: "REPLACE_WITH_SWFP_ORG_CODE"
-        accessKeyId: "REPLACE_WITH_SWFP_ACCESS_KEY_ID"
-        secretAccessKey: "REPLACE_WITH_SWFP_SECRET_ACCESS_KEY"
-      - kind: "salesdata"     # 源5 销项数据（凯盈云 crestv，docs/销项数据接口文档V1.0.docx）
-        label: "sales"
-        optional: true        # 可选源：下游 scope=basic 时跳过（成本控制）
-        baseURL: "http://api2.crestv.com:32313/api/ws"   # 业务接口前缀（测试环境 api2-test...:32314）
-        appId: "REPLACE_WITH_SALESDATA_APP_ID"           # AppID（应用唯一 ID）
-        appSecret: "REPLACE_WITH_SALESDATA_APP_KEY"      # AppKey：鉴权凭证兼 AES 密钥（16/24/32 字节原文，或 32/48/64 个十六进制字符）
-    database:
-      <<: *pg_base
-      name: "datahub_swfp_db"
-    redis:
-      <<: *redis_base
-      db: 5
   rlbd1:
     upstreams:
       - kind: "facecompare"   # rlbd1 对接人脸身份证比对一所（数脉，form POST + md5 签名）

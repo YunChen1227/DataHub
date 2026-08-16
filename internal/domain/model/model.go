@@ -6,17 +6,11 @@ package model
 import "fmt"
 
 // QueryCommand is the parsed client request body. 个人三要素路由用 mobile(必)/
-// idCard(必)/name(选)；swfp (税务发票聚合) 用 creditCode(统一社会信用代码，必)——
-// 字段名直接对齐上游真实入参名 (证通 entcreditapi args.creditCode；2026-07-08
-// 上游 E1000 报错明确指出必填字段名为 creditCode，官方 demo 文档里的 entInfo
-// 示例字段名与四产品聚合接口实际契约不符，以服务器报错为准)，本服务做接口
-// 转发，下游客户入参必须与上游契约一致，不臆造中间层字段名。各路由由自己的参数
-// 校验器决定必填口径 (parse.Parse / parse.ParseCreditCode)。
+// idCard(必)/name(选)；各路由由自己的参数校验器决定必填口径 (parse.Parse 等)。
 type QueryCommand struct {
-	Mobile     string `json:"mobile"`
-	IDCard     string `json:"idCard"`
-	Name       string `json:"name"`
-	CreditCode string `json:"creditCode"`
+	Mobile string `json:"mobile"`
+	IDCard string `json:"idCard"`
+	Name   string `json:"name"`
 	// rlbd1 (人脸身份证比对) 入参：image(base64) 与 url 二选一，配合 name/idCard。
 	Image string `json:"image"`
 	URL   string `json:"url"`
@@ -28,10 +22,6 @@ type QueryCommand struct {
 	// tsfx (投诉分析识别名单) 入参：命中级别策略 poly（C1 高危/C2 敏感/C3 一般），
 	// 配合 mobile（字段名对齐上游 kfongtech api.complaint.query 的 poly/mobile）。
 	Poly string `json:"poly"`
-	// swfp (税务发票聚合) 可选入参：调用范围。"all"(缺省)=全部数据源(含源5 销项
-	// 数据)；"basic"=仅基础数据源(源1-4 发票/税务聚合)，不调可选源。字符串，非空时
-	// 参与 MD5 加签。
-	Scope string `json:"scope"`
 }
 
 // SignedRequest carries the request envelope material needed for MD5 signature
@@ -58,13 +48,11 @@ type LicenseView struct {
 func (l *LicenseView) Active() bool { return l != nil && l.Status == "ACTIVE" }
 
 // UpstreamRequest carries the参数 the upstream client needs to build its signed
-// request (DESIGN §6). 个人三要素路由用 IDCard/Name/Mobile；swfp 用 CreditCode
-// (统一社会信用代码，对齐上游 args.creditCode)。Reqid 为内部幂等流水号。
+// request (DESIGN §6). 个人三要素路由用 IDCard/Name/Mobile。Reqid 为内部幂等流水号。
 type UpstreamRequest struct {
-	IDCard     string
-	Name       string
-	Mobile     string
-	CreditCode string
+	IDCard string
+	Name   string
+	Mobile string
 	// rlbd1 (人脸身份证比对) 用 Image(base64) 或 URL (二选一) + Name/IDCard。
 	Image string
 	URL   string
@@ -73,18 +61,9 @@ type UpstreamRequest struct {
 	// xfjy (消费交易特征) 用 Authlet(终端授权书编号) + Name/IDCard/Mobile。
 	Authlet string
 	// tsfx (投诉分析识别名单) 用 Poly(命中级别 C1/C2/C3) + Mobile。
-	Poly string
-	// swfp 调用范围（parse.ParseCreditCode 归一化后恒为 "all"/"basic"）："basic"
-	// 时聚合器跳过标记为 optional 的子源（源5 销项数据），仅调基础源。
-	Scope string
-	Reqid string
+	Poly   string
+	Reqid  string
 }
-
-// Scope 取值（swfp 调用范围）。
-const (
-	ScopeAll   = "all"   // 全部数据源（含可选源），缺省
-	ScopeBasic = "basic" // 仅基础数据源（跳过 optional 子源）
-)
 
 // UpstreamResult is the normalized upstream response (DESIGN §6). 唯一上游伽马把原生
 // 响应归一化为此形态; Code 统一为 ("001" 查得 / "999" 查无) so billing + downstream body 统一。
@@ -223,8 +202,7 @@ type RangeResult struct {
 // Versions is the canonical ordered list of service versions (routes). 各版本对外
 // 接口完全一致 (x1 信封格式)，仅靠路由名区分，各自独立上游。x1 同时充当后台登录
 // 的控制面 (admin 账号 + JWT)。zlf 转接租赁分V2-D (守信 shouxin168) 上游；blk 转接
-// 黑名单因子V35 (应诺尔 enol) 上游；swfp 聚合税务+发票四产品码 (企业维度,
-// creditCode 入参, 见 upstream/entcredit.go)；rlbd1/rlbd2 转接人脸身份证比对一所
+// 黑名单因子V35 (应诺尔 enol) 上游；rlbd1/rlbd2 转接人脸身份证比对一所
 // (数脉 facecompare 上游，name+idCard+image|url 入参，见 upstream/facecompare.go；
 // rlbd1/rlbd2 同一上游接口、各自独立的 appId/appSecret 与独立库/统计)；
 // sfzhy 转接身份证三要素核验 (idverify 上游，name+idCard+profilePicture 入参，
@@ -243,11 +221,11 @@ type RangeResult struct {
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "swfp", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -273,8 +251,6 @@ func DemoAppKey(route string) string {
 		return "y8909zlf"
 	case "blk":
 		return "y8909blk"
-	case "swfp":
-		return "y890swfp"
 	case "rlbd1":
 		return "y89rlbd1"
 	case "rlbd2":

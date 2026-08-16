@@ -21,7 +21,7 @@ import (
 )
 
 // QueryOrchestrator implements the §4 sequence. route 标记本编排器服务的路由
-// (x1/v9/v8/zlf/blk/swfp)，用于把统计/台账/审计按路由作用域隔离 (共享 license 的 v8/v9)。
+// (x1/v9/v8/zlf/blk/rlbd1/...)，用于把统计/台账/审计按路由作用域隔离 (共享 license 的 v8/v9)。
 type QueryOrchestrator struct {
 	route    string
 	auth     *auth.Service
@@ -42,7 +42,7 @@ func NewQueryOrchestrator(route string, a *auth.Service, q *quota.Service, b *bi
 }
 
 // WithParser 替换本路由的参数校验器 (默认 parse.Parse 个人三要素)。企业维度等
-// 非三要素入参的路由在装配时调用 (如 swfp → parse.ParseCredit)。
+// 非三要素入参的路由在装配时调用 (如 rlbd1 → parse.ParseFace)。
 func (o *QueryOrchestrator) WithParser(fn func(*model.QueryCommand) (*model.UpstreamRequest, error)) *QueryOrchestrator {
 	if fn != nil {
 		o.parseFn = fn

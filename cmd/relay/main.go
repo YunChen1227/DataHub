@@ -121,7 +121,7 @@ func main() {
 	defer stop()
 
 	// 上游共享 HTTP client：显式 Transport 提高连接复用率。Go 默认
-	// MaxIdleConnsPerHost=2——swfp 一次请求就并发 5 路打同一主机，默认值会导致
+	// MaxIdleConnsPerHost=2——多源路由一次请求可能并发打同一主机，默认值会导致
 	// 反复新建 TCP+TLS 连接（每次 50-200ms 握手），是端到端延迟的大头之一。
 	httpClient := &http.Client{
 		Timeout: cfg.upstreamTimeout,
@@ -307,9 +307,6 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	// 同口径的上游 (gama/income)。聚合路由所有子源 kind 一致 (loadConfig 已校验)，
 	// 故按路由 kind 选校验器即可。
 	switch routeKind {
-	case upstream.ProviderEntCredit:
-		// swfp 入参对齐上游证通 entcreditapi 的 args.creditCode。
-		orch.WithParser(parse.ParseCreditCode)
 	case upstream.ProviderRental, upstream.ProviderBlacklist:
 		// zlf (租赁分 name 必传) / blk (黑名单V35 name 参与摘要匹配) 均要求姓名必填。
 		orch.WithParser(parse.ParseWithName)
@@ -355,32 +352,19 @@ func buildUpstreams(route string, ucs []upstreamConfig, httpClient *http.Client,
 		if err != nil {
 			return nil, "", err
 		}
-		sources = append(sources, upstream.LabeledUpstream{Label: labelFor(uc, i), Port: client, Optional: uc.optional})
+		sources = append(sources, upstream.LabeledUpstream{Label: labelFor(uc, i), Port: client})
 	}
 	agg, err := upstream.NewAggregator(sources)
 	if err != nil {
 		return nil, "", err
 	}
-	// swfp 有明确的下游返回值文档 (docs/税票分析接口文档.xlsx)：套契约映射层，把
-	// 聚合分段结果整理为 xlsx 两段结构 + 按源分组 + sourceStatus（严格白名单）。
-	// 其余路由无返回值文档，保持原样透传聚合结果。
-	if route == "swfp" {
-		return upstream.NewSwfpContract(agg), ucs[0].kind, nil
-	}
 	return agg, ucs[0].kind, nil
 }
 
-// labelFor 决定子源在聚合 range 里的段名：显式 label 优先；entcredit 未指定时按
-// 产品码缺省 (invoice1/tax1…)；其余回退为 kind+下标 (单源路由用不到 label)。
+// labelFor 决定子源在聚合 range 里的段名：显式 label 优先；否则回退为 kind+下标。
 func labelFor(uc upstreamConfig, idx int) string {
 	if uc.label != "" {
 		return uc.label
-	}
-	if uc.kind == upstream.ProviderEntCredit && uc.product != "" {
-		return upstream.EntCreditLabel(uc.product)
-	}
-	if uc.kind == upstream.ProviderSalesData {
-		return "sales" // swfp 契约层按此段名映射为源5
 	}
 	return fmt.Sprintf("%s%d", uc.kind, idx+1)
 }
@@ -439,15 +423,6 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			EncryptionType: uc.encryptionType,
 		}, httpClient)
 		return client, nil
-	case upstream.ProviderEntCredit:
-		client := upstream.NewEntCredit(upstream.EntCreditConfig{
-			Endpoint:        uc.baseURL,
-			OrgCode:         uc.orgCode,
-			AccessKeyID:     uc.accessKeyID,
-			SecretAccessKey: uc.secretAccessKey,
-			Product:         uc.product,
-		}, httpClient)
-		return client, nil
 	case upstream.ProviderFaceCompare:
 		client := upstream.NewFaceCompare(upstream.FaceCompareConfig{
 			BaseURL:   uc.baseURL,
@@ -480,15 +455,6 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			APIKey:     uc.apiKey,
 			AESKey:     uc.aesKey,
 			SignSecret: uc.appSecret,
-		}, httpClient)
-		return client, nil
-	case upstream.ProviderSalesData:
-		// swfp 源5 销项数据 (凯盈云 crestv)：appId=AppID、appSecret=AppKey (兼作
-		// AES 密钥，复用既有凭证字段)。baseURL 为业务接口前缀 (…/api/ws)。
-		client := upstream.NewSalesData(upstream.SalesDataConfig{
-			BaseURL: uc.baseURL,
-			AppID:   uc.appID,
-			AppKey:  uc.appSecret,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderLXScore:

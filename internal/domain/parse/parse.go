@@ -19,8 +19,6 @@ var (
 	idCardRe = regexp.MustCompile(`^\d{17}[\dX]$`)
 	// sfzhy 上游同时支持 15 位与 18 位身份证号 (接口文档注意事项第 8 条)。
 	idCard15Re = regexp.MustCompile(`^\d{15}$`)
-	// 统一社会信用代码 (GB 32100)：18 位，字符集不含 I/O/S/V/Z（不做校验位运算）。
-	creditCodeRe = regexp.MustCompile(`^[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}$`)
 	// xfjy 授权书编号 authlet：由数字+字母组成（data-bean fk3002 字段说明）。
 	authletRe = regexp.MustCompile(`^[0-9A-Za-z]+$`)
 	// tsfx 命中级别策略 poly：C1 高危 / C2 敏感 / C3 一般（kfongtech 参数表枚举）。
@@ -65,35 +63,6 @@ func ParseWithName(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 		return nil, errs.New(errs.BusiDataRequestErr, "name 不能为空")
 	}
 	return up, nil
-}
-
-// ParseCreditCode 校验 swfp 入参 (creditCode 必填，统一社会信用代码；字段名对齐
-// 上游证通 entcreditapi 的 args.creditCode——2026-07-08 上游 E1000 报错明确指出
-// 必填字段名为 creditCode，不是官方 demo 文档示例里的 entInfo，不臆造中间层字段
-// 名)。可选入参 scope（调用范围）："all"(缺省)=全部数据源 / "basic"=仅基础数据源
-// (跳过可选的源5 销项数据)；其余取值拦截。失败返回 busiCode 1007 数据请求异常
-// (我方拦截, 不调上游/不计费)。
-func ParseCreditCode(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
-	if cmd == nil {
-		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
-	}
-	creditCode := strings.ToUpper(strings.TrimSpace(cmd.CreditCode))
-	if !creditCodeRe.MatchString(creditCode) {
-		return nil, errs.New(errs.BusiDataRequestErr, "creditCode 格式非法")
-	}
-	scope := strings.ToLower(strings.TrimSpace(cmd.Scope))
-	switch scope {
-	case "", model.ScopeAll:
-		scope = model.ScopeAll
-	case model.ScopeBasic:
-	default:
-		return nil, errs.New(errs.BusiDataRequestErr, "scope 取值非法, 须为 all 或 basic")
-	}
-	return &model.UpstreamRequest{
-		CreditCode: creditCode,
-		Scope:      scope,
-		Reqid:      NewReqid(),
-	}, nil
 }
 
 // ParseFace 校验 rlbd1 (人脸身份证比对一所) 入参：name 必填、idCard 必填、

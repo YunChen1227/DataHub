@@ -32,7 +32,7 @@ func pkcs5Pad(data []byte, blockSize int) []byte {
 }
 
 // aesECBDecryptBase64 is the inverse of aesECBEncryptBase64: Base64 解码后按块
-// AES/ECB 解密并去除 PKCS5 填充。销项数据 (salesdata) 上游应答 ReqData 解密用。
+// AES/ECB 解密并去除 PKCS5 填充。rental 等上游应答解密复用。
 func aesECBDecryptBase64(cipherB64 string, key []byte) ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(cipherB64)
 	if err != nil {

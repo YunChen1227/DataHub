@@ -6,7 +6,6 @@
 - **对外（下游，v9/v8）**：`POST /v1/openapi/zlx/querySrmxV9` / `querySrmxV8`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；各自对接独立的经济能力上游（`docs/income_cls.md` 协议）。详见 [`docs/API_接口文档与使用手册_v9v8.md`](docs/API_接口文档与使用手册_v9v8.md)。
 - **对外（下游，zlf=租赁分V2-D）**：`POST /v1/openapi/zlx/querySrmxZLF`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；`result.range` 透出上游 `score1`（500-700，[500-550]高 /(550-590]中 /(590-700]低）。详见 [`docs/API_接口文档与使用手册_zlf.md`](docs/API_接口文档与使用手册_zlf.md)。
 - **对外（下游，blk=黑名单因子V35）**：`POST /v1/openapi/zlx/querySrmxBLK`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；上游富对象结果（`whether_hit`/`hit_grade`/`hit_type[P1-P8 的 m1/m3/m6]`）整体 **JSON 序列化为字符串**经 `result.range` 透出，客户自行解析。详见 [`docs/API_接口文档与使用手册_blk.md`](docs/API_接口文档与使用手册_blk.md)。
-- **对外（下游，swfp=税务发票聚合）**：`POST /v1/openapi/zlx/querySrmxSWFP`，同信封/同 MD5 加签/同 `head/body`，但为**企业维度**入参（`creditCode` 统一社会信用代码必填 + 可选 `scope`："all" 缺省=全部数据源 / "basic"=仅基础源）；内部**并发聚合五个数据源**（发票 P0130081/P0130083 + 税务 P0130082/P0130084 + 可选的凯盈云销项数据月度汇总）。swfp 是首个有**明确下游返回值契约**（[`docs/税票分析接口文档.xlsx`](docs/税票分析接口文档.xlsx)）的路由：`result.range` 不再原样透传，而是经**契约映射层**（`upstream/swfpcontract.go`）按 xlsx 整理为「发票数据聚合 / 税务数据聚合」两段结构，每个字段按脱敏源编号分组（`源1`-`源5`），附 `sourceStatus` 段级状态；**严格白名单**——xlsx 之外的字段一律不返回，xlsx 定义而上游缺失的字段输出空串。聚合特有业务码 **`002` = 部分数据源成功（不计费）**。
 - **对外（下游，rlbd1=人脸身份证比对一所）**：`POST /v1/openapi/zlx/querySrmxRLBD1`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`+`idCard`+（`image` base64 或 `url` 二选一）；比对成功结果富对象（`order_no`/`score`/`incorrect`/`sex`/`birthday`/`address`）整体 **JSON 序列化为字符串**经 `result.range` 透出。人脸比对无「查无」概念，故不产生 `999`。
 - **对外（下游，rlbd2=人脸身份证比对一所·独立凭证）**：`POST /v1/openapi/zlx/querySrmxRLBD2`，对外契约与 rlbd1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），独立成域（独立库/统计/license）。详见 [`docs/API_接口文档与使用手册_rlbd2.pdf`](docs/API_接口文档与使用手册_rlbd2.pdf)。
 - **对外（下游，sfzhy=身份证三要素核验）**：`POST /v1/openapi/zlx/querySrmxSFZHY`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`+`idCard`(15/18 位)+`profilePicture`(base64 人像照片)；核验结果富对象（`Result`/`ResultMessage`/`ImageScore`）整体 **JSON 序列化为字符串**经 `result.range` 透出。三要素核验无「查无」概念，故不产生 `999`。
@@ -18,14 +17,13 @@
 
 > **IP 准入（v0.7）**：网关**不再**做全局/每用户 IP 白名单校验；来源 IP 仅写入审计日志。生产环境由**阿里云 ECS 安全组**等网络层控制访问。
 
-> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `swfp` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` / `tsfx` / `lxf` / `grgjj` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
+> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` / `tsfx` / `lxf` / `grgjj` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
 
 - **对内（上游，按版本路由）**：每个版本各自对接一个上游，归一化为统一的 `UpstreamResult`（`001`查得 /`999`查无）：
   - `x1` → **伽马分层分**（`gama`，《伽马分层分_定制版》PDF：`POST /enol/api/v1/doCheck`，MD5 加签 JSON 信封）。
   - `v9/v8` → **经济能力**（`income`，`docs/income_cls.md`：GET + `account/key` 验签）。
   - `zlf` → **租赁分V2-D / 守信**（`rental`，`POST .../api/lightning/product/query`：业务数据 **AES/ECB/PKCS5Padding + Base64** 成 `biz_data`，与 `institution_id` 一起 **form** 提交；授权书由本服务启动时上传 OSS 一次并缓存 `licenseUrl` 复用）。
   - `blk` → **黑名单因子V35 / 应诺尔**（`blacklist`，与 `gama` 同 `POST /enol/api/v1/doCheck` 端点 + 同 MD5 信封；`apiKey=blackIntV35`、`encryptionType=2`：`name/idCard/mobile` 由本服务取 **MD5** 摘要后入 body 加签；响应富对象 `result` 序列化为 JSON 字符串透出 `result.range`）。
-  - `swfp` → **税务发票四产品聚合 / 证通**（`entcredit`，`HMAC-SHA256` 签名 + `form` 提交，企业维度 `creditCode` 入参；并发聚合四产品码，部分成功归一 `002`）+ **销项数据 / 凯盈云 crestv**（`salesdata`，可选第五源：`{AppID, ReqData}` 信封、ReqData=Base64(AES(内层 JSON))，调「月度开票汇总 + 月度下游企业」两个接口，`optional: true`，下游 `scope=basic` 可跳过；见 [`docs/销项数据接口文档V1.0.docx`](docs/销项数据接口文档V1.0.docx)）。
   - `rlbd1` → **人脸身份证比对一所 / 数脉**（`facecompare`，`POST /v4/face_id_card/yisuo/compare` **form** 提交；`sign = md5(appid&timestamp&app_security)`，明文传 `name/idcard` + `image` 或 `url`；收费类 `incorrect` 归一 `001`，不收费类/`code≠200` 归一上游侧错误；响应富对象序列化透出 `result.range`）。
   - `rlbd2` → **人脸身份证比对一所 / 数脉（独立凭证）**（同 `rlbd1` 的 `facecompare` 上游接口与协议，仅换一套 `appId/appSecret`，独立成域）。
   - `sfzhy` → **身份证三要素核验**（`idverify`，`POST /api/idCardThreeElements` **JSON** 提交；`signature = SHA256(升序 k=v&… + "&AppSecret=" + 商户密钥)`，明文传 `name/idCard/profilePicture`；`Code=0` 归一 `001`（Result 0–5 均计费），`Code≠0` 归一上游侧错误；响应富对象序列化透出 `result.range`）。
@@ -171,8 +169,8 @@ storage:
   driver: "postgres"             # 生产必须为 postgres
   migrationsDir: "migrations"    # 相对 relay 工作目录；启动时自动跑 DDL
 
-# 存储按域独立：x1/v8v9/zlf/blk/swfp/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj 各一套 PG 库 + Redis 逻辑库。
-# 上游按 upstreams 列表配置：单源路由列表长度 1；聚合路由 (swfp) 长度 N，每个子源自带
+# 存储按域独立：x1/v8v9/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj 各一套 PG 库 + Redis 逻辑库。
+# 上游按 upstreams 列表配置：单源路由列表长度 1；多源路由长度 N，每个子源自带完整凭证。
 # 完整凭证，主程序并发调所有子源后按判定表聚合（≥1查得→001计费 / 全查无→999 /
 # 部分成功→002不计费 / 全失败→505062）。同一路由所有子源 kind 必须一致。
 versions:
@@ -216,14 +214,15 @@ versions:
         encryptionType: 2             # 2=MD5：name/idCard/mobile 取摘要后入 body 加签
     database: { host: "<RDS>", name: "datahub_blk_prod_db", ... }
     redis:    { db: 7, ... }
-  swfp:                             # 税务发票四产品聚合：4 个 entcredit 子源并发聚合
+  rlbd1:
     upstreams:
-      - { kind: "entcredit", label: "invoice1", product: "P0130081", baseURL: "https://cisp.zenitera.com", orgCode: "...", accessKeyId: "...", secretAccessKey: "..." }
-      - { kind: "entcredit", label: "invoice2", product: "P0130083", baseURL: "https://cisp.zenitera.com", orgCode: "...", accessKeyId: "...", secretAccessKey: "..." }
-      - { kind: "entcredit", label: "tax1",     product: "P0130082", baseURL: "https://cisp.zenitera.com", orgCode: "...", accessKeyId: "...", secretAccessKey: "..." }
-      - { kind: "entcredit", label: "tax2",     product: "P0130084", baseURL: "https://cisp.zenitera.com", orgCode: "...", accessKeyId: "...", secretAccessKey: "..." }
-    database: { host: "<RDS>", name: "datahub_swfp_db", ... }
-    redis:    { db: 5, ... }
+      - kind: "facecompare"
+        baseURL: "https://api.shumaidata.com/v4/face_id_card/yisuo/compare"
+        appId: "<上游 appid>"
+        appSecret: "<上游 app_security>"
+    database: { host: "<RDS>", name: "datahub_rlbd1_db", ... }
+    redis:    { db: 8, ... }
+  # 其余路由 (rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj) 见 config.example.yaml
 
 admin:
   bootstrapUser: "admin"

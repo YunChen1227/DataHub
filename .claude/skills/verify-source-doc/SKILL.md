@@ -1,6 +1,6 @@
 ---
 name: verify-source-doc
-description: 逐条核对 DataHub 某个上游数据源（含聚合路由的某个子源，如 swfp 源1-源5）的实现是否与「该源自己的接口文档」完全一致，并给出不一致清单与修复。只要用户提到「检查某某源的代码」「和文档保持一致」「对一下接口文档」「源N 调不通/没法调用」「核对上游协议」，即使没明说要用 skill，也必须使用本 skill。新增上游用 add-upstream / add-upstream-multi skill，本 skill 只管核对既有实现。
+description: 逐条核对 DataHub 某个上游数据源（含多源路由的某个子源）的实现是否与「该源自己的接口文档」完全一致，并给出不一致清单与修复。只要用户提到「检查某某源的代码」「和文档保持一致」「对一下接口文档」「源N 调不通/没法调用」「核对上游协议」，即使没明说要用 skill，也必须使用本 skill。新增上游用 add-upstream / add-upstream-multi skill，本 skill 只管核对既有实现。
 ---
 
 # 核对上游源实现与其接口文档的一致性
@@ -16,7 +16,7 @@ description: 逐条核对 DataHub 某个上游数据源（含聚合路由的某�
 | 客户端 | `internal/infrastructure/upstream/<kind>.go` |
 | 装配 | `cmd/relay/main.go` 的 `buildClient` case + `labelFor` |
 | 配置 | `config.example.yaml` **和**实际部署的 `config.aliyun.prod.yaml` 等 |
-| 契约映射 | 聚合路由才有，如 `internal/infrastructure/upstream/swfpcontract.go` |
+| 契约映射 | 多源路由才有（若有下游契约整理层，单独文件） |
 
 `.docx` 用 PowerShell 解 zip 读 `word/document.xml`（正文段落 + 表格都要取，字段表
 都在表格里）；`.pdf` 用 Read 工具**整篇读完**，别 grep 片段——鉴权/示例代码常在文末。

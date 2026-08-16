@@ -10,13 +10,14 @@ import (
 )
 
 // upstreamConfig holds a single 上游子源 endpoint + 我方在该上游侧的凭证。一条路由
-// 的上游是 []upstreamConfig：单源路由列表长度 1，聚合路由 (swfp) 长度 N，每条自带
-// 完整凭证。kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8) |
-// rental(租赁分V2-D, zlf) | blacklist(黑名单因子V35, blk) | entcredit(税务发票聚合, swfp)。
+// 的上游是 []upstreamConfig：单源路由列表长度 1，多源路由长度 N，每条自带完整凭证。
+// kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8) |
+// rental(租赁分V2-D, zlf) | blacklist(黑名单因子V35, blk) | facecompare | idverify |
+// consumetxn | complaint | lxscore | incomeag。
 type upstreamConfig struct {
-	kind    string // gama | income | rental | blacklist | entcredit | facecompare | idverify | consumetxn | complaint | salesdata | lxscore | incomeag
+	kind    string // gama | income | rental | blacklist | facecompare | idverify | consumetxn | complaint | lxscore | incomeag
 	baseURL string
-	// gama (伽马) / blacklist (黑名单因子V35) / entcredit (税务发票聚合) 凭证。
+	// gama (伽马) / blacklist (黑名单因子V35) 凭证。
 	// lxscore (灵犀分) 复用这三个字段：appID=customerId、apiKey=customerProdId、
 	// appSecret=encryptKey (DES 密钥，兼作 sign 加密与 data 解密)。
 	appID          string
@@ -34,17 +35,8 @@ type upstreamConfig struct {
 	oss           ossConfig
 	licenseFile   string // 固定授权书本地文件, 启动时上传 OSS
 	licenseType   int    // 0:图片 1:pdf
-	// entcredit (swfp / 证通 entcreditapi) 凭证：与 gama/blacklist 的 appId/appSecret
-	// 语义不同（HMAC-SHA256 签名 + 机构维度鉴权），单列专属字段，不复用 appID/appSecret。
-	orgCode         string // 机构代码
-	accessKeyID     string // AK
-	secretAccessKey string // SK，Base64 编码，签名前需 Base64 解码取原始字节
-	product         string // entcredit: 本子源的单个产品码 (P0130081/83/82/84)
-	// label 是本子源在聚合 range 里的段名 (如 invoice1/tax1)；聚合路由 (len>1) 用，
-	// 单源路由可省。为空时由 client 按 product/下标缺省。
+	// label 是本子源在聚合 range 里的段名；多源路由用，单源可省。
 	label string
-	// optional 标记可选子源：下游 scope=basic 时跳过 (swfp 源5 销项数据)。
-	optional bool
 }
 
 // ossConfig holds aliyun OSS 凭证 for uploading the租赁分授权书 (rental 专用)。
@@ -78,7 +70,7 @@ type redisConfig struct {
 
 // versionConfig is the full per-version dependency config (独立上游 + 独立库 +
 // 独立 Redis)。各路由对外接口完全一致，仅靠路由名区分。upstreams 是本路由的上游
-// 子源列表：单源长度 1，聚合路由 (swfp) 长度 N。
+// 子源列表：单源长度 1，多源路由长度 N。
 type versionConfig struct {
 	upstreams []upstreamConfig
 	db        dbConfig
@@ -166,15 +158,8 @@ type fileUpstream struct {
 	OSS           fileOSS `yaml:"oss"`
 	LicenseFile   string  `yaml:"licenseFile"`
 	LicenseType   int     `yaml:"licenseType"`
-	// entcredit (swfp / 证通 entcreditapi) 专用
-	OrgCode         string `yaml:"orgCode"`
-	AccessKeyID     string `yaml:"accessKeyId"`
-	SecretAccessKey string `yaml:"secretAccessKey"`
-	Product         string `yaml:"product"` // entcredit: 本子源的单个产品码
-	// label：本子源在聚合 range 里的段名 (invoice1/tax1…)；聚合路由用，单源可省。
+	// label：本子源在聚合 range 里的段名；多源路由用，单源可省。
 	Label string `yaml:"label"`
-	// optional：可选子源，下游 scope=basic 时跳过 (swfp 源5 销项数据)。
-	Optional bool `yaml:"optional"`
 }
 
 // fileOSS mirrors the rental upstream's oss YAML block.
@@ -207,7 +192,7 @@ type fileRedis struct {
 }
 
 // fileVersion mirrors one entry under versions: in config.yaml. 上游用 upstreams:
-// 列表 (单源长度 1，聚合路由 swfp 长度 N)；旧的单块 upstream: 仍解析以向后兼容。
+// 列表 (单源长度 1，多源路由长度 N)；旧的单块 upstream: 仍解析以向后兼容。
 type fileVersion struct {
 	Upstreams []fileUpstream `yaml:"upstreams"`
 	Upstream  fileUpstream   `yaml:"upstream"` // 向后兼容：upstreams 为空时包成单元素列表
@@ -300,13 +285,9 @@ func loadConfig() (config, error) {
 			ups = append(ups, toUpstreamConfig(fu, v))
 		}
 		// 同一路由所有子源 kind 必须一致 (入参校验器/信封按路由统一，见 buildRouteStack)。
-		// 例外：swfp 有契约映射层 (upstream.SwfpContract)，允许混接 entcredit(源1-4)
-		// + salesdata(源5)；参数校验器仍按首个子源 kind (entcredit→ParseCreditCode) 选择。
-		if v != "swfp" {
-			for i := 1; i < len(ups); i++ {
-				if ups[i].kind != ups[0].kind {
-					return config{}, fmt.Errorf("version %s: upstreams 各子源 kind 必须一致 (%q vs %q)", v, ups[0].kind, ups[i].kind)
-				}
+		for i := 1; i < len(ups); i++ {
+			if ups[i].kind != ups[0].kind {
+				return config{}, fmt.Errorf("version %s: upstreams 各子源 kind 必须一致 (%q vs %q)", v, ups[0].kind, ups[i].kind)
 			}
 		}
 
@@ -359,18 +340,13 @@ func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
 		licenseFile: fu.LicenseFile,
 		licenseType: fu.LicenseType,
 
-		orgCode:         fu.OrgCode,
-		accessKeyID:     fu.AccessKeyID,
-		secretAccessKey: fu.SecretAccessKey,
-		product:         fu.Product,
-		label:           fu.Label,
-		optional:        fu.Optional,
+		label: fu.Label,
 	}
 }
 
 // defaultKind picks the upstream client family by version: x1→gama, zlf→rental,
-// blk→blacklist, swfp→entcredit, rlbd1/rlbd2→facecompare, sfzhy→idverify,
-// xfjy→consumetxn, tsfx→complaint, lxf→lxscore, grgjj→incomeag, others→income.
+// blk→blacklist, rlbd1/rlbd2→facecompare, sfzhy→idverify, xfjy→consumetxn,
+// tsfx→complaint, lxf→lxscore, grgjj→incomeag, others→income.
 func defaultKind(version string) string {
 	switch version {
 	case "x1":
@@ -379,8 +355,6 @@ func defaultKind(version string) string {
 		return "rental"
 	case "blk":
 		return "blacklist"
-	case "swfp":
-		return "entcredit"
 	case "rlbd1", "rlbd2":
 		return "facecompare"
 	case "sfzhy":

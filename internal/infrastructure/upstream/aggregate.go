@@ -14,13 +14,10 @@ import (
 )
 
 // LabeledUpstream 是聚合路由里的一个子源：label 为其在合并 range 里的段名，
-// port 是实际的上游客户端 (每个子源自带独立 endpoint/凭证)。Optional 标记可选
-// 子源：下游请求 scope=basic 时跳过（不调用、不出现在结果段里），如 swfp 的
-// 源5 销项数据；缺省 false（恒调用，既有路由零行为变化）。
+// port 是实际的上游客户端 (每个子源自带独立 endpoint/凭证)。
 type LabeledUpstream struct {
-	Label    string
-	Port     port.UpstreamPort
-	Optional bool
+	Label string
+	Port  port.UpstreamPort
 }
 
 // Aggregator 把一条路由的 N 个上游子源统一成一个 port.UpstreamPort，对 orchestrator
@@ -71,20 +68,7 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 		return a.sources[0].Port.Query(ctx, req)
 	}
 
-	// scope=basic 时跳过 optional 子源（不调用、不出段）；其余取值/未配置 optional
-	// 的路由行为不变。跳过后仅剩单源也走多源聚合分支（保证 range 仍是分段结构）。
 	sources := a.sources
-	if req != nil && req.Scope == model.ScopeBasic {
-		kept := make([]LabeledUpstream, 0, len(sources))
-		for _, s := range sources {
-			if !s.Optional {
-				kept = append(kept, s)
-			}
-		}
-		if len(kept) > 0 {
-			sources = kept
-		}
-	}
 
 	type sub struct {
 		label   string
@@ -207,7 +191,7 @@ func classify(res *model.UpstreamResult, err error) aggSection {
 }
 
 // Requery：单源直通；多源聚合暂不做逐源对账，返回 Reachable=false 保持 PENDING
-// 由对账兜底 (与聚合前 entcredit 行为一致)。
+// 由对账兜底。
 func (a *Aggregator) Requery(ctx context.Context, reqid string) (*model.RequeryResult, error) {
 	if len(a.sources) == 1 {
 		return a.sources[0].Port.Requery(ctx, reqid)

@@ -19,7 +19,7 @@ type DecisionTable struct {
 //   - RESOLVED_CODES = {001, 999, 002}（上游确定结论）
 //   - RETURNED_CODES = {001}（仅查得数据才累计成功查得数）
 //
-// 002 为多上游聚合路由 (swfp) 特有：部分数据源成功——确定结论但数据不完整,
+// 002 为多上游聚合路由特有：部分数据源成功——确定结论但数据不完整,
 // 不计费。单上游路由永不产生 002。
 func DefaultTable() *DecisionTable {
 	return &DecisionTable{

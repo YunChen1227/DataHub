@@ -70,7 +70,7 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
   4. 落地前先在响应结构里认清"哪个字段是订单号、哪个是请求/日志号"，再成功/失败两条
      路径都填。既有映射参考：idverify `OutBizNo`(uid)/`RequestId`(logId)；consumetxn
      `reqno`(uid=logId)；gama/blacklist `seqNo`(uid=logId)；income `uid`(uid=logId，
-     注意 `reqid` 是我方回显不算)；rental `respOrder`(uid=logId)；facecompare/entcredit
+     注意 `reqid` 是我方回显不算)；rental `respOrder`(uid=logId)；facecompare
      `orderNo`(uid=logId)；complaint `token`(uid=logId)。
   5. 幂等重放（命中台账）也要回填：`orchestrator.replay` 从 `Ledger.UpstreamUID/
      UpstreamLogID` 回填审计，别让命中缓存的请求这两列变空。
@@ -86,7 +86,7 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
        采集（首个非空即可）。回归测试见
        [upstream/aggregate_test.go](internal/infrastructure/upstream/aggregate_test.go)
        （`TestAggregatorAllFailedCarriesUpstreamIDs`），改聚合逻辑后必须保持它通过。
-     - 前提：单产品 client（如 `entcredit.go`）在**上游已应答但业务失败**时，`fail` 分支
+     - 前提：单产品 client 在**上游已应答但业务失败**时，`fail` 分支
        也要回传上游响应里的 `orderNo`（别写死空串）——否则聚合器无从捞起。
 - **入参与上游严格对齐（铁律，违反即返工）**：本服务是纯转发网关——
   0. **字段集合以「本上游」参数表为唯一依据，禁止照搬既有路由**：每个上游要的
@@ -95,16 +95,15 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
      以「以前的路由有 name/idCard/mobile」为默认集合——那是最常见的漏字段根因。
      若上游有 `model.QueryCommand`/`UpstreamRequest` 里尚不存在的新字段，先在
      `model.go` 给这两个结构体各加字段，再在校验器与上游客户端里贯通。
-  1. **字段名以上游真实契约为准**：新路由的下游入参字段名必须用上游要求的名字
-     （如 swfp 的 `creditCode`），不得默认沿用既有路由的 mobile/idCard/name，
+  1. **字段名以上游真实契约为准**：新路由的下游入参字段名必须用上游要求的名字，
+     不得默认沿用既有路由的 mobile/idCard/name，
      也不得臆造中间层字段名；上游文档示例与服务器报错不一致时**以服务器报错为准**。
   2. **必填/选填口径必须与上游一致**：上游必填的字段，网关校验器必须**前置拦截**
      （对外手册承诺"参数非法不调用上游、不计费"），禁止靠透传给上游报错兜底。
      默认 `parse.Parse`（mobile必/idCard必/name选）只适用于与经济能力同口径的
      上游；口径不同就写专属校验器并在 `cmd/relay/main.go` buildRouteStack 的
      kind switch 里 `orch.WithParser(...)` 挂上（参考 zlf/blk 的 ParseWithName、
-     swfp 的 ParseCreditCode、xfjy 的 ParseConsumeTxn——后者含授权书编号 authlet
-     必填校验）。上游文档「是否必填」列与用户/联调实况冲突时以实况为准。
+     xfjy 的 ParseConsumeTxn——后者含授权书编号 authlet 必填校验）。上游文档「是否必填」列与用户/联调实况冲突时以实况为准。
   3. 交付前必须逐字段核对一遍「上游参数表（含必填列）→ 下游契约 → 网关校验 →
      上游客户端发送」四层一致性，一个字段都不能漏；测试用例必须包含每个必填字段
      的"缺失拦截"场景（含授权类字段），以及探测/联调脚本也要带齐必填字段。
@@ -205,7 +204,7 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
 
 9. **新建 `scripts/mock_<kind>.go`** — 参考 [scripts/mock_blacklist.go](scripts/mock_blacklist.go)
    的结构（`//go:build ignore` + 单文件 main）。监听下一个空闲端口
-   （已占用：gama 9112 / income 9113 / rental 9114 / blacklist 9115 / entcredit 9116 /
+   （已占用：gama 9112 / income 9113 / rental 9114 / blacklist 9115 /
    facecompare 9117 / idverify 9118 / consumetxn 9119 / complaint 9120，顺延）。
    必须模拟：验签通过的查得、特定手机号（惯例 `13800000000`）查无、坏签名报错。
 10. **[scripts/recreate_databases.go](scripts/recreate_databases.go)** —
@@ -259,8 +258,8 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
    实际部署用的配置（`config.aliyun.prod.yaml` 等），确认新源**确实出现在**
    `versions.<route>.upstreams` 列表里且凭证是真值而非 `REPLACE_WITH_…`。
    *踩过的坑*：源5 代码写完了，但生产配置还停在废弃的单块 `upstream:` +
-   `products:` 写法上——`products` 早已不被 `loadConfig` 解析，swfp 于是只装配出
-   一个 product 为空的子源：源1-4 全废、源5 压根不存在，线上表现就是"调不通"。
+   `products:` 写法上——`products` 早已不被 `loadConfig` 解析，于是只装配出
+   一个 product 为空的子源：其余子源全废，线上表现就是"调不通"。
 5. **上游连不通先分清是谁的问题**：本机直连上游被秒断（`curl: (52) Empty reply
    from server`）通常是**上游按源 IP 白名单**，不是代码错——需要把部署机（阿里云
    ECS）的出口 IP 报给上游加白，并从该机复测。别把白名单问题当协议问题去改代码。

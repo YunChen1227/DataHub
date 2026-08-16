@@ -1,7 +1,7 @@
 ﻿# DataHub fixed test-suite entrypoint (Windows / PowerShell).
 #
 # Flow: make result dir test_res/<date> -> build + start mock gama(:9112) +
-# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_entcredit(:9116) + mock_facecompare(:9117) + mock_idverify(:9118) + mock_consumetxn(:9119) + mock_complaint(:9120) + mock_salesdata(:9121) + mock_lxscore(:9122) + mock_incomeag(:9123) + relay(:8080,
+# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_facecompare(:9117) + mock_idverify(:9118) + mock_consumetxn(:9119) + mock_complaint(:9120) + mock_lxscore(:9122) + mock_incomeag(:9123) + relay(:8080,
 # live Aliyun PG+Redis) -> wait /healthz -> (optional) start real-gama relay(:8090)
 # -> run test/cases/*.go in order -> aggregate REPORT.md -> stop services.
 #
@@ -56,12 +56,10 @@ try {
     $incomeExe    = Join-Path $resultDir "mock_income.exe"
     $rentalExe    = Join-Path $resultDir "mock_rental.exe"
     $blacklistExe = Join-Path $resultDir "mock_blacklist.exe"
-    $entcreditExe = Join-Path $resultDir "mock_entcredit.exe"
     $facecompareExe = Join-Path $resultDir "mock_facecompare.exe"
     $idverifyExe  = Join-Path $resultDir "mock_idverify.exe"
     $consumetxnExe = Join-Path $resultDir "mock_consumetxn.exe"
     $complaintExe = Join-Path $resultDir "mock_complaint.exe"
-    $salesdataExe = Join-Path $resultDir "mock_salesdata.exe"
     $lxscoreExe   = Join-Path $resultDir "mock_lxscore.exe"
     $incomeagExe  = Join-Path $resultDir "mock_incomeag.exe"
     $relayExe     = Join-Path $resultDir "relay.exe"
@@ -74,8 +72,6 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build mock_rental failed" }
     go build -o $blacklistExe ./scripts/mock_blacklist.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_blacklist failed" }
-    go build -o $entcreditExe ./scripts/mock_entcredit.go
-    if ($LASTEXITCODE -ne 0) { throw "go build mock_entcredit failed" }
     go build -o $facecompareExe ./scripts/mock_facecompare.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_facecompare failed" }
     go build -o $idverifyExe ./scripts/mock_idverify.go
@@ -84,8 +80,6 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build mock_consumetxn failed" }
     go build -o $complaintExe ./scripts/mock_complaint.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_complaint failed" }
-    go build -o $salesdataExe ./scripts/mock_salesdata.go
-    if ($LASTEXITCODE -ne 0) { throw "go build mock_salesdata failed" }
     go build -o $lxscoreExe ./scripts/mock_lxscore.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_lxscore failed" }
     go build -o $incomeagExe ./scripts/mock_incomeag.go
@@ -117,9 +111,6 @@ try {
     $blacklist = Start-Process -FilePath $blacklistExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_blacklist.log") -RedirectStandardError (Join-Path $resultDir "mock_blacklist.err.log")
     [void]$procs.Add($blacklist)
 
-    $entcredit = Start-Process -FilePath $entcreditExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_entcredit.log") -RedirectStandardError (Join-Path $resultDir "mock_entcredit.err.log")
-    [void]$procs.Add($entcredit)
-
     $facecompare = Start-Process -FilePath $facecompareExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_facecompare.log") -RedirectStandardError (Join-Path $resultDir "mock_facecompare.err.log")
     [void]$procs.Add($facecompare)
 
@@ -131,9 +122,6 @@ try {
 
     $complaint = Start-Process -FilePath $complaintExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_complaint.log") -RedirectStandardError (Join-Path $resultDir "mock_complaint.err.log")
     [void]$procs.Add($complaint)
-
-    $salesdata = Start-Process -FilePath $salesdataExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_salesdata.log") -RedirectStandardError (Join-Path $resultDir "mock_salesdata.err.log")
-    [void]$procs.Add($salesdata)
 
     $lxscore = Start-Process -FilePath $lxscoreExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_lxscore.log") -RedirectStandardError (Join-Path $resultDir "mock_lxscore.err.log")
     [void]$procs.Add($lxscore)

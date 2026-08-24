@@ -238,20 +238,37 @@ versions:
     redis:
       <<: *redis_base
       db: 11
-  # grgjj 对接「收入A_g版」(yrzx)：JSON POST，data 字段走 3DES/ECB/PKCS5Padding 加密后
-  # Base64（明文业务 JSON {name,cid,mobile}），verify=MD5(account+加密前JSON串+reqid+
-  # type+key).toUpperCase()；响应 result 为同一套 3DES 密文，解密得 {cbjfzt,jfjs,jfsj}
-  # 经 result.range 透出。独立成域（库 datahub_grgjj_db / redis db12 / 独立 license 与统计）。
-  # 入参 name+cid(身份证)+mobile 均必填（网关前置拦截）。code 001 查得计费 / 999 查无 /
-  # 其余(002 账号不存在/003 余额不足/004 未授权/…)视为上游侧错误不计费。
-  # 注意：本上游有两把独立凭证——key(MD5 加签密钥) 与 aesKey(3DES 密钥)，二者不同。
+  # grgjj 为**双源串行寻源**路由（命中即停）：同一种数据（公积金缴存）挂两个可互相
+  # 替代的供应商，按 priority 升序串行查询，第一个查得（001）即停、后续源不再调用（省钱）；
+  # 主源查无/失败才回落到备源。两源返回字段都归一到同一份下游契约 {cbjfzt,jfjs,jfsj}，
+  # 下游无从察觉背后有几个源。独立成域（库 datahub_grgjj_db / redis db12 / 独立 license 与统计）。
+  # 入参 name+idCard+mobile 三要素均必填（网关前置拦截，两源同口径）。
+  #   • 主源 incomeag「收入A_g版」(yrzx)：JSON POST，data 走 3DES/ECB/PKCS5Padding 加密后
+  #     Base64（明文业务 JSON {name,cid,mobile}），verify=MD5(account+加密前JSON串+reqid+
+  #     type+key).toUpperCase()；响应 result 为同一套 3DES 密文，解密得 {cbjfzt,jfjs,jfsj}。
+  #     两把独立凭证——key(MD5 加签密钥) 与 aesKey(3DES 密钥)，二者不同。
+  #   • 备源 bgjj「备用公积金源」(jeoho)：HTTPS **双向认证**（P12 客户端证书），JSON POST
+  #     {merchant_id,timestamp,dsorderid,params,sign}，params 为明文对象 {name,idcard,mobile}，
+  #     sign=MD5("k1=v1&…&key=merchantKey")；响应 {code,message,data,orderid}，data
+  #     {date,score,jfzt} 映射到 {jfsj,jfjs,cbjfzt}。code 100 查得 / 201 查无 / 其余
+  #     (301 非白名单IP…) 上游侧错误不计费。**部署机出口 IP 需先报该源加白**。
   grgjj:
     upstreams:
+      # 主源（优先级最高，先查）。
       - kind: "incomeag"
+        priority: 0                                  # 越小越先；主源 0，备源 10
         baseURL: "REPLACE_WITH_GRGJJ_UPSTREAM_URL"   # 如 http://server:port/yrzx/common/v2/credit/v2（联调时提供）
         account: "REPLACE_WITH_GRGJJ_ACCOUNT"        # 上游分配的账户 account
         key: "REPLACE_WITH_GRGJJ_SIGN_KEY"           # MD5 verify 加签密钥（上游文档/demo 里的 key）
         aesKey: "REPLACE_WITH_GRGJJ_3DES_KEY"        # 3DES 密钥（Base64 编码，解码后须为 24 字节 DESede 密钥）
+      # 备源（优先级更低，主源查无/失败才回落）。
+      - kind: "bgjj"
+        priority: 10                                 # > 主源，故排在主源之后
+        baseURL: "https://pf.jeoho.com/api/nlv2/zl4" # 生产查询接口（联调前需先报出口 IP 加白）
+        account: "REPLACE_WITH_BGJJ_MERCHANT_ID"     # 商户号 merchant_id
+        key: "REPLACE_WITH_BGJJ_MERCHANT_KEY"        # 商户密钥 merchantKey（MD5 加签用）
+        certPath: "REPLACE_WITH_BGJJ_P12_PATH"       # P12 客户端证书文件路径（双向认证，随部署放到服务器）
+        certPass: "REPLACE_WITH_BGJJ_P12_PASSWORD"   # P12 证书密码
     database:
       <<: *pg_base
       name: "datahub_grgjj_db"

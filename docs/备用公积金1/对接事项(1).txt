@@ -1,0 +1,4 @@
+商户号：0000000000005077
+商户密钥：P8rT2wXyZ9aBcDeFgHiJkLmNoPqRsTuV
+p12证书密码：KiC1VjLLRmNL0yCK
+请商户对接前提供白名单IP

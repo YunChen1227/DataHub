@@ -11,7 +11,7 @@
 - **对外（下游，sfzhy=身份证三要素核验）**：`POST /v1/openapi/zlx/querySrmxSFZHY`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`+`idCard`(15/18 位)+`profilePicture`(base64 人像照片)；核验结果富对象（`Result`/`ResultMessage`/`ImageScore`）整体 **JSON 序列化为字符串**经 `result.range` 透出。三要素核验无「查无」概念，故不产生 `999`。
 - **对外（下游，xfjy=消费交易特征）**：`POST /v1/openapi/zlx/querySrmxXFJY`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`/`idCard`/`mobile`/`authlet`（均选填，至少提供一个查询要素）；消费交易特征富对象整体 **JSON 序列化为字符串**经 `result.range` 透出。区分「查得」（`001` 计费）与「查无」（`999` 不计费）。
 - **对外（下游，tsfx=投诉分析识别名单）**：`POST /v1/openapi/zlx/querySrmxTSFX`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `mobile`+`poly`（命中级别 `C1`/`C2`/`C3`，均必填）；命中结果数组整体 **JSON 序列化为字符串**经 `result.range` 透出（每条含 `callee`/`forbid`）。本路由**只要调用成功即 `001` 计费**，是否命中体现在 `forbid`（无 `999` 查无码）。
-- **对外（下游，grgjj=收入A_g版）**：`POST /v1/openapi/zlx/querySrmxGRGJJ`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`+`idCard`+`mobile`（均必填）；上游结果富对象（`cbjfzt` 缴费状态 /`jfjs` 缴费基数 /`jfsj` 缴费时间）整体 **JSON 序列化为字符串**经 `result.range` 透出。区分「查得」（`001` 计费）与「查无」（`999` 不计费）。详见 [`docs/API_接口文档与使用手册_grgjj.md`](docs/API_接口文档与使用手册_grgjj.md)。
+- **对外（下游，grgjj=收入A_g版）**：`POST /v1/openapi/zlx/querySrmxGRGJJ`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`+`idCard`+`mobile`（均必填）；上游结果富对象（`cbjfzt` 缴费状态 /`jfjs` 缴费基数 /`jfsj` 缴费时间）整体 **JSON 序列化为字符串**经 `result.range` 透出。区分「查得」（`001` 计费）与「查无」（`999` 不计费）。详见 [`docs/API_接口文档与使用手册_grgjj.pdf`](docs/API_接口文档与使用手册_grgjj.pdf)。
 
 > **额度策略（v0.6+）**：已**取消额度限制**——不限制客户调用次数；系统仅**统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。维度②（上游配额/调用计数/对账作业）已在 v0.7 **彻底移除**。
 
@@ -30,7 +30,7 @@
   - `xfjy` → **消费交易特征 / data-bean**（`consumetxn`，`POST /` **JSON** 提交；公共参数 `procode(fk3002)/sceneid/reqtime/nonce/sign`，`sign = MD5(过滤空值升序 k=v&… + "&appkey=" + appkey)`，私有参数 `params{name/idcard/mobile/authlet}`；`code=0 且 result=0` 归一 `001`（计费），`result=1` 归一 `999`（查无不计费），`code≠0` 归一上游侧错误；响应 `data.resultdata` 富对象序列化透出 `result.range`）。
   - `tsfx` → **投诉分析识别名单 / kfongtech**（`complaint`，`POST /inlet/api` **JSON** 提交；外层 `{apiKey, param, sign}`，`param` 为业务参数 `{method/version/poly/mobile}` **AES 加密**、`sign` 为外层签名，响应 `data` 为 **gzip 压缩**的命中结果数组；`code=0000` 归一 `001`（**调用成功即计费**，命中状态 `forbid` 随结果数组透出 `result.range`），`code≠0000` 归一上游侧错误。本上游无「查无(999)」概念）。
   - `lxf` → **灵犀分 score_195_v1 / fullink**（`lxscore`，`POST /report/encode` **JSON** 提交；`sign = DES/CBC(按参数名升序拼的 k=v&… 串, encryptKey)` 大写 hex，`name/mobile/idCardNo` 取 MD5 摘要，响应 `data` 为同套 DES 密文、解密得 300-900 评分经 `result.range` 透出；分数 `-1` 归一 `999`）。
-  - `grgjj` → **收入A_g版 / yrzx**（`incomeag`，`POST /yrzx/common/v2/credit/v2` **JSON** 提交；请求体 `{account,type,data,reqid,verify}`，`data = Base64(3DES/ECB/PKCS5(明文业务JSON {name,cid,mobile}))`、`verify = MD5(account+加密前JSON串+reqid+type+key).toUpperCase()`，响应 `result` 为同套 3DES 密文、解密得 `{cbjfzt,jfjs,jfsj}` 经 `result.range` 透出；`code=001` 归一查得计费、`999` 查无、其余归一上游侧错误。注意有两把独立凭证：`key`(MD5 加签) 与 3DES 密钥）。
+  - `grgjj` → **双源串行寻源（命中即停）**：主源 **收入A_g版 / yrzx**（`incomeag`，`POST /yrzx/common/v2/credit/v2` **JSON** 提交；请求体 `{account,type,data,reqid,verify}`，`data = Base64(3DES/ECB/PKCS5(明文业务JSON {name,cid,mobile}))`、`verify = MD5(account+加密前JSON串+reqid+type+key).toUpperCase()`，响应 `result` 为同套 3DES 密文、解密得 `{cbjfzt,jfjs,jfsj}`；两把独立凭证 `key`(MD5 加签) 与 3DES 密钥）＋ 备源 **备用公积金 / jeoho**（`bgjj`，`POST /api/nlv2/zl4` **HTTPS 双向认证** P12 证书；请求体 `{merchant_id,timestamp,dsorderid,params,sign}`，`params` 明文 `{name,idcard,mobile}`、`sign = MD5("k1=v1&…&key=merchantKey")`，响应 `data {date,score,jfzt}` 映射为 `{jfsj,jfjs,cbjfzt}`；`code=100` 查得 / `201` 查无 / `301` 非白名单IP 等上游侧错误）。主源查无/失败才回落备源；两源结果都归一到同一份 `result.range {cbjfzt,jfjs,jfsj}`，下游无从察觉。
   保留 `upstream.Router` 抽象，每版本一个单 provider 路由。
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，架构图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
@@ -171,8 +171,12 @@ storage:
 
 # 存储按域独立：x1/v8v9/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj 各一套 PG 库 + Redis 逻辑库。
 # 上游按 upstreams 列表配置：单源路由列表长度 1；多源路由长度 N，每个子源自带完整凭证。
-# 完整凭证，主程序并发调所有子源后按判定表聚合（≥1查得→001计费 / 全查无→999 /
-# 部分成功→002不计费 / 全失败→505062）。同一路由所有子源 kind 必须一致。
+# 多源有两种装配（自动判定）：
+#   - 串行寻源 Sourcer（命中即停，源间可互相替代/同一种数据不同供应商，如 grgjj）：
+#     按 priority 升序串行，第一个查得（001）即停、后续源不再调用（省钱）；某源查得→001
+#     计费 / 全查无→999 / 无查得+有失败→002不计费 / 全失败→505062。
+#   - 并发聚合 Aggregator（源间互补/各查各的）：并发调所有子源后按判定表拼段聚合。
+# 判定规则：路由内 kind 不一致或任一源配了 priority/costFen/costOn → Sourcer，否则 Aggregator。
 versions:
   x1:
     upstreams:

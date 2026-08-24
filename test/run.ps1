@@ -1,7 +1,7 @@
-﻿# DataHub fixed test-suite entrypoint (Windows / PowerShell).
+# DataHub fixed test-suite entrypoint (Windows / PowerShell).
 #
 # Flow: make result dir test_res/<date> -> build + start mock gama(:9112) +
-# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_facecompare(:9117) + mock_idverify(:9118) + mock_consumetxn(:9119) + mock_complaint(:9120) + mock_lxscore(:9122) + mock_incomeag(:9123) + relay(:8080,
+# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_facecompare(:9117) + mock_idverify(:9118) + mock_consumetxn(:9119) + mock_complaint(:9120) + mock_lxscore(:9122) + mock_incomeag(:9123) + mock_bgjj(:9125) + relay(:8080,
 # live Aliyun PG+Redis) -> wait /healthz -> (optional) start real-gama relay(:8090)
 # -> run test/cases/*.go in order -> aggregate REPORT.md -> stop services.
 #
@@ -62,6 +62,7 @@ try {
     $complaintExe = Join-Path $resultDir "mock_complaint.exe"
     $lxscoreExe   = Join-Path $resultDir "mock_lxscore.exe"
     $incomeagExe  = Join-Path $resultDir "mock_incomeag.exe"
+    $bgjjExe      = Join-Path $resultDir "mock_bgjj.exe"
     $relayExe     = Join-Path $resultDir "relay.exe"
     Write-Host "building mocks + relay ..."
     go build -o $mockExe ./scripts/mock_gama.go
@@ -84,6 +85,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build mock_lxscore failed" }
     go build -o $incomeagExe ./scripts/mock_incomeag.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_incomeag failed" }
+    go build -o $bgjjExe ./scripts/mock_bgjj.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_bgjj failed" }
     go build -o $relayExe ./cmd/relay
     if ($LASTEXITCODE -ne 0) { throw "go build relay failed" }
 
@@ -128,6 +131,9 @@ try {
 
     $incomeag = Start-Process -FilePath $incomeagExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_incomeag.log") -RedirectStandardError (Join-Path $resultDir "mock_incomeag.err.log")
     [void]$procs.Add($incomeag)
+
+    $bgjj = Start-Process -FilePath $bgjjExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_bgjj.log") -RedirectStandardError (Join-Path $resultDir "mock_bgjj.err.log")
+    [void]$procs.Add($bgjj)
 
     $relay = Start-Process -FilePath $relayExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "relay.log") -RedirectStandardError (Join-Path $resultDir "relay.err.log")
     [void]$procs.Add($relay)

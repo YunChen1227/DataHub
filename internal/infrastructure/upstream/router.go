@@ -12,5 +12,6 @@ const (
 	ProviderConsumeTxn  = "consumetxn"  // xfjy: 消费交易特征
 	ProviderComplaint   = "complaint"   // tsfx: 投诉分析识别名单
 	ProviderLXScore     = "lxscore"     // lxf: 灵犀分 score_195_v1
-	ProviderIncomeAg    = "incomeag"    // grgjj: 收入A_g版
+	ProviderIncomeAg    = "incomeag"    // grgjj: 收入A_g版 (主源)
+	ProviderBgJJ        = "bgjj"        // grgjj: 备用公积金源 (jeoho，串行寻源的低优先级备源)
 )

@@ -162,7 +162,8 @@ func main() {
 		_ = json.Unmarshal(plain, &d)
 
 		switch {
-		case d.Mobile == "13800000000":
+		case d.Mobile == "13800000000" || d.Mobile == "13900000000":
+			// 13800000000：全查无惯例；13900000000：回落触发号——主源查无、由备源 bgjj 查得。
 			resp["code"], resp["msg"] = "999", "无结果返回"
 		default:
 			resp["code"], resp["msg"] = "001", "成功"

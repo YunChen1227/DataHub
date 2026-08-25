@@ -35,8 +35,18 @@ type upstreamConfig struct {
 	oss           ossConfig
 	licenseFile   string // 固定授权书本地文件, 启动时上传 OSS
 	licenseType   int    // 0:图片 1:pdf
+	// bgjj (备用公积金源 / jeoho) 凭证：account=merchant_id、key=merchantKey (MD5 加签)、
+	// certPath/certPass=P12 客户端证书 (双向认证)。复用 account/key，仅新增证书两字段。
+	certPath string
+	certPass string
 	// label 是本子源在聚合 range 里的段名；多源路由用，单源可省。
 	label string
+	// 串行寻源 (Sourcer) 属性：priority 越小越先，costFen 该源一次调用成本(分)，
+	// costOn=hit(缺省,仅命中计费)|call(调用即计费)。任一源显式配置这些或路由内 kind
+	// 不一致时，装配层用命中即停的 Sourcer 而非并发 Aggregator (add-upstream-multi)。
+	priority int
+	costFen  int
+	costOn   string
 }
 
 // ossConfig holds aliyun OSS 凭证 for uploading the租赁分授权书 (rental 专用)。
@@ -77,8 +87,8 @@ type versionConfig struct {
 	redis     redisConfig
 }
 
-// upstreamKind returns the route-level upstream kind (取首个子源；loadConfig 已校验
-// 同一路由所有子源 kind 一致)。空列表时返回 ""。
+// upstreamKind returns the route-level upstream kind (取首个子源 = 主源；决定入参
+// 校验器)。多源路由可混合 kind，首源为串行寻源的最高优先级源。空列表时返回 ""。
 func (v versionConfig) upstreamKind() string {
 	if len(v.upstreams) == 0 {
 		return ""
@@ -158,8 +168,15 @@ type fileUpstream struct {
 	OSS           fileOSS `yaml:"oss"`
 	LicenseFile   string  `yaml:"licenseFile"`
 	LicenseType   int     `yaml:"licenseType"`
+	// bgjj (备用公积金源) 专用：P12 客户端证书路径与密码 (双向认证)。
+	CertPath string `yaml:"certPath"`
+	CertPass string `yaml:"certPass"`
 	// label：本子源在聚合 range 里的段名；多源路由用，单源可省。
 	Label string `yaml:"label"`
+	// 串行寻源属性 (多源路由用)：priority 越小越先，costFen 分，costOn=hit|call。
+	Priority int    `yaml:"priority"`
+	CostFen  int    `yaml:"costFen"`
+	CostOn   string `yaml:"costOn"`
 }
 
 // fileOSS mirrors the rental upstream's oss YAML block.
@@ -284,12 +301,11 @@ func loadConfig() (config, error) {
 		for _, fu := range files {
 			ups = append(ups, toUpstreamConfig(fu, v))
 		}
-		// 同一路由所有子源 kind 必须一致 (入参校验器/信封按路由统一，见 buildRouteStack)。
-		for i := 1; i < len(ups); i++ {
-			if ups[i].kind != ups[0].kind {
-				return config{}, fmt.Errorf("version %s: upstreams 各子源 kind 必须一致 (%q vs %q)", v, ups[0].kind, ups[i].kind)
-			}
-		}
+		// 多源路由允许**混合 kind**（如 grgjj = incomeag 主源 + bgjj 备源，同一种数据、
+		// 不同供应商，串行寻源命中即停）。入参校验器按路由首个子源 kind 选取
+		// (buildRouteStack)，故约定：同一路由的各源入参口径必须能用同一个校验器覆盖
+		// (取并集，见 add-upstream-multi 铁律)——grgjj 两源均要 name+idCard+mobile，
+		// 由首源 incomeag 的 ParseWithName 统一前置拦截。
 
 		cfg.versions[v] = versionConfig{
 			upstreams: ups,
@@ -339,8 +355,13 @@ func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
 		},
 		licenseFile: fu.LicenseFile,
 		licenseType: fu.LicenseType,
+		certPath:    fu.CertPath,
+		certPass:    fu.CertPass,
 
-		label: fu.Label,
+		label:    fu.Label,
+		priority: fu.Priority,
+		costFen:  fu.CostFen,
+		costOn:   fu.CostOn,
 	}
 }
 

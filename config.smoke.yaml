@@ -1,0 +1,32 @@
+# DataHub 内存态冒烟配置 (grgjj 双源串行寻源专用，非生产/非敏感)。
+# 仅用于 test/smoke_grgjj_failover.ps1：起 mock_incomeag(:9123)+mock_bgjj(:9125)+relay，
+# 验证「主源命中即停 / 主源查无回落备源 / 全查无」。所有凭证均为 mock 默认值 (假值)。
+addr: ":8080"
+storage:
+  driver: "memory"
+upstream:
+  timeout: "6s"
+demo:
+  appSecret: "demo-app-secret"
+  seed: true
+admin:
+  bootstrapUser: "admin"
+  bootstrapPass: "admin12345"
+  jwtSecret: "smoke-only-not-secret"
+  tokenTTL: "8h"
+versions:
+  grgjj:
+    upstreams:
+      # 主源 incomeag（收入A_g版 mock）——凭证对齐 scripts/mock_incomeag.go 默认值。
+      - kind: "incomeag"
+        priority: 0
+        baseURL: "http://localhost:9123/yrzx/common/v2/credit/v2"
+        account: "demo-grgjj-account"
+        key: "demo-grgjj-key"
+        aesKey: "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1u"   # base64("0123456789abcdefghijklmn")，与 mock 默认 3DES 密钥一致
+      # 备源 bgjj（备用公积金 mock）——凭证对齐 scripts/mock_bgjj.go 默认值；certPath 留空走明文 HTTP。
+      - kind: "bgjj"
+        priority: 10
+        baseURL: "http://localhost:9125/api/nlv2/zl4"
+        account: "0000000000005077"
+        key: "P8rT2wXyZ9aBcDeFgHiJkLmNoPqRsTuV"

@@ -304,8 +304,9 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		WithBookkeeper(books)
 	// 网关校验口径必须与该路由上游的真实要求一致（必填字段前置拦截，不透传给
 	// 上游报错）。默认 parse.Parse (mobile必/idCard必/name选) 仅适用于与经济能力
-	// 同口径的上游 (gama/income)。聚合路由所有子源 kind 一致 (loadConfig 已校验)，
-	// 故按路由 kind 选校验器即可。
+	// 同口径的上游 (gama/income)。多源路由 (含混合 kind) 按**首个子源 = 主源** kind
+	// 选校验器；约定同一路由各源入参口径取并集、由该校验器统一覆盖 (grgjj 主源
+	// incomeag 的 ParseWithName 即 name+idCard+mobile 三要素，备源 bgjj 同口径)。
 	switch routeKind {
 	case upstream.ProviderRental, upstream.ProviderBlacklist:
 		// zlf (租赁分 name 必传) / blk (黑名单V35 name 参与摘要匹配) 均要求姓名必填。
@@ -337,15 +338,44 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	return &routeStack{orch: orch, admin: adminSvc, requery: requery, books: books}, nil
 }
 
-// buildUpstreams 把一条路由的上游子源列表装配成一个 port.UpstreamPort：逐条构建
-// 单源 client，套上 Aggregator (len==1 直通 / len>1 并发聚合)。返回聚合器与路由 kind
-// (=首个子源 kind，loadConfig 已校验同路由 kind 一致；供 parser 选择)。
+// buildUpstreams 把一条路由的上游子源列表装配成一个 port.UpstreamPort，返回装配后的
+// 客户端与路由 kind (=首个子源 kind = 主源，供 parser 选择)。装配策略二选一：
+//   - 串行寻源 Sourcer (命中即停)：源之间**可互相替代** (同一种数据、不同供应商)，
+//     按 priority/成本串行、第一个查得即停、后续不再调用 (省钱)。触发条件：路由内
+//     kind 不一致，或任一源显式配置了 priority/costFen/costOn。grgjj (incomeag 主
+//   - bgjj 备) 走此路。
+//   - 并发聚合 Aggregator：源之间**互补/并列** (各查各的、结果拼段)，或单源直通。
+//     其它路由 (含单源) 维持原行为。
 func buildUpstreams(route string, ucs []upstreamConfig, httpClient *http.Client, logger *slog.Logger) (port.UpstreamPort, string, error) {
 	if len(ucs) == 0 {
 		// 路由未在配置中给出 (memory 模式常见)：合成一个按路由缺省 kind 的空 client，
 		// 保持"不崩溃"的历史行为——该 client 在被调用前不产生任何副作用。
 		ucs = []upstreamConfig{{kind: defaultKind(route)}}
 	}
+
+	if useSourcer(ucs) {
+		srcs := make([]upstream.Source, 0, len(ucs))
+		for i, uc := range ucs {
+			client, err := buildClient(route, uc, httpClient, logger)
+			if err != nil {
+				return nil, "", err
+			}
+			srcs = append(srcs, upstream.Source{
+				Name:     labelFor(uc, i),
+				Priority: uc.priority,
+				CostFen:  uc.costFen,
+				CostOn:   uc.costOn,
+				Port:     client,
+			})
+		}
+		sourcer, err := upstream.NewSourcer(srcs, 0)
+		if err != nil {
+			return nil, "", err
+		}
+		logger.Info("route 使用串行寻源 (命中即停)", "route", route, "sources", len(srcs))
+		return sourcer, ucs[0].kind, nil
+	}
+
 	sources := make([]upstream.LabeledUpstream, 0, len(ucs))
 	for i, uc := range ucs {
 		client, err := buildClient(route, uc, httpClient, logger)
@@ -359,6 +389,20 @@ func buildUpstreams(route string, ucs []upstreamConfig, httpClient *http.Client,
 		return nil, "", err
 	}
 	return agg, ucs[0].kind, nil
+}
+
+// useSourcer 判定一条路由是否走串行寻源 (命中即停) 而非并发聚合：源间 kind 不一致
+// (可替代的异构供应商)，或任一源显式配置了寻源属性 (priority/costFen/costOn)。
+func useSourcer(ucs []upstreamConfig) bool {
+	if len(ucs) <= 1 {
+		return false
+	}
+	for i := range ucs {
+		if ucs[i].kind != ucs[0].kind || ucs[i].priority != 0 || ucs[i].costFen != 0 || ucs[i].costOn != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // labelFor 决定子源在聚合 range 里的段名：显式 label 优先；否则回退为 kind+下标。
@@ -478,6 +522,21 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			SignKey:            uc.key,
 			StaticTripleDESKey: uc.aesKey,
 		}, httpClient)
+		return client, nil
+	case upstream.ProviderBgJJ:
+		// grgjj 备用公积金源 (jeoho)：account=merchant_id、key=merchantKey (MD5 加签)、
+		// certPath/certPass=P12 客户端证书 (双向认证)。certPath 为空 (mock/memory 联调，
+		// 明文 HTTP) 时复用共享 httpClient，不加载证书。
+		client, err := upstream.NewBgJJ(upstream.BgJJConfig{
+			BaseURL:     uc.baseURL,
+			MerchantID:  uc.account,
+			MerchantKey: uc.key,
+			CertPath:    uc.certPath,
+			CertPass:    uc.certPass,
+		}, httpClient)
+		if err != nil {
+			return nil, err
+		}
 		return client, nil
 	case upstream.ProviderGama, "":
 		client := upstream.NewGama(upstream.GamaConfig{

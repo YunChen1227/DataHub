@@ -1,0 +1,36 @@
+{
+  "suite": "21_grgjj_failover",
+  "title": "grgjj 双源串行寻源：命中即停 / 回落 / 全查无",
+  "startedAt": "2026-08-24T16:12:07.8811456+08:00",
+  "endedAt": "2026-08-24T16:12:08.0808123+08:00",
+  "cases": [
+    {
+      "name": "主源命中即停",
+      "status": "PASS",
+      "expected": "body.code=001 且 range 为主源结果 (jfjs=7)",
+      "actual": "{\"head\":{\"errorCode\":\"0\",\"logId\":\"mt6yjujw-y89grgjj-17de2b1a-VZDARL772K\",\"time\":88,\"errorMsg\":\"success\",\"timestamp\":1787559128005},\"body\":{\"code\":\"001\",\"msg\":\"成功\",\"uid\":\"grgjj-mock-dkx0tqnsqf7k1\",\"reqid\":\"dkx0tqnsqf7k1\",\"verify\":\"\",\"result\":{\"range\":\"{\\\"cbjfzt\\\":\\\"1\\\",\\\"jfjs\\\":\\\"7\\\",\\\"jfsj\\\":\\\"202601\\\"}\"}}}\n",
+      "reason": ""
+    },
+    {
+      "name": "主源查无→回落备源查得",
+      "status": "PASS",
+      "expected": "body.code=001 且 range 为备源结果 (jfjs=13, jfsj=202606)",
+      "actual": "{\"head\":{\"errorCode\":\"0\",\"logId\":\"mt6yjume-y89grgjj-9d2bfdc2-X6SIIQLU4D\",\"time\":57,\"errorMsg\":\"success\",\"timestamp\":1787559128064},\"body\":{\"code\":\"001\",\"msg\":\"成功\",\"uid\":\"bgjj-mock-1787559128014ac8TZT6jLYq\",\"reqid\":\"dkx0tqpaj97o2\",\"verify\":\"\",\"result\":{\"range\":\"{\\\"cbjfzt\\\":\\\"1\\\",\\\"jfjs\\\":\\\"13\\\",\\\"jfsj\\\":\\\"202606\\\"}\"}}}\n",
+      "reason": ""
+    },
+    {
+      "name": "两源皆查无",
+      "status": "PASS",
+      "expected": "body.code=999",
+      "actual": "{\"head\":{\"errorCode\":\"0\",\"logId\":\"mt6yjuo1-y89grgjj-6faeca93-V24EOBKXPS\",\"time\":8,\"errorMsg\":\"success\",\"timestamp\":1787559128073},\"body\":{\"code\":\"999\",\"msg\":\"查无结果\",\"uid\":\"grgjj-mock-dkx0tqq9a4xc3\",\"reqid\":\"dkx0tqq9a4xc3\",\"verify\":\"\"}}\n",
+      "reason": ""
+    },
+    {
+      "name": "双源 range 同形",
+      "status": "PASS",
+      "expected": "备源 range 归一为 cbjfzt/jfjs/jfsj，不含 score/date",
+      "actual": "{\"head\":{\"errorCode\":\"0\",\"logId\":\"mt6yjuo9-y89grgjj-9d2bfdc2-XNNVH7EIRK\",\"time\":6,\"errorMsg\":\"success\",\"timestamp\":1787559128080},\"body\":{\"code\":\"001\",\"msg\":\"成功\",\"uid\":\"bgjj-mock-1787559128076xElCfmGW79M\",\"reqid\":\"dkx0tqqe6mmo4\",\"verify\":\"\",\"result\":{\"range\":\"{\\\"cbjfzt\\\":\\\"1\\\",\\\"jfjs\\\":\\\"13\\\",\\\"jfsj\\\":\\\"202606\\\"}\"}}}\n",
+      "reason": ""
+    }
+  ]
+}

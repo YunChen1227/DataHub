@@ -13,9 +13,9 @@ import (
 // 的上游是 []upstreamConfig：单源路由列表长度 1，多源路由长度 N，每条自带完整凭证。
 // kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8) |
 // rental(租赁分V2-D, zlf) | blacklist(黑名单因子V35, blk) | facecompare | idverify |
-// consumetxn | complaint | lxscore | incomeag。
+// consumetxn | complaint | lxscore | incomeag | bgjj | bgpg。
 type upstreamConfig struct {
-	kind    string // gama | income | rental | blacklist | facecompare | idverify | consumetxn | complaint | lxscore | incomeag
+	kind    string // gama | income | rental | blacklist | facecompare | idverify | consumetxn | complaint | lxscore | incomeag | bgjj | bgpg
 	baseURL string
 	// gama (伽马) / blacklist (黑名单因子V35) 凭证。
 	// lxscore (灵犀分) 复用这三个字段：appID=customerId、apiKey=customerProdId、
@@ -39,6 +39,9 @@ type upstreamConfig struct {
 	// certPath/certPass=P12 客户端证书 (双向认证)。复用 account/key，仅新增证书两字段。
 	certPath string
 	certPass string
+	// bgpg (背景评估 BJPG-01, grsb) 凭证全部复用既有字段，不新增：
+	// account=请求头 accountId、apiKey=请求头 prodId (缺省 BJPG-01)、
+	// aesKey=encryptKey (hex 文本，解码后为 AES/CBC 密钥)。
 	// label 是本子源在聚合 range 里的段名；多源路由用，单源可省。
 	label string
 	// 串行寻源 (Sourcer) 属性：priority 越小越先，costFen 该源一次调用成本(分)，
@@ -367,7 +370,7 @@ func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
 
 // defaultKind picks the upstream client family by version: x1→gama, zlf→rental,
 // blk→blacklist, rlbd1/rlbd2→facecompare, sfzhy→idverify, xfjy→consumetxn,
-// tsfx→complaint, lxf→lxscore, grgjj→incomeag, others→income.
+// tsfx→complaint, lxf→lxscore, grgjj→incomeag, grsb→bgpg, others→income.
 func defaultKind(version string) string {
 	switch version {
 	case "x1":
@@ -388,6 +391,8 @@ func defaultKind(version string) string {
 		return "lxscore"
 	case "grgjj":
 		return "incomeag"
+	case "grsb":
+		return "bgpg"
 	default:
 		return "income"
 	}

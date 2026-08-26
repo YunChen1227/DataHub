@@ -14,4 +14,5 @@ const (
 	ProviderLXScore     = "lxscore"     // lxf: 灵犀分 score_195_v1
 	ProviderIncomeAg    = "incomeag"    // grgjj: 收入A_g版 (主源)
 	ProviderBgJJ        = "bgjj"        // grgjj: 备用公积金源 (jeoho，串行寻源的低优先级备源)
+	ProviderBgPG        = "bgpg"        // grsb: 背景评估 BJPG-01
 )

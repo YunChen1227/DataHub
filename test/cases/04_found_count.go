@@ -38,6 +38,7 @@ func main() {
 	tsfxBefore := harness.ServiceUsed("tsfx", harness.AppKeyFor("tsfx"), harness.Secret)
 	lxfBefore := harness.ServiceUsed("lxf", harness.AppKeyFor("lxf"), harness.Secret)
 	grgjjBefore := harness.ServiceUsed("grgjj", harness.AppKeyFor("grgjj"), harness.Secret)
+	grsbBefore := harness.ServiceUsed("grsb", harness.AppKeyFor("grsb"), harness.Secret)
 
 	// 仅对 x1 发起流量，逐版本独立计数。
 	before := harness.ServiceUsed("x1", harness.AppKey, harness.Secret)
@@ -83,6 +84,7 @@ func main() {
 	tsfxAfter := harness.ServiceUsed("tsfx", harness.AppKeyFor("tsfx"), harness.Secret)
 	lxfAfter := harness.ServiceUsed("lxf", harness.AppKeyFor("lxf"), harness.Secret)
 	grgjjAfter := harness.ServiceUsed("grgjj", harness.AppKeyFor("grgjj"), harness.Secret)
+	grsbAfter := harness.ServiceUsed("grsb", harness.AppKeyFor("grsb"), harness.Secret)
 	rec.Check("v9 计数不受 x1 流量影响", "delta == 0",
 		v9After == v9Before, fmt.Sprintf("before=%v after=%v", v9Before, v9After))
 	rec.Check("v8 计数不受 x1 流量影响", "delta == 0",
@@ -105,4 +107,6 @@ func main() {
 		lxfAfter == lxfBefore, fmt.Sprintf("before=%v after=%v", lxfBefore, lxfAfter))
 	rec.Check("grgjj 计数不受 x1 流量影响", "delta == 0",
 		grgjjAfter == grgjjBefore, fmt.Sprintf("before=%v after=%v", grgjjBefore, grgjjAfter))
+	rec.Check("grsb 计数不受 x1 流量影响", "delta == 0",
+		grsbAfter == grsbBefore, fmt.Sprintf("before=%v after=%v", grsbBefore, grsbAfter))
 }

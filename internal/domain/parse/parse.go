@@ -191,6 +191,32 @@ func ParseComplaint(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	}, nil
 }
 
+// ParseBgPG 校验 grsb (背景评估 BJPG-01) 入参。字段口径严格对齐上游参数表
+// (docs/BJPG-01背景评估 §4.2 请求体)：加密前的明文业务 JSON 只有 idCard 与 name
+// 两个字段，**都标必填，且没有 mobile**——故网关前置要求 name + idCard 齐全，
+// 并且不校验、不透传手机号（不同上游字段集合各不相同，此处以本上游文档为唯一依据，
+// 不沿用其它路由的三要素默认集合）。失败返回 busiCode 1007 数据请求异常
+// (我方拦截，不调上游/不计费)。
+func ParseBgPG(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+	if cmd == nil {
+		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
+	}
+	name := strings.TrimSpace(cmd.Name)
+	idCard := strings.ToUpper(strings.TrimSpace(cmd.IDCard))
+
+	if name == "" {
+		return nil, errs.New(errs.BusiDataRequestErr, "name 不能为空")
+	}
+	if !idCardRe.MatchString(idCard) {
+		return nil, errs.New(errs.BusiDataRequestErr, "idCard 格式非法")
+	}
+	return &model.UpstreamRequest{
+		Name:   name,
+		IDCard: idCard,
+		Reqid:  NewReqid(),
+	}, nil
+}
+
 // reqidSeq guarantees in-process uniqueness even when the wall clock does not
 // advance between two rapid calls (Windows time.Now() can have coarse ~ms
 // granularity, so consecutive UnixNano() values may be identical and cause

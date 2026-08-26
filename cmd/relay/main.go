@@ -332,6 +332,10 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// grgjj 收入A_g版：data 输入参数 name/cid/mobile 均标"是"(必填)，故网关前置
 		// 要求三要素齐全 (name 必填、mobile/idCard 合法)——用 ParseWithName。
 		orch.WithParser(parse.ParseWithName)
+	case upstream.ProviderBgPG:
+		// grsb 背景评估 BJPG-01：请求体参数表只有 idCard+name 两项且均必填，**不含
+		// mobile**——不能沿用三要素口径，用专属 ParseBgPG。
+		orch.WithParser(parse.ParseBgPG)
 	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upClient, billSvc, quotaSvc, cfg.requeryInterval, log)
 
@@ -533,6 +537,20 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			MerchantKey: uc.key,
 			CertPath:    uc.certPath,
 			CertPass:    uc.certPass,
+		}, httpClient)
+		if err != nil {
+			return nil, err
+		}
+		return client, nil
+	case upstream.ProviderBgPG:
+		// grsb 背景评估 BJPG-01：account=请求头 accountId、apiKey=请求头 prodId
+		// (缺省 BJPG-01)、aesKey=encryptKey (hex 文本，解码后为 AES/CBC 密钥；
+		// 形态非法即启动失败，不静默降级)。复用既有凭证字段，不新增 config 字段。
+		client, err := upstream.NewBgPG(upstream.BgPGConfig{
+			BaseURL:    uc.baseURL,
+			AccountID:  uc.account,
+			ProdID:     uc.apiKey,
+			EncryptKey: uc.aesKey,
 		}, httpClient)
 		if err != nil {
 			return nil, err

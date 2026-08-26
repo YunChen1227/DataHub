@@ -12,12 +12,13 @@
 - **对外（下游，xfjy=消费交易特征）**：`POST /v1/openapi/zlx/querySrmxXFJY`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`/`idCard`/`mobile`/`authlet`（均选填，至少提供一个查询要素）；消费交易特征富对象整体 **JSON 序列化为字符串**经 `result.range` 透出。区分「查得」（`001` 计费）与「查无」（`999` 不计费）。
 - **对外（下游，tsfx=投诉分析识别名单）**：`POST /v1/openapi/zlx/querySrmxTSFX`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `mobile`+`poly`（命中级别 `C1`/`C2`/`C3`，均必填）；命中结果数组整体 **JSON 序列化为字符串**经 `result.range` 透出（每条含 `callee`/`forbid`）。本路由**只要调用成功即 `001` 计费**，是否命中体现在 `forbid`（无 `999` 查无码）。
 - **对外（下游，grgjj=收入A_g版）**：`POST /v1/openapi/zlx/querySrmxGRGJJ`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参为 `name`+`idCard`+`mobile`（均必填）；上游结果富对象（`cbjfzt` 缴费状态 /`jfjs` 缴费基数 /`jfsj` 缴费时间）整体 **JSON 序列化为字符串**经 `result.range` 透出。区分「查得」（`001` 计费）与「查无」（`999` 不计费）。详见 [`docs/API_接口文档与使用手册_grgjj.pdf`](docs/API_接口文档与使用手册_grgjj.pdf)。
+- **对外（下游，grsb=背景评估）**：`POST /v1/openapi/zlx/querySrmxGRSB`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参**仅** `name`+`idCard`（两项均必填，**本路由不需要手机号**）；上游结果富对象（`xm`/`sfz`/`jfdw` 缴费单位 /`grsf`/`jfjs` 缴费基数 /`cbjfzt` 参保状态 /`jfsj` 缴费时间）**全字段**整体 **JSON 序列化为字符串**经 `result.range` 透出。区分「查得」（`001` 计费）与「查无」（`999` 不计费）。详见 [`docs/API_接口文档与使用手册_grsb.md`](docs/API_接口文档与使用手册_grsb.md)。
 
 > **额度策略（v0.6+）**：已**取消额度限制**——不限制客户调用次数；系统仅**统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。维度②（上游配额/调用计数/对账作业）已在 v0.7 **彻底移除**。
 
 > **IP 准入（v0.7）**：网关**不再**做全局/每用户 IP 白名单校验；来源 IP 仅写入审计日志。生产环境由**阿里云 ECS 安全组**等网络层控制访问。
 
-> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` / `tsfx` / `lxf` / `grgjj` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
+> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` / `tsfx` / `lxf` / `grgjj` / `grsb` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
 
 - **对内（上游，按版本路由）**：每个版本各自对接一个上游，归一化为统一的 `UpstreamResult`（`001`查得 /`999`查无）：
   - `x1` → **伽马分层分**（`gama`，《伽马分层分_定制版》PDF：`POST /enol/api/v1/doCheck`，MD5 加签 JSON 信封）。
@@ -31,6 +32,7 @@
   - `tsfx` → **投诉分析识别名单 / kfongtech**（`complaint`，`POST /inlet/api` **JSON** 提交；外层 `{apiKey, param, sign}`，`param` 为业务参数 `{method/version/poly/mobile}` **AES 加密**、`sign` 为外层签名，响应 `data` 为 **gzip 压缩**的命中结果数组；`code=0000` 归一 `001`（**调用成功即计费**，命中状态 `forbid` 随结果数组透出 `result.range`），`code≠0000` 归一上游侧错误。本上游无「查无(999)」概念）。
   - `lxf` → **灵犀分 score_195_v1 / fullink**（`lxscore`，`POST /report/encode` **JSON** 提交；`sign = DES/CBC(按参数名升序拼的 k=v&… 串, encryptKey)` 大写 hex，`name/mobile/idCardNo` 取 MD5 摘要，响应 `data` 为同套 DES 密文、解密得 300-900 评分经 `result.range` 透出；分数 `-1` 归一 `999`）。
   - `grgjj` → **双源串行寻源（命中即停）**：主源 **收入A_g版 / yrzx**（`incomeag`，`POST /yrzx/common/v2/credit/v2` **JSON** 提交；请求体 `{account,type,data,reqid,verify}`，`data = Base64(3DES/ECB/PKCS5(明文业务JSON {name,cid,mobile}))`、`verify = MD5(account+加密前JSON串+reqid+type+key).toUpperCase()`，响应 `result` 为同套 3DES 密文、解密得 `{cbjfzt,jfjs,jfsj}`；两把独立凭证 `key`(MD5 加签) 与 3DES 密钥）＋ 备源 **备用公积金 / jeoho**（`bgjj`，`POST /api/nlv2/zl4` **HTTPS 双向认证** P12 证书；请求体 `{merchant_id,timestamp,dsorderid,params,sign}`，`params` 明文 `{name,idcard,mobile}`、`sign = MD5("k1=v1&…&key=merchantKey")`，响应 `data {date,score,jfzt}` 映射为 `{jfsj,jfjs,cbjfzt}`；`code=100` 查得 / `201` 查无 / `301` 非白名单IP 等上游侧错误）。主源查无/失败才回落备源；两源结果都归一到同一份 `result.range {cbjfzt,jfjs,jfsj}`，下游无从察觉。
+  - `grsb` → **背景评估 BJPG-01**（`bgpg`，`POST /api/getData` **JSON** 提交；请求头带 `accountId`/`prodId`(`BJPG-01`)，请求体 `{data}`，`data = Base64(AES/CBC/PKCS5(明文业务JSON {idCard,name}))`——密钥由 `encryptKey` **hex 解码**得来（32 个 hex 字符 = AES-128），IV 固定为 16 个 ASCII 字符 `"0000000000000000"`；响应 `{data,code,uuid,retMsg}`，`data` 为同套 AES 密文、解密得 `{xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj}` 全字段经 `result.range` 透出；`code=200` 查得 / `2-404`·`3-404` 查无 / 其余 `2-5xx`·`3-5xx` 上游侧错误。**入参不含手机号**）。
   保留 `upstream.Router` 抽象，每版本一个单 provider 路由。
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，架构图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
@@ -169,7 +171,7 @@ storage:
   driver: "postgres"             # 生产必须为 postgres
   migrationsDir: "migrations"    # 相对 relay 工作目录；启动时自动跑 DDL
 
-# 存储按域独立：x1/v8v9/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj 各一套 PG 库 + Redis 逻辑库。
+# 存储按域独立：x1/v8v9/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb 各一套 PG 库 + Redis 逻辑库。
 # 上游按 upstreams 列表配置：单源路由列表长度 1；多源路由长度 N，每个子源自带完整凭证。
 # 多源有两种装配（自动判定）：
 #   - 串行寻源 Sourcer（命中即停，源间可互相替代/同一种数据不同供应商，如 grgjj）：
@@ -226,7 +228,7 @@ versions:
         appSecret: "<上游 app_security>"
     database: { host: "<RDS>", name: "datahub_rlbd1_db", ... }
     redis:    { db: 8, ... }
-  # 其余路由 (rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj) 见 config.example.yaml
+  # 其余路由 (rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb) 见 config.example.yaml
 
 admin:
   bootstrapUser: "admin"

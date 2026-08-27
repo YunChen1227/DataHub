@@ -56,10 +56,14 @@ func (a *Aggregator) Active() string {
 }
 
 // aggSection 是一个子源归一后的结果，聚合进合并 range 的一段。
+//
+// **禁止携带任何上游信息**：失败只体现为中性的 status="error"，上游业务码/原始文案/
+// 订单号/请求号一概不进 range——它们经 *model.UpstreamError 落审计（后台「上游uid/
+// 上游logId/上游code」三列）并打进服务端日志，运营与排障照旧够用，但不外泄给下游。
+// 段名同理由装配层给中性名（见 cmd/relay/main.go 的 labelFor），不得暴露上游 kind。
 type aggSection struct {
-	Status string          `json:"status"`          // ok=查得 / empty=查无 / error=该源失败
-	Data   json.RawMessage `json:"data,omitempty"`  // 查得时透出子源 result.range 原样
-	Error  string          `json:"error,omitempty"` // status=error 时的原因摘要
+	Status string          `json:"status"`         // ok=查得 / empty=查无 / error=该源失败
+	Data   json.RawMessage `json:"data,omitempty"` // 查得时透出子源 result.range 原样
 }
 
 func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
@@ -77,6 +81,7 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 		logid   string
 		code    string
 		msg     string
+		reason  string // 仅用于服务端日志与全失败汇总，绝不进 range
 	}
 	results := make([]sub, len(sources))
 	var wg sync.WaitGroup
@@ -90,15 +95,24 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 			// 失败也要可追查（铁律）：子源"已应答但业务失败"时携带的上游订单号/
 			// 请求号在 *model.UpstreamError 里，必须捞出来，不能只从成功 res 取
 			// （res 为 nil 会丢标识，正是「上游uid/logId 列为空」的根因）。
-			if err != nil {
+			switch {
+			case err != nil:
 				var ue *model.UpstreamError
 				if errors.As(err, &ue) {
 					sb.uid, sb.logid, sb.code, sb.msg = ue.UID, ue.LogID, ue.Code, ue.Msg
+					sb.reason = ue.Msg
 				} else {
 					sb.msg = err.Error()
+					sb.reason = err.Error()
 				}
-			} else if res != nil {
+			case res == nil:
+				sb.reason = "子源返回空结果"
+			default:
 				sb.uid, sb.logid = res.UID, res.LogID
+				if sb.section.Status == "error" {
+					sb.code, sb.msg = res.Code, res.Msg
+					sb.reason = fmt.Sprintf("子源返回非预期 code=%s msg=%s", res.Code, res.Msg)
+				}
 			}
 			results[i] = sb
 		}(i)
@@ -124,6 +138,9 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 			emptyCnt++
 		default:
 			errCnt++
+			// 失败原因只落服务端日志（range 里只有中性 status），排障看这里。
+			slog.Warn("upstream aggregate 子源失败", "reqid", req.Reqid, "source", r.label,
+				"code", r.code, "uid", r.uid, "logid", r.logid, "reason", r.reason)
 		}
 	}
 	slog.Debug("upstream aggregate", "reqid", req.Reqid, "ok", okCnt, "empty", emptyCnt, "err", errCnt)
@@ -140,7 +157,7 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 			if code == "" && r.code != "" {
 				code = r.code
 			}
-			b.WriteString(fmt.Sprintf(" | %s: code=%s %s", r.label, r.code, r.msg))
+			b.WriteString(fmt.Sprintf(" | %s: code=%s %s", r.label, r.code, r.reason))
 		}
 		if code == "" {
 			code = "aggregate_all_failed"
@@ -169,12 +186,13 @@ func (a *Aggregator) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 
 // classify 把一个子源的 (result, err) 归一为聚合段：err→error / 999→empty /
 // 001→ok(透出 range) / 其余非预期码→error。
+//
+// 失败分支只给中性 status，**不带**上游 code/msg/订单号/请求号——那些是上游信息，
+// 一律走审计与日志（见 aggSection 注释）。查得分支透出的 res.Range 已由各上游客户端
+// 经 sanitizeRange 剥过上游标识，此处直接沿用。
 func classify(res *model.UpstreamResult, err error) aggSection {
-	if err != nil {
-		return aggSection{Status: "error", Error: err.Error()}
-	}
-	if res == nil {
-		return aggSection{Status: "error", Error: "子源返回空结果"}
+	if err != nil || res == nil {
+		return aggSection{Status: "error"}
 	}
 	switch res.Code {
 	case "999":
@@ -186,7 +204,7 @@ func classify(res *model.UpstreamResult, err error) aggSection {
 		}
 		return sec
 	default:
-		return aggSection{Status: "error", Error: fmt.Sprintf("子源返回非预期 code=%s msg=%s", res.Code, res.Msg)}
+		return aggSection{Status: "error"}
 	}
 }
 

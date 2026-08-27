@@ -198,6 +198,23 @@ func ParseComplaint(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 // 不沿用其它路由的三要素默认集合）。失败返回 busiCode 1007 数据请求异常
 // (我方拦截，不调上游/不计费)。
 func ParseBgPG(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+	return parseNameIDCard(cmd)
+}
+
+// ParseIDCheck 校验 sfsm (身份证实名核验) 入参。字段口径严格对齐上游数脉
+// id_card/check 参数表：业务字段只有 name(姓名) 与 idcard(身份证号码) 两项且
+// **均标必填、没有 mobile**（appid/timestamp/sign/secretMode 属协议字段，由上游
+// 客户端填充，非下游入参）——故网关前置要求 name + idCard 齐全，不校验、不透传
+// 手机号。失败返回 busiCode 1007 数据请求异常 (我方拦截，不调上游/不计费)。
+func ParseIDCheck(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+	return parseNameIDCard(cmd)
+}
+
+// parseNameIDCard 是「name + idCard 两项均必填、无 mobile」口径的共用实现。
+// 目前 grsb(bgpg) 与 sfsm(idcheck) 两条上游的参数表恰好同口径；若将来某一条
+// 上游放宽/收紧（如接受 15 位身份证号），把该路由的导出入口改为独立实现即可，
+// 不要在此处按路由分支——校验口径必须逐条上游对着文档来。
+func parseNameIDCard(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	if cmd == nil {
 		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
 	}

@@ -182,7 +182,7 @@ func decodeComplaintData(data string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("gzip read: %w", err)
 	}
-	return compactJSON(json.RawMessage(plain)), nil
+	return sanitizeRange(json.RawMessage(plain)), nil
 }
 
 // ---------------------------------------------------------------------------

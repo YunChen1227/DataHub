@@ -7,10 +7,10 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB
-#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB
-# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb 各域独占一套 DB + Redis 逻辑库。
+# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb / sfsm 各域独占一套 DB + Redis 逻辑库。
 # v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
 # 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
 # 跨域使用 license 一律鉴权失败。启动时会做防呆校验：两个不同的域配置同一个数据库
@@ -25,6 +25,7 @@
 # lxf 转接灵犀分 score_195_v1 (fullink)：JSON POST + sign=DES/CBC(升序 k=v&... , encryptKey) 大写 hex，name/mobile/idCardNo 传 MD5 摘要；响应 data 为 DES 密文，解密得 300-900 评分经 result.range 透出；分数=-1 视为查无(999)。
 # grgjj 转接收入A_g版 (yrzx)：JSON POST + data 走 3DES/ECB/PKCS5+base64 加密、verify=MD5(account+加密前JSON串+reqid+type+key) 大写，name/cid/mobile 入参；响应 result 为 3DES 密文，解密得 {cbjfzt,jfjs,jfsj} 经 result.range 透出；code 001 查得计费 / 999 查无 / 其余(002/003/004/…)上游侧错误。
 # grsb 转接背景评估 BJPG-01：JSON POST {data} + data 走 AES/CBC/PKCS5+base64 加密（密钥=encryptKey 的 hex 解码值，IV 固定 16 个 ASCII 字符 "0000000000000000"），请求头带 accountId/prodId；入参仅 idCard+name 两项均必填（**无 mobile**）；响应 data 为同一套 AES 密文，解密得 {xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj} 全字段经 result.range 透出；code 200 查得计费 / 2-404 与 3-404 查无 / 其余(2-5xx、3-5xx)上游侧错误不计费。
+# sfsm 转接身份证实名核验 (数脉 id_card/check，与 rlbd1/rlbd2 同服务商同签名)：form POST + sign=md5(appid&timestamp&app_security)，入参仅 name+idCard 两项均必填（**无 mobile**）；响应 data 的 {result,desc,sex,birthday,address} 经 result.range 透出、order_no 只落审计；result 0 一致 / 1 不一致 均为收费结论(001) / 2 无记录查无(999) / code≠200 上游侧错误不计费。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
 #   - 单源路由：列表长度 1（当前所有路由均为单源）。
@@ -300,3 +301,26 @@ versions:
     redis:
       <<: *redis_base
       db: 13
+  # sfsm 对接「身份证实名核验」(数脉 id_card/check)：与 rlbd1/rlbd2 同一服务商、同一套
+  # 鉴权——form POST（文档明确「不要 json 方式」）+ sign=md5(appid&timestamp&app_security)。
+  # 业务字段只有 name + idcard 两项且均必填（**无 mobile**，网关前置拦截）；secretMode
+  # 走缺省不发，即明文传参（若将来要加密：AES/ECB/PKCS5 + Base64，key = app_security）。
+  # 响应 {msg,success,code,data{result,order_no,desc,sex,birthday,address}}，业务字段经
+  # result.range 透出，order_no 只落审计不透出。
+  # 计费：code 200 且 result 0 一致 / 1 不一致 → 001 查得计费（两者上游都明标收费）；
+  # result 2 无记录(文档标"预留") → 999 查无不计费；其余（400 参数错误 / 404 资源不存在
+  # / 500 系统内部错误 / 501 第三方异常 / 601 未开通权限 / 602 账号停用 / 603 余额不足
+  # / 604 接口停用 / 606 调用超限 / 1001 其它）为上游侧错误，不计费。
+  # 独立成域（库 datahub_sfsm_db / redis db14 / 独立 license 与统计）。
+  sfsm:
+    upstreams:
+      - kind: "idcheck"
+        baseURL: "https://api.shumaidata.com/v4/id_card/check"
+        appId: "REPLACE_WITH_SFSM_APPID"          # 上游 appid（服务商分配的唯一标识）
+        appSecret: "REPLACE_WITH_SFSM_APP_SECURITY"   # 上游 app_security（sign 用）
+    database:
+      <<: *pg_base
+      name: "datahub_sfsm_db"
+    redis:
+      <<: *redis_base
+      db: 14

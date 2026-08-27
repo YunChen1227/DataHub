@@ -199,8 +199,8 @@ func (c *BgPGClient) Query(ctx context.Context, req *model.UpstreamRequest) (*mo
 }
 
 // decodeData 解开返回体 data 密文并压紧为下游 result.range 透出的 JSON 字符串
-// (全字段原样透出 {xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj}，不裁剪)。code=200 但 data
-// 为空串时返回空 range，不视为错误。
+// (业务字段 {xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj} 全量透出；上游标识类字段由
+// sanitizeRange 剥掉)。code=200 但 data 为空串时返回空 range，不视为错误。
 func (c *BgPGClient) decodeData(data string) (string, error) {
 	if strings.TrimSpace(data) == "" {
 		return "", nil
@@ -209,7 +209,7 @@ func (c *BgPGClient) decodeData(data string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return compactJSON(plain), nil
+	return sanitizeRange(plain), nil
 }
 
 // Requery: 背景评估 getData 无对账查询接口 (文档只定义了一个业务接口)。返回

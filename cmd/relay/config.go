@@ -15,7 +15,7 @@ import (
 // rental(租赁分V2-D, zlf) | blacklist(黑名单因子V35, blk) | facecompare | idverify |
 // consumetxn | complaint | lxscore | incomeag | bgjj | bgpg。
 type upstreamConfig struct {
-	kind    string // gama | income | rental | blacklist | facecompare | idverify | consumetxn | complaint | lxscore | incomeag | bgjj | bgpg
+	kind    string // gama | income | rental | blacklist | facecompare | idverify | consumetxn | complaint | lxscore | incomeag | bgjj | bgpg | idcheck
 	baseURL string
 	// gama (伽马) / blacklist (黑名单因子V35) 凭证。
 	// lxscore (灵犀分) 复用这三个字段：appID=customerId、apiKey=customerProdId、
@@ -370,7 +370,8 @@ func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
 
 // defaultKind picks the upstream client family by version: x1→gama, zlf→rental,
 // blk→blacklist, rlbd1/rlbd2→facecompare, sfzhy→idverify, xfjy→consumetxn,
-// tsfx→complaint, lxf→lxscore, grgjj→incomeag, grsb→bgpg, others→income.
+// tsfx→complaint, lxf→lxscore, grgjj→incomeag, grsb→bgpg, sfsm→idcheck,
+// others→income.
 func defaultKind(version string) string {
 	switch version {
 	case "x1":
@@ -393,6 +394,8 @@ func defaultKind(version string) string {
 		return "incomeag"
 	case "grsb":
 		return "bgpg"
+	case "sfsm":
+		return "idcheck"
 	default:
 		return "income"
 	}

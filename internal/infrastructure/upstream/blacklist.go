@@ -136,7 +136,7 @@ func (c *BlacklistClient) Query(ctx context.Context, req *model.UpstreamRequest)
 			UID:   br.SeqNo,
 			Reqid: req.Reqid,
 			LogID: br.SeqNo, // 只有 seqNo(流水号)一个上游标识，UID/LogID 同填供后台对账
-			Range: compactJSON(br.Data.Result),
+			Range: sanitizeRange(br.Data.Result),
 		}, nil
 	case blacklistBusiNotFound:
 		return &model.UpstreamResult{

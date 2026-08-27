@@ -183,7 +183,7 @@ func (c *ConsumeTxnClient) Query(ctx context.Context, req *model.UpstreamRequest
 			UID:   uid,
 			Reqid: req.Reqid,
 			LogID: cr.Reqno,
-			Range: compactJSON(cr.Data.ResultData),
+			Range: sanitizeRange(cr.Data.ResultData),
 		}, nil
 	case "1":
 		return &model.UpstreamResult{

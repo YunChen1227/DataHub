@@ -146,7 +146,7 @@ func (c *IDVerifyClient) Query(ctx context.Context, req *model.UpstreamRequest) 
 		UID:   uid,
 		Reqid: req.Reqid,
 		LogID: ir.RequestId,
-		Range: compactJSON(ir.Data),
+		Range: sanitizeRange(ir.Data),
 	}, nil
 }
 

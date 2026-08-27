@@ -260,7 +260,8 @@ func (o *QueryOrchestrator) replay(l *model.Ledger, requestID string, rec *model
 	if l.CountedService {
 		rec.BusiCode = int(errs.BusiSuccess)
 		rec.BusiMsg = "success"
-		return mapping.Found(&model.UpstreamResult{Code: "001", Reqid: l.Reqid, UID: l.UpstreamUID}, requestID, latencyMs)
+		// 不传 UID：上游订单号只进上面的审计字段，body.uid 由 mapping 填我方流水号。
+		return mapping.Found(&model.UpstreamResult{Code: "001", Reqid: l.Reqid}, requestID, latencyMs)
 	}
 	rec.BusiCode = int(errs.BusiNotFound)
 	rec.BusiMsg = "查无结果"

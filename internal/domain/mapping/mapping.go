@@ -19,8 +19,12 @@ func head(errorCode, errorMsg, requestID string, latencyMs int64) model.Response
 }
 
 // Found builds a查得数据 response: head.errorCode "0" + body.code "001" + range.
+//
+// body.uid 恒为**我方**交易流水号 (requestID，与 head.logId 同值)——不是上游订单号。
+// 上游订单号/请求号只经 UpstreamResult.UID/LogID 落审计供我方向上游对账，不外泄给
+// 下游 (见 README「result.range 不透出上游标识」铁律)。
 func Found(r *model.UpstreamResult, requestID string, latencyMs int64) *model.QueryResponse {
-	b := &model.QueryBody{Code: "001", Msg: "成功", Reqid: requestID}
+	b := &model.QueryBody{Code: "001", Msg: "成功", Reqid: requestID, UID: requestID}
 	if r != nil {
 		if r.Code != "" {
 			b.Code = r.Code
@@ -28,7 +32,6 @@ func Found(r *model.UpstreamResult, requestID string, latencyMs int64) *model.Qu
 		if r.Msg != "" {
 			b.Msg = r.Msg
 		}
-		b.UID = r.UID
 		if r.Reqid != "" {
 			b.Reqid = r.Reqid
 		}
@@ -42,8 +45,10 @@ func Found(r *model.UpstreamResult, requestID string, latencyMs int64) *model.Qu
 // 默认 "999" 查无 (无 result 节点)。聚合路由的 002 部分成功也走此映射——r.Code
 // 覆盖 body.code 且 r.Range 非空时透出 result.range (部分数据)；单上游查无的
 // Range 恒为空，行为不变 (DESIGN §7.4)。
+//
+// body.uid 与 Found 同口径：恒为我方交易流水号，不透出上游订单号。
 func NotFound(r *model.UpstreamResult, requestID string, latencyMs int64) *model.QueryResponse {
-	b := &model.QueryBody{Code: "999", Msg: "查无结果", Reqid: requestID}
+	b := &model.QueryBody{Code: "999", Msg: "查无结果", Reqid: requestID, UID: requestID}
 	if r != nil {
 		if r.Code != "" {
 			b.Code = r.Code
@@ -51,7 +56,6 @@ func NotFound(r *model.UpstreamResult, requestID string, latencyMs int64) *model
 		if r.Msg != "" {
 			b.Msg = r.Msg
 		}
-		b.UID = r.UID
 		if r.Reqid != "" {
 			b.Reqid = r.Reqid
 		}

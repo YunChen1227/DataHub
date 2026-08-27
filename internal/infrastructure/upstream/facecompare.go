@@ -42,7 +42,8 @@ type FaceCompareConfig struct {
 // FaceCompareClient implements port.UpstreamPort for the 人脸身份证比对一所 provider.
 // 协议: POST form (application/x-www-form-urlencoded); sign = md5(appid&timestamp&
 // app_security); 明文传 name/idcard + image(base64) 或 url (二选一)。响应 data 富对象
-// (order_no/score/incorrect/sex/birthday/address) 原样序列化经下游 result.range 透出。
+// 序列化经下游 result.range 透出业务字段 (score/msg/incorrect/sex/birthday/address)；
+// 上游订单号 order_no 不透出，只经 UID/LogID 落审计供对账。
 type FaceCompareClient struct {
 	cfg  FaceCompareConfig
 	http *http.Client
@@ -141,7 +142,8 @@ func (c *FaceCompareClient) Query(ctx context.Context, req *model.UpstreamReques
 		UID:   data.OrderNo,
 		Reqid: req.Reqid,
 		LogID: data.OrderNo, // 只有 orderNo(订单号)一个上游标识，UID/LogID 同填供后台对账
-		Range: compactJSON(fr.Data),
+		// order_no 是上游订单号，只进审计(UID/LogID)不进 range——由 sanitizeRange 剥掉。
+		Range: sanitizeRange(fr.Data),
 	}, nil
 }
 

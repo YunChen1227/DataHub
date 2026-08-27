@@ -317,6 +317,9 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	case upstream.ProviderIDVerify:
 		// sfzhy 身份证三要素核验：name+idCard(15/18)+profilePicture 均必填。
 		orch.WithParser(parse.ParseIDVerify)
+	case upstream.ProviderIDCheck:
+		// sfsm 身份证实名核验：上游业务参数表只有 name+idcard 两项且均必填、**无 mobile**。
+		orch.WithParser(parse.ParseIDCheck)
 	case upstream.ProviderConsumeTxn:
 		// xfjy 消费交易特征：上游 params 全选填，网关仅校验格式并要求至少一个
 		// 查询要素 (name/idCard/mobile)，对齐上游必填口径不臆造多余必填。
@@ -409,12 +412,17 @@ func useSourcer(ucs []upstreamConfig) bool {
 	return false
 }
 
-// labelFor 决定子源在聚合 range 里的段名：显式 label 优先；否则回退为 kind+下标。
+// labelFor 决定子源在聚合 range 里的段名 / 寻源日志里的源名：显式 label 优先，否则
+// 回退为中性的 source+下标。
+//
+// **不得回退成 kind**：聚合路由的段名会随 body.result.range 发给下游，用 kind 当段名
+// 等于把上游家族名（gama/blacklist/incomeag…）透给下游，违反「range 不透出任何上游
+// 相关字段」。配置里显式写 label 时也请用业务语义名（如 invoice/tax），别写上游名。
 func labelFor(uc upstreamConfig, idx int) string {
 	if uc.label != "" {
 		return uc.label
 	}
-	return fmt.Sprintf("%s%d", uc.kind, idx+1)
+	return fmt.Sprintf("source%d", idx+1)
 }
 
 // buildClient constructs one 上游子源 client (port.UpstreamPort) by kind.
@@ -480,6 +488,15 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 		return client, nil
 	case upstream.ProviderIDVerify:
 		client := upstream.NewIDVerify(upstream.IDVerifyConfig{
+			BaseURL:   uc.baseURL,
+			AppID:     uc.appID,
+			AppSecret: uc.appSecret,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderIDCheck:
+		// sfsm 身份证实名核验 (数脉)：appID=appid、appSecret=app_security，
+		// 与 facecompare 同一服务商同一套签名。
+		client := upstream.NewIDCheck(upstream.IDCheckConfig{
 			BaseURL:   uc.baseURL,
 			AppID:     uc.appID,
 			AppSecret: uc.appSecret,

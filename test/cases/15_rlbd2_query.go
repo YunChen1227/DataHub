@@ -73,6 +73,10 @@ func main() {
 	rec.Check("rlbd1 凭证跨域到 rlbd2 被拒", "errorCode=505004", r.ErrorCode == "505004", r.Raw)
 
 	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, base(), nil)
-	rec.Check("二次成功查得", "errorCode=0 & body.code=001 & range 含 order_no",
-		r.ErrorCode == "0" && r.BodyCode == "001" && strings.Contains(r.Range, "order_no"), r.Raw)
+	rec.Check("二次成功查得", "errorCode=0 & body.code=001 & range 含 incorrect",
+		r.ErrorCode == "0" && r.BodyCode == "001" && strings.Contains(r.Range, "incorrect"), r.Raw)
+
+	// range 不得透出上游标识（铁律）：order_no 是上游订单号，只进审计不进响应体。
+	rec.Check("range 不含上游订单号", "range 不含 order_no",
+		!strings.Contains(r.Range, "order_no"), r.Raw)
 }

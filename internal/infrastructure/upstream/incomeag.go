@@ -321,8 +321,9 @@ func (c *IncomeAgClient) decodeResult(result string, key []byte) (string, error)
 	if err != nil {
 		return "", err
 	}
-	// 透传：把解密后的业务 JSON 压紧后整体作为 range（含 cbjfzt/jfjs/jfsj）。
-	return compactJSON(plain), nil
+	// 透传：把解密后的业务 JSON 压紧后整体作为 range（含 cbjfzt/jfjs/jfsj），并剥掉
+	// 上游标识类字段（sanitizeRange，见其注释）。
+	return sanitizeRange(plain), nil
 }
 
 // Requery: 收入A_g版上游以 reqid 幂等，真正的对账查询接口待联调。在此之前返回

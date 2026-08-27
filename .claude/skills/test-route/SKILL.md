@@ -1,6 +1,6 @@
 ---
 name: test-route
-description: DataHub 单条路由的定向测试：只启动被测路由所需的 mock 与 relay（memory 存储，不碰线上 PG/Redis），只跑该路由自己的用例，测试执行统一交给 Composer 2.5。Use when 用户要测试、回归、验证某一条 DataHub 路由（x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb），或刚接入完一个上游要验证对应路由，或提到「只测某个路由」「单路由测试」「别把不相干的服务都起起来」。
+description: DataHub 单条路由的定向测试：只启动被测路由所需的 mock 与 relay（memory 存储，不碰线上 PG/Redis），只跑该路由自己的用例，测试执行统一交给 Composer 2.5。Use when 用户要测试、回归、验证某一条 DataHub 路由（x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm），或刚接入完一个上游要验证对应路由，或提到「只测某个路由」「单路由测试」「别把不相干的服务都起起来」。
 ---
 
 # DataHub 单路由定向测试
@@ -77,6 +77,7 @@ description: DataHub 单条路由的定向测试：只启动被测路由所需�
 | lxf | lxscore | mock_lxscore :9122 | 18 |
 | grgjj | incomeag + bgjj | mock_incomeag :9123 + mock_bgjj :9125 | 19 + 21 |
 | grsb | bgpg | mock_bgpg :9126 | 22 |
+| sfsm | idcheck | mock_idcheck :9127 | 23 |
 
 ## 脚本行为
 

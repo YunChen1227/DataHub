@@ -186,8 +186,10 @@ type ResponseHead struct {
 // QueryBody is the x1 业务响应体 (本服务 x1 契约). 字段口径沿用旧版 v9：
 // code 001 查得 / 999 查无；result.range 为收入模型评分。
 type QueryBody struct {
-	Code   string       `json:"code"`
-	Msg    string       `json:"msg"`
+	Code string `json:"code"`
+	Msg  string `json:"msg"`
+	// UID 是**我方**交易流水号 (与 head.logId 同值)，供下游向我方对账。它**不是**上游
+	// 订单号——上游标识只落审计，不随响应外泄 (见 mapping.Found 注释)。
 	UID    string       `json:"uid"`
 	Reqid  string       `json:"reqid"`
 	Verify string       `json:"verify"`
@@ -222,15 +224,19 @@ type RangeResult struct {
 // 加密、密钥为 encryptKey 的 hex 解码值、IV 固定 "0000000000000000"，请求头带
 // accountId/prodId，入参仅 idCard+name 两项 (无 mobile)，响应 data 为同一套 AES
 // 密文、解密得 {xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj} 全字段经 result.range 透出，
-// 见 upstream/bgpg.go)。
+// 见 upstream/bgpg.go)；
+// sfsm 转接身份证实名核验 (idcheck 上游，数脉 id_card/check，与 rlbd1/rlbd2 同一
+// 服务商同一套签名：form POST + sign=md5(appid&timestamp&app_security)，入参仅
+// name+idCard 两项均必填 (无 mobile)，响应 data 的 {result,desc,sex,birthday,address}
+// 经 result.range 透出、result 0 一致/1 不一致均为收费结论，见 upstream/idcheck.go)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -272,6 +278,8 @@ func DemoAppKey(route string) string {
 		return "y89grgjj"
 	case "grsb":
 		return "y890grsb"
+	case "sfsm":
+		return "y890sfsm"
 	default:
 		return "demo-" + route
 	}

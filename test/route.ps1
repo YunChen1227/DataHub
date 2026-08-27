@@ -161,6 +161,16 @@ $routeMap = @{
         aesKey: "0031cee6808eb6d5b0e07536218f1234"
 '@
     }
+    "sfsm" = @{
+        mocks = @(@{ name = "mock_idcheck"; port = 9127 })
+        # 数脉同一套鉴权：appId=appid、appSecret=app_security（sign 用）。
+        yaml  = @'
+      - kind: "idcheck"
+        baseURL: "http://127.0.0.1:9127/v4/id_card/check"
+        appId: "demo-sfsm-appid"
+        appSecret: "demo-sfsm-secret"
+'@
+    }
 }
 
 $Route = $Route.Trim().ToLower()

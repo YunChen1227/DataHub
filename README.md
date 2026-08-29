@@ -56,6 +56,7 @@ internal/
 │   ├── billing/           #   计费判定表 + 状态机
 │   ├── parse/             #   参数校验/规范化
 │   ├── mapping/           #   上游结果→客户 head/body 响应 + errorCode
+│   ├── cache/             #   自然月结果缓存：key/TTL/HMAC 指纹（x1/v8/v9）
 │   └── admin/             #   管理后台：登录/用户 CRUD/密钥轮换/审计查询
 ├── infrastructure/        # 适配器
 │   ├── upstream/          #   上游路由 + 伽马客户端 + MD5 签名
@@ -66,7 +67,7 @@ internal/
 ├── job/                   # 异步复查 worker（RequeryWorker；伽马 Requery 当前为 stub）
 └── common/                # errs(错误码) / reqid / appctx / jwt / ipfilter(仅解析 IP) / mask
 web/admin/                 # 管理后台 React + Vite SPA（DESIGN §16）
-migrations/                # 建表 DDL（PostgreSQL）：0001 业务 / 0002 管理后台 / 0003 路由统计 / 0004 demo 清理
+migrations/                # 建表 DDL（PostgreSQL）：0001 业务 … / 0007 from_cache 列
 scripts/                   # mock_gama、e2e、recreate_databases 等辅助脚本
 test/                      # 固定测试套件（run.ps1 + cases/*.go）
 ```
@@ -381,6 +382,8 @@ curl http://127.0.0.1:8080/admin/          # 管理后台（建议仅内网访�
 
 `storage.driver`：`memory`（开发默认）| `postgres`（**生产必须**）。
 
+---
+
 ### 请求示例
 
 下游 MD5 加签见 DESIGN §8.1：对 `body` 非空业务参数按 ASCII 升序拼接后追加 `secret` 再 MD5。
@@ -434,7 +437,8 @@ npm run build        # 产物输出到 web/admin/dist；访问 http://localhost:
 - ✅ 成功查得数统计（**仅查得数据 busiCode=10 计数**，无额度拦截）、台账状态机、requestId 追踪（`head.logId`）、建表 DDL。
 - ✅ 持久化：`memory`（开发）与 `postgres`+`redis`（生产/e2e）；`dev_db` / `prod_db` 同实例隔离。
 - ✅ 管理后台：管理员登录（JWT）、用户 CRUD（手机号/密钥时间/过期日期、检索）、`appKey/secret` 生成与轮换、审计日志（含 `?q=` 关键字过滤）、React+Vite SPA。
-- ✅ 固定测试套件（`test/run.ps1`，7 个 case；结果输出 `test_res/<date>/`）。
+- ✅ 自然月结果缓存（x1/v8/v9，默认关闭）：详见 [DESIGN §17](docs/DESIGN.md)。
+- ✅ 固定测试套件（`test/run.ps1`，含 `22_month_cache` 缓存场景；结果输出 `test_res/<date>/`）。
 - ✅ 端到端延迟优化（DESIGN 顶部「异步记账」变更说明）：结算+审计经 `application.Bookkeeper` 移出响应关键路径（背压降级同步、停机 drain）；鉴权 license+secret 单查询 + 按域 10s 进程缓存（后台变更即时失效）；内部生成 reqid 跳过必 miss 的幂等查询；上游 HTTP 连接池调优（`MaxIdleConnsPerHost=64`）。计数/审计为毫秒级最终一致。
 - 🚧 待完善：
   - 伽马 `Requery` 当前为 stub（`Reachable=false`），RequeryWorker 对伽马上游暂无实际复查能力。

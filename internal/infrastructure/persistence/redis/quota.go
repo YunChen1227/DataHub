@@ -6,7 +6,6 @@ package redis
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -31,9 +30,8 @@ type Options struct {
 
 // Quota implements port.QuotaRepository on Redis + a durable PG mirror.
 type Quota struct {
-	rdb    *goredis.Client
-	pg     Durable
-	seeded sync.Map // licenseID -> struct{} (process-local seed guard)
+	rdb *goredis.Client
+	pg  Durable
 }
 
 // New dials Redis and verifies connectivity.
@@ -59,30 +57,36 @@ func (q *Quota) Close() { _ = q.rdb.Close() }
 func kSvcUsed(lid, route string) string  { return "quota:" + lid + ":" + route + ":svc_used" }
 func kCallTotal(lid, route string) string { return "quota:" + lid + ":" + route + ":call_total" }
 
-func seedKey(lid, route string) string { return lid + "|" + route }
-
-// ensure lazily seeds both Redis 计数器 (成功查得数 + 调用次数) from the durable PG
-// mirror (SETNX so a flushed Redis is rehydrated and concurrent processes don't clobber)。
+// ensure lazily (re)seeds both Redis 计数器 (成功查得数 + 调用次数) from the durable
+// PG mirror (SETNX so a flushed Redis is rehydrated and concurrent processes don't
+// clobber)。一次 EXISTS 同时探两个 key，故常态是单次往返。
+//
+// 刻意**不做**进程内「已 seed」缓存：计数器 key 不带 TTL、本不该被淘汰，但一旦实例的
+// maxmemory-policy 被误配成 allkeys-*（结果缓存 qc:* 会把内存填到上限，见
+// resultcache.go）而真的发生淘汰，进程内缓存会让本方法直接跳过 seed，随后的 INCR
+// 从 0 重建——客户可见的累计 serviceUsed 静默清零。宁可每次多一次 EXISTS（本方法只
+// 在异步记账与 /quota 查询路径上调用，不在查询关键路径上），也不能让计数悄悄丢。
 func (q *Quota) ensure(ctx context.Context, licenseID, route string) error {
-	if _, ok := q.seeded.Load(seedKey(licenseID, route)); ok {
+	svcKey, callKey := kSvcUsed(licenseID, route), kCallTotal(licenseID, route)
+	present, err := q.rdb.Exists(ctx, svcKey, callKey).Result()
+	if err != nil {
+		return err
+	}
+	if present == 2 {
 		return nil
 	}
 	svcUsed, err := q.pg.ServiceUsedCount(ctx, licenseID, route)
 	if err != nil {
 		return err
 	}
-	if err := q.rdb.SetNX(ctx, kSvcUsed(licenseID, route), svcUsed, 0).Err(); err != nil {
+	if err := q.rdb.SetNX(ctx, svcKey, svcUsed, 0).Err(); err != nil {
 		return err
 	}
 	calls, err := q.pg.TotalCallsCount(ctx, licenseID, route)
 	if err != nil {
 		return err
 	}
-	if err := q.rdb.SetNX(ctx, kCallTotal(licenseID, route), calls, 0).Err(); err != nil {
-		return err
-	}
-	q.seeded.Store(seedKey(licenseID, route), struct{}{})
-	return nil
+	return q.rdb.SetNX(ctx, callKey, calls, 0).Err()
 }
 
 func (q *Quota) getCounter(ctx context.Context, key string) (int64, error) {

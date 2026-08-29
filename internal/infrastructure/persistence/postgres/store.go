@@ -89,14 +89,14 @@ func (s *Store) FindByAppKeyWithSecret(ctx context.Context, appKey string) (*mod
 
 const ledgerCols = `id, app_key, COALESCE(version,''), COALESCE(trade_no,''), reqid, request_id,
 	COALESCE(upstream_code,''), COALESCE(busi_code,0), COALESCE(upstream_uid,''),
-	COALESCE(upstream_logid,''), state, counted_service`
+	COALESCE(upstream_logid,''), state, counted_service, from_cache`
 
 func scanLedger(row pgx.Row) (*model.Ledger, error) {
 	var l model.Ledger
 	var state string
 	err := row.Scan(&l.ID, &l.AppKey, &l.Version, &l.TradeNo, &l.Reqid, &l.RequestID,
 		&l.UpstreamCode, &l.BusiCode, &l.UpstreamUID, &l.UpstreamLogID,
-		&state, &l.CountedService)
+		&state, &l.CountedService, &l.FromCache)
 	if err != nil {
 		return nil, err
 	}
@@ -119,11 +119,11 @@ func (s *Store) FindByReqid(ctx context.Context, appKey, route, reqid string) (*
 func (s *Store) Append(ctx context.Context, l *model.Ledger) error {
 	const q = `INSERT INTO billing_ledger
 		(app_key, version, trade_no, reqid, request_id, upstream_code, busi_code,
-		 upstream_uid, upstream_logid, state, counted_service)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`
+		 upstream_uid, upstream_logid, state, counted_service, from_cache)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`
 	return s.pool.QueryRow(ctx, q,
 		l.AppKey, l.Version, l.TradeNo, l.Reqid, l.RequestID, l.UpstreamCode, l.BusiCode,
-		l.UpstreamUID, l.UpstreamLogID, string(l.State), l.CountedService,
+		l.UpstreamUID, l.UpstreamLogID, string(l.State), l.CountedService, l.FromCache,
 	).Scan(&l.ID)
 }
 

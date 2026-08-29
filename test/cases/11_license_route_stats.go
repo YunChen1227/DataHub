@@ -21,12 +21,16 @@ import (
 	"github.com/datahub/relay/test/harness"
 )
 
+// 每次查询都用一个全新的身份三要素：本用例断言 totalCalls 的**绝对值**，若复用同一
+// 身份，开启了自然月结果缓存的路由 (DESIGN §17) 会让第二次查询命中缓存、不再累计
+// totalCalls，断言就会失败。用唯一身份使本用例与缓存开关无关。
 func foundBody() map[string]string {
-	return map[string]string{"mobile": "13809091009", "idCard": "330129199109094312", "name": "张三"}
+	return harness.UniqueIdentity("共享license", "")
 }
 
+// notFoundBody 走各 mock 的查无分支 (mobile=13800000000)，其余要素仍唯一。
 func notFoundBody() map[string]string {
-	return map[string]string{"mobile": "13800000000", "idCard": "330129199109094312", "name": "张三"}
+	return harness.UniqueIdentity("共享license", "13800000000")
 }
 
 func main() {

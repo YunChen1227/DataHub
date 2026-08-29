@@ -81,6 +81,24 @@ type redisConfig struct {
 	poolSize int
 }
 
+// cacheConfig is a route's「自然月结果缓存」setting (domain/cache)。默认关闭：只有
+// 入参恰好等于缓存身份要素 (name/idCard/mobile) 的路由才允许开启，装配侧另有白名单
+// 把关 (main.go cacheableRoutes)。
+type cacheConfig struct {
+	enabled bool
+	// shareGroup 是缓存共享组，缺省 = 路由名（各路由互不共享）。x1 与 v8/v9 对接的
+	// 是不同上游产品，评分口径不保证一致，混用会把一个产品的答案当另一个返回；确认
+	// 两条路由数据等价后才可把它们的 shareGroup 配成同一个值。
+	shareGroup string
+	// pepper 是身份指纹的 HMAC 密钥。必填：没有 pepper 的指纹等于裸 SHA-256，
+	// 身份证号空间可枚举反查（cache.ErrNoPepper 会让启动直接失败）。
+	pepper string
+	// ttlJitter 是 TTL 抖动上界，避免月初海量 key 同时到期造成 Redis CPU 尖刺。
+	ttlJitter time.Duration
+	// lookupTimeout 是缓存读写的独立超时（缺省 150ms，见 redis.defaultCacheTimeout）。
+	lookupTimeout time.Duration
+}
+
 // versionConfig is the full per-version dependency config (独立上游 + 独立库 +
 // 独立 Redis)。各路由对外接口完全一致，仅靠路由名区分。upstreams 是本路由的上游
 // 子源列表：单源长度 1，多源路由长度 N。
@@ -88,6 +106,7 @@ type versionConfig struct {
 	upstreams []upstreamConfig
 	db        dbConfig
 	redis     redisConfig
+	cache     cacheConfig
 }
 
 // upstreamKind returns the route-level upstream kind (取首个子源 = 主源；决定入参
@@ -211,6 +230,15 @@ type fileRedis struct {
 	PoolSize int    `yaml:"poolSize"`
 }
 
+// fileCache mirrors a version's cache YAML block (自然月结果缓存)。
+type fileCache struct {
+	Enabled       bool     `yaml:"enabled"`
+	ShareGroup    string   `yaml:"shareGroup"`
+	Pepper        string   `yaml:"pepper"`
+	TTLJitter     duration `yaml:"ttlJitter"`
+	LookupTimeout duration `yaml:"lookupTimeout"`
+}
+
 // fileVersion mirrors one entry under versions: in config.yaml. 上游用 upstreams:
 // 列表 (单源长度 1，多源路由长度 N)；旧的单块 upstream: 仍解析以向后兼容。
 type fileVersion struct {
@@ -218,6 +246,7 @@ type fileVersion struct {
 	Upstream  fileUpstream   `yaml:"upstream"` // 向后兼容：upstreams 为空时包成单元素列表
 	Database  fileDatabase   `yaml:"database"`
 	Redis     fileRedis      `yaml:"redis"`
+	Cache     fileCache      `yaml:"cache"`
 }
 
 // fileConfig mirrors the YAML structure of config.yaml.
@@ -327,6 +356,14 @@ func loadConfig() (config, error) {
 				password: fv.Redis.Password,
 				db:       fv.Redis.DB,
 				poolSize: intOr(fv.Redis.PoolSize, 10),
+			},
+			cache: cacheConfig{
+				enabled:    fv.Cache.Enabled,
+				shareGroup: def(fv.Cache.ShareGroup, v), // 缺省各路由独立成组
+				pepper:     fv.Cache.Pepper,
+				// 12h 抖动：月初上月 key 的回收摊到半天内完成，避免集体到期打出 CPU 尖刺。
+				ttlJitter:     durOr(fv.Cache.TTLJitter, 12*time.Hour),
+				lookupTimeout: time.Duration(fv.Cache.LookupTimeout), // 0 → 适配器缺省 150ms
 			},
 		}
 	}

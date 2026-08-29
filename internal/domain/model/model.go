@@ -155,6 +155,10 @@ type Ledger struct {
 	UpstreamLogID  string
 	State          BillingState
 	CountedService bool
+	// FromCache 标记本条台账来自「自然月结果缓存」命中（未调用上游）。命中行照常
+	// 计费 (CountedService 随查得/查无)，但 UpstreamUID/LogID 是首次回源时的原值，
+	// 对账时须凭本列排除，避免把同一笔上游订单号重复报给上游。
+	FromCache bool
 }
 
 // ServiceQuotaView is the client-facing snapshot (DESIGN §5.2). 无额度限制，

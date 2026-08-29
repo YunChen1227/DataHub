@@ -7,6 +7,7 @@ import (
 	"context"
 
 	"github.com/datahub/relay/internal/common/errs"
+	"github.com/datahub/relay/internal/domain/cache"
 	"github.com/datahub/relay/internal/domain/model"
 	"github.com/datahub/relay/internal/domain/port"
 )
@@ -106,4 +107,43 @@ func (s *Service) Settle(ctx context.Context, token *ReserveToken, d *model.Bill
 		return s.ledger.UpdateState(ctx, token.LedgerID, model.StateBilled, d.Returned)
 	}
 	return s.ledger.UpdateState(ctx, token.LedgerID, model.StateUnbilled, false)
+}
+
+// SettleCached 结算一次「自然月结果缓存」命中（domain/cache）。与 Settle 的两处关键
+// 差异：
+//
+//   - **不累计调用上游次数**：命中确实没调上游。于是 serviceUsed(收入侧) 与
+//     totalCalls(成本侧) 的差额天然等于缓存替你省下的上游调用量，不必另加计数器。
+//   - **一次 INSERT 写成终态台账**，不走「先 PENDING 后 UPDATE」：命中路径不存在
+//     「上游是否已扣费未知」的窗口——结论在读到缓存那一刻就已确定，没有需要 PENDING
+//     锚点保护的崩溃窗口。顺带省掉了关键路径上那次同步 INSERT (见 orchestrator.runCore)。
+//
+// 计费口径与回源完全一致：查得(001) 计成功查得数，查无(999) 不计。台账 FromCache=true
+// 标记本行没有独立的上游订单号，对账时须排除（见 migrations/0007）。
+func (s *Service) SettleCached(ctx context.Context, lic *model.LicenseView, route, reqid, requestID string, e *cache.Entry) error {
+	if lic == nil || e == nil {
+		return errs.New(errs.BusiDataRequestErr, "无效缓存结算上下文")
+	}
+	// 计数先于台账，与 Settle 的顺序一致。
+	if e.Found() {
+		if err := s.quota.IncServiceUsed(ctx, lic.LicenseID, route); err != nil {
+			return errs.Wrap(errs.BusiDataRequestErr, "成功查得数累计失败", err)
+		}
+	}
+	l := &model.Ledger{
+		AppKey:         lic.AppKey,
+		Version:        route,
+		Reqid:          reqid,
+		RequestID:      requestID,
+		UpstreamCode:   e.Code,
+		UpstreamUID:    e.UID,
+		UpstreamLogID:  e.LogID,
+		State:          model.StateBilled,
+		CountedService: e.Found(),
+		FromCache:      true,
+	}
+	if err := s.ledger.Append(ctx, l); err != nil {
+		return errs.Wrap(errs.BusiDataRequestErr, "缓存命中台账写入失败", err)
+	}
+	return nil
 }

@@ -160,13 +160,13 @@ func (s *Store) AppendAudit(ctx context.Context, rec *model.AuditRecord) error {
 	const q = `INSERT INTO audit_log
 		(request_id, version, app_key, trade_no, reqid, client_ip, called_upstream, found_data,
 		 busi_code, busi_msg, upstream_code, upstream_uid, upstream_logid, billed,
-		 latency_ms, name_mask, id_card_mask, mobile_mask, err_msg)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		 latency_ms, name_mask, id_card_mask, mobile_mask, err_msg, from_cache)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 		RETURNING id, created_at`
 	return s.pool.QueryRow(ctx, q,
 		rec.RequestID, rec.Version, rec.AppKey, rec.TradeNo, rec.Reqid, rec.ClientIP, rec.CalledUpstream, rec.FoundData,
 		rec.BusiCode, rec.BusiMsg, rec.UpstreamCode, rec.UpstreamUID, rec.UpstreamLogID, rec.Billed,
-		rec.LatencyMs, rec.NameMask, rec.IDCardMask, rec.MobileMask, rec.ErrMsg,
+		rec.LatencyMs, rec.NameMask, rec.IDCardMask, rec.MobileMask, rec.ErrMsg, rec.FromCache,
 	).Scan(&rec.ID, &rec.CreatedAt)
 }
 
@@ -174,7 +174,7 @@ func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.A
 	q := `SELECT id, request_id, COALESCE(version,''), app_key, COALESCE(trade_no,''), COALESCE(reqid,''),
 		COALESCE(client_ip,''), called_upstream, found_data, COALESCE(busi_code,0),
 		COALESCE(busi_msg,''), COALESCE(upstream_code,''), COALESCE(upstream_uid,''),
-		COALESCE(upstream_logid,''), billed, COALESCE(latency_ms,0),
+		COALESCE(upstream_logid,''), billed, from_cache, COALESCE(latency_ms,0),
 		COALESCE(name_mask,''), COALESCE(id_card_mask,''), COALESCE(mobile_mask,''),
 		COALESCE(err_msg,''), created_at
 		FROM audit_log WHERE 1=1`
@@ -221,7 +221,7 @@ func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.A
 		var r model.AuditRecord
 		if err := rows.Scan(&r.ID, &r.RequestID, &r.Version, &r.AppKey, &r.TradeNo, &r.Reqid,
 			&r.ClientIP, &r.CalledUpstream, &r.FoundData, &r.BusiCode,
-			&r.BusiMsg, &r.UpstreamCode, &r.UpstreamUID, &r.UpstreamLogID, &r.Billed, &r.LatencyMs,
+			&r.BusiMsg, &r.UpstreamCode, &r.UpstreamUID, &r.UpstreamLogID, &r.Billed, &r.FromCache, &r.LatencyMs,
 			&r.NameMask, &r.IDCardMask, &r.MobileMask, &r.ErrMsg, &r.CreatedAt); err != nil {
 			return nil, err
 		}

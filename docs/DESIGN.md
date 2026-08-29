@@ -398,6 +398,7 @@ Quota (表 quota, 主键 (license_id, route, dim))
 | 调用次数 totalCalls | CALL | **成功调用到上游**（上游已应答查得或查无，= CalledUpstream）的累计次数 | `Settle` 时 `decision.Result != nil` → `IncTotalCalls` |
 
 - 鉴权失败 / 参数非法 / 上游连不上（PENDING 未决）**不计** totalCalls；上游应答的查无（999）**计** totalCalls 但不计 serviceUsed。
+- **自然月缓存命中**（x1/v8/v9，见 §17）：serviceUsed 口径与回源一致（查得计、查无不计），但 **totalCalls 不增**（确实没调上游）。于是两者的差额天然就是缓存省下的上游调用量。
 - 每个台账仅结算一次（同步路径或复查 worker），故计数不重复。
 - 存储：memory 内存计数；生产 Redis `quota:{licenseId}:{route}:svc_used` / `:call_total` + PG `quota` 表镜像。
 - 查询：`GET /v1/openapi/zlx/quota{X1..}` 返回 `{errorCode, errorMsg, status, serviceUsed, totalCalls}`。
@@ -672,7 +673,8 @@ requestId = ts(Base36) + "-" + clientShort(≤8) + "-" + bodyHash + "-" + core
   - `appKey`：精确匹配
   - `q`：按 uuid(appKey)/名称/手机号解析用户 → 过滤其 appKey 集合
   - `busiCode`、`limit`（默认100，最大500）、`offset`
-- 字段：`requestId, appKey, tradeNo, reqid, clientIp, calledUpstream, foundData, busiCode, busiMsg, upstreamCode, upstreamUid, upstreamLogId, billed, latencyMs, nameMask, idCardMask, mobileMask, errMsg, createdAt`
+- 字段：`requestId, appKey, tradeNo, reqid, clientIp, calledUpstream, fromCache, foundData, busiCode, busiMsg, upstreamCode, upstreamUid, upstreamLogId, billed, latencyMs, nameMask, idCardMask, mobileMask, errMsg, createdAt`
+- `fromCache=true` 的行是自然月结果缓存命中（`calledUpstream=false` 但 `billed=true`，见 §17）。
 
 ### 16.4 数据模型（`migrations/0002_admin.sql` + license 扩展）
 ```text
@@ -681,8 +683,10 @@ admin_user(id, username, password_hash, role, created_at)
 audit_log(id, request_id, version, app_key, trade_no, reqid, client_ip,
           called_upstream, found_data, busi_code, busi_msg,
           upstream_code, upstream_uid, upstream_logid, billed,
-          latency_ms, name_mask, id_card_mask, mobile_mask, err_msg, created_at)
+          latency_ms, name_mask, id_card_mask, mobile_mask, err_msg,
+          from_cache, created_at)
 -- version(=route) 列由 0003 增加；后台按路由作用域过滤操作日志（共享 license 的 v8/v9 不混淆）
+-- from_cache 列由 0007 增加（billing_ledger 同步增加），标记自然月缓存命中（§17）
 
 license 扩展字段（0001）: name, mobile, secret_created_at
 -- 无 ip_whitelist 列（v0.7 已删）
@@ -694,3 +698,75 @@ license 扩展字段（0001）: name, mobile, secret_created_at
 - `secret` 明文仅创建/轮换响应出现一次。
 - 审计与管理入参 PII 脱敏存储（`common/mask`）。
 - **不做应用层 IP 白名单**；`client_ip` 仅审计。
+
+---
+
+## 17. 自然月结果缓存（x1 / v8 / v9）
+
+同一个人（`name+idCard+mobile`）在同一自然月内的重复查询直接回放本月首查结果，跨月才重新回源上游。默认**关闭**，按路由用 `versions.<route>.cache.enabled` 开启。代码：`internal/domain/cache`（纯域逻辑）+ `redis/resultcache.go` / `memory/resultcache.go`（适配器）。
+
+### 17.1 Key / Value / TTL
+
+```
+qc:{group}:{YYYYMM}:{fingerprint}
+```
+
+- `group`：缓存共享组，缺省 = 路由名。**x1 与 v8/v9 对接的是不同上游产品**，评分口径不保证一致，默认各自独立；确认数据等价后可把两条路由的 `cache.shareGroup` 配成同一个值来共享，无需改代码。
+- `YYYYMM`：Asia/Shanghai 自然月桶（`time.FixedZone(+8)`，不依赖宿主机 tzdata）。**把月份写进 key 是这个设计的关键**：九月的查询根本不会去读八月的 key，所以「跨月必须回源」这条规则不依赖 TTL 的精确性，TTL 退化成纯粹的内存回收手段。
+- `fingerprint`：`HMAC-SHA256(pepper, name\0idCard\0mobile)` 取前 128 位 hex。必须是 HMAC 而非裸哈希——身份证号空间可枚举（出生日期+地区码+校验位），裸 SHA-256 的 Redis 快照泄露即可反查明文身份证。`pepper` 由配置注入，与 Redis 凭证分开保管；留空启动直接失败（`cache.ErrNoPepper`）。参与哈希的是 `parse.Parse` 归一化后的值。
+- Value：归一化后的 `model.UpstreamResult`（不是上游原始报文）+ 首次回源的 `requestId`，JSON 字段名压到 1-2 字符（每条要驻留一整月，字段名开销会被乘以月活去重人数）。
+- TTL = 距下个自然月 1 日 0 点的秒数 + 随机抖动（缺省 0~12h）。抖动避免几百万 key 在月初同一瞬间集体到期造成 Redis CPU 尖刺；因为月份已在 key 里，抖动期内残留的上月 key 永远不会被读到，对业务语义零影响。
+- **只缓存确定结论**：`001` 查得与 `999` 查无。上游错误、鉴权失败、参数非法一律不入缓存——这些是「结论未确定」，缓存下来会把一次偶发的上游故障固化成整月的错误答案。
+
+### 17.2 读路径
+
+`runCore` 最前面查缓存，命中则 `quota.Begin`（同步 PG INSERT）与上游调用**全部跳过**：
+
+- **命中比不带缓存更快**：省掉 1 次上游 HTTP（200ms~2s）、1 次同步 PG INSERT、1 次 PG UPDATE，只多 1 次 Redis GET（内网 0.3~1ms）。
+- **未命中只多 1 次 Redis GET**（约 +0.5ms，相对 200ms+ 的上游调用是噪声级别）。
+- **Redis 故障降级**：缓存读写走独立的短超时（缺省 150ms），**任何错误一律当作未命中**并记 warn，绝不让 Redis 抖动传导成下游请求失败或变慢。
+
+回放的字段口径：`body.uid` / `upstream_logid` 用缓存里的**原值**（对账能追回上游那笔订单），`body.reqid` 与 `head.logId` 用**本次请求**的新流水号——下游看到的流水号每次唯一，不会被下游的去重逻辑误判成重复报文。
+
+### 17.3 写路径（不占用响应耗时）
+
+复用异步记账器 `Bookkeeper`：`bookTask.cacheSet` 携带已算好的 key/entry/TTL，真正的 Redis `SETEX` 在常驻 worker 协程上执行，与响应写回 socket 并发进行。
+
+两条铁律：
+
+1. `Submit` 在队列满或已关闭时会降级为同步执行（现有的「宁可慢几毫秒也不丢计费凭证」策略）。这条路径上**主动把 `cacheSet` 置 nil**：计费凭证不能丢，缓存条目丢了只是损失一次上游调用，绝不允许它在背压时反过来拖慢响应。
+2. 入队发生在响应 flush 之前、实际写入发生在之后。这个顺序是**有意的**：万一进程此刻崩溃，宁愿缓存里留下一条客户没收到的结果（客户重试时命中，钱只收一次，上游钱已经花了），也不愿把已经付费买到的结果丢掉。
+
+### 17.4 计费口径
+
+`quota.SettleCached` 与 `Settle` 并列：
+
+| 缓存命中结论 | serviceUsed | totalCalls | 台账 |
+|---|---|---|---|
+| `001` 查得 | **+1** | 不增 | 一次 INSERT 成 `BILLED` + `counted_service=true` + `from_cache=true` |
+| `999` 查无 | 不计 | 不增 | 一次 INSERT 成 `BILLED` + `counted_service=false` + `from_cache=true` |
+
+- 对客户的计费口径与回源**完全一致**（查得计、查无不计）。
+- `totalCalls` 的语义是「调用上游次数」，命中确实没调上游，故不增。于是 `serviceUsed`（收入侧）与 `totalCalls`（成本侧）的差额天然就是缓存省下的上游调用量，不必另加计数器。
+- 台账不走「先 PENDING 后 UPDATE」两步：命中路径不存在「上游是否已扣费未知」的窗口，结论在读到缓存那一刻即确定，没有需要 PENDING 锚点保护的崩溃窗口。
+
+### 17.5 可观测性
+
+`migrations/0007_from_cache_flag.sql` 给 `billing_ledger` 与 `audit_log` 各加一列 `from_cache`。理由：命中时 `called_upstream=false` 但 `billed=true`，后台看起来像「没调上游却收了钱」的脏数据；这一列把它解释清楚，同时让「本月命中率」变成一句 SQL，也让上游对账时能一眼排除掉没有独立上游订单号的行。后台审计列表已加「走缓存」列。
+
+### 17.6 运维前提与容量
+
+- ★ **Redis `maxmemory-policy` 必须是 `volatile-lru`**。缓存 key 都带 TTL、配额计数器 `quota:*` 不带 TTL；`volatile-lru` 只淘汰带 TTL 的 key，于是内存吃紧时淘汰压力只落在缓存上，累计计数绝对安全。若误配成 `allkeys-lru`，计数器可能被淘汰后从 0 重建，客户可见的 `serviceUsed` 会静默回退。（`redis/quota.go ensure()` 已改为每次用 `EXISTS` 探活重新 seed，不再用进程内守卫，把这个隐患从「静默丢数」降级为「从 PG 镜像恢复」。）
+- 监控：`used_memory / maxmemory > 60%` 报警、`evicted_keys > 0` 报警。这是判断「什么时候真该升级实例」的客观信号。
+- 单条内存占用约 **400~500 字节**（key ≈ 44B + value ≈ 130~180B + Redis 每 key 固有开销 ≈ 64~100B）。按 x1+v8+v9 每月去重人数估算峰值：10 万→约 50MB，100 万→约 500MB，300 万→约 1.5GB，1000 万→约 5GB。**去重人数 300 万/月以内，2 核 4G 的 Redis 够用**（建议缓存占用控制在 maxmemory 的 60% 以内，给 BGSAVE/复制缓冲留头寸）。
+- PostgreSQL **不增加任何负载**：命中把每请求的 PG 写从 3 次（INSERT PENDING + UPDATE 结算 + INSERT 审计）降到 2 次（INSERT 终态台账 + INSERT 审计），且都在异步 worker 上。
+
+### 17.7 哪些路由可以开
+
+`cmd/relay/main.go` 的 `cacheableRoutes` 白名单当前只有 **x1 / v8 / v9**。缓存身份只含个人三要素，所以只有**入参恰好就是这三项**的路由才可能命中正确的条目。`rlbd1/rlbd2/sfzhy`（人像照片）、`xfjy`（授权书编号）、`tsfx`（命中级别策略 poly）等入参含额外判别字段的路由**绝不可加入**——缓存键看不见那些字段，会把「换了照片/换了策略的另一次查询」错判为同一次。`zlf/blk/lxf/grgjj` 虽同为三要素入参，但上游合约对结果复用的限制尚未逐一确认，暂不开放。配置开关 + 白名单双重把关：给白名单外的路由开启会让**启动直接失败**，而不是静默生效。
+
+### 17.8 明确不做
+
+- **并发穿透（cache stampede）**：冷 key 上同时来 N 个同一人的请求会 N 次全部回源。只影响成本不影响正确性；后续可加进程内 singleflight 收敛，先看真实命中率数据再决定。
+- **不引入 PG 缓存表**：会把关键路径上的 Redis GET（0.3ms）换成 PG 查询（几 ms），与「不增加延迟」的目标相悖；而缓存丢失的代价仅仅是一次上游调用。
+- **不做缓存主动失效 UI**：如需强制回源，删对应 Redis key 即可。

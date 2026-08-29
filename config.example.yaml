@@ -31,6 +31,17 @@
 #   - 单源路由：列表长度 1（当前所有路由均为单源）。
 #   同一路由内所有子源 kind 必须一致 (入参校验/信封按路由统一)。
 #
+# 「自然月结果缓存」按 versions.<route>.cache 配置（默认关闭，见 x1/v9/v8 的示例块）：
+# 同一人在同一自然月内的重复查询直接回放本月首查结果，跨月才回源上游。读在关键路径上
+# （1 次 Redis GET，约 0.3~1ms），写由异步记账器在响应写回后完成，故命中比回源快得多、
+# 未命中几乎无额外开销。缓存与配额计数器共用同域 Redis 逻辑库，靠 qc:* / quota:* 前缀区分。
+#   ★ 运维前提：Redis 实例的 maxmemory-policy 必须是 volatile-lru。缓存 key 都带 TTL、
+#     配额计数器不带，这样内存吃紧时淘汰压力只落在缓存上，累计计数绝不会被淘汰清零。
+#   ★ 只有入参恰好是个人三要素 (name/idCard/mobile) 的路由才允许开启，当前白名单为
+#     x1/v8/v9 (见 cmd/relay/main.go cacheableRoutes)。rlbd1/rlbd2/sfzhy(人像照片)、
+#     xfjy(授权书编号)、tsfx(命中级别策略) 等入参含额外判别字段的路由开了会返回错答案，
+#     配错路由会让启动直接失败。
+#
 # 注：durations 支持 Go 风格字符串，如 4s / 10s / 5m / 8h。
 
 # HTTP 服务监听地址
@@ -94,6 +105,17 @@ versions:
     redis:
       <<: *redis_base
       db: 0
+    cache:
+      enabled: false                          # 自然月结果缓存开关，默认关闭
+      # pepper 是身份指纹的 HMAC 密钥，启用时**必填**（留空启动直接失败）。身份证号
+      # 空间可枚举，没有 pepper 的指纹等于裸 SHA-256，Redis 快照泄露即可反查明文身份证。
+      # 建议 32 字节以上随机串，与 Redis 凭证分开保管；更换 pepper 等于全量缓存作废。
+      pepper: "REPLACE_WITH_X1_CACHE_PEPPER"
+      # shareGroup 缺省 = 路由名（各路由互不共享）。x1 与 v8/v9 对接的是不同上游产品，
+      # 评分口径不保证一致，切勿混用；确认两条路由数据等价后才可配成同一个值。
+      # shareGroup: "x1"
+      ttlJitter: "12h"                        # TTL 抖动上界，避免月初海量 key 同时到期打出 CPU 尖刺
+      lookupTimeout: "150ms"                  # 缓存读写超时；超时即按未命中回源，不拖慢下游
   # v9 是 v8v9 域的 owner：其 database/redis 即整个 v8v9 域的存储（v8 复用）。
   v9:
     upstreams:
@@ -107,6 +129,11 @@ versions:
     redis:
       <<: *redis_base
       db: 1
+    cache:
+      enabled: false
+      pepper: "REPLACE_WITH_V9_CACHE_PEPPER"
+      ttlJitter: "12h"
+      lookupTimeout: "150ms"
   # v8 与 v9 同属 v8v9 域，共用 v9 的库/Redis（同一套 license）。仅配上游；
   # database/redis 不单列，主程序按域 owner(v9) 装配存储。
   v8:
@@ -115,6 +142,13 @@ versions:
         baseURL: "REPLACE_WITH_V8_UPSTREAM_URL"
         account: "REPLACE_WITH_V8_UPSTREAM_ACCOUNT"
         key: "REPLACE_WITH_V8_UPSTREAM_KEY"
+    # v8 与 v9 缓存写在同一个 Redis 逻辑库里，但 shareGroup 缺省各为自己的路由名，
+    # 故键互不相同——v8 查询绝不会读到 v9 写的条目（两者是不同的上游产品）。
+    # lookupTimeout 取域 owner(v9) 的配置，此处只需 enabled/pepper。
+    cache:
+      enabled: false
+      pepper: "REPLACE_WITH_V8_CACHE_PEPPER"
+      ttlJitter: "12h"
   zlf:
     upstreams:
       - kind: "rental"        # zlf 对接租赁分V2-D（AES 加密 biz_data + form POST）

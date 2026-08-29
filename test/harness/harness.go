@@ -10,6 +10,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -135,9 +136,16 @@ func Call(method, path string, body any, headers map[string]string) (int, map[st
 type X1Result struct {
 	HTTPStatus int
 	ErrorCode  string // head.errorCode
+	LogID      string // head.logId (= requestId，可据此在管理端审计里定位本次请求)
+	LatencyMs  float64
 	BodyCode   string // body.code (001/999)
 	Range      string // body.result.range
-	Raw        string
+	// UID 是上游流水号。自然月缓存命中时它保持**首次回源**的原值（对账用），故
+	// uid 不变而 Reqid 变 = 一次缓存回放（mock_income 的 uid 含 reqid，可直接观测）。
+	UID string
+	// Reqid 是 body.reqid，每次请求都应唯一（缓存命中也换新值）。
+	Reqid string
+	Raw   string
 }
 
 // Query builds the信封, signs the body, optionally overrides envelope fields
@@ -157,9 +165,13 @@ func Query(version, appKey, secret string, body map[string]string, overrides map
 	r := X1Result{HTTPStatus: st, Raw: raw}
 	if head, ok := m["head"].(map[string]any); ok {
 		r.ErrorCode, _ = head["errorCode"].(string)
+		r.LogID, _ = head["logId"].(string)
+		r.LatencyMs, _ = head["time"].(float64)
 	}
 	if b, ok := m["body"].(map[string]any); ok {
 		r.BodyCode, _ = b["code"].(string)
+		r.UID, _ = b["uid"].(string)
+		r.Reqid, _ = b["reqid"].(string)
 		if res, ok := b["result"].(map[string]any); ok {
 			r.Range, _ = res["range"].(string)
 		}
@@ -218,6 +230,67 @@ func AdminLogin() (string, string) {
 // AuthHeader builds the bearer auth header map.
 func AuthHeader(token string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + token}
+}
+
+// SettleWait 等异步记账落地（结算 + 审计 + 写结果缓存都在响应写回后由 Bookkeeper
+// 的 worker 完成）。断言 /quota 计数、审计行或缓存命中前必须先等一等，否则读到的是
+// 尚未落库的中间态。可用 SETTLE_WAIT_MS 调大（慢库/跨地域时）。
+func SettleWait() {
+	ms := 500
+	if v := os.Getenv("SETTLE_WAIT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			ms = n
+		}
+	}
+	time.Sleep(time.Duration(ms) * time.Millisecond)
+}
+
+// AuditByRequestID 在某路由的管理端审计列表里按 requestId (= head.logId) 找到对应
+// 行。审计过滤器不支持按 requestId 查，故拉一页再扫。未找到返回 (nil, raw)。
+func AuditByRequestID(version, token, requestID string) (map[string]any, string) {
+	_, m, raw := Call(http.MethodGet,
+		AdminBase(version)+"/audits?limit=200", nil, AuthHeader(token))
+	rows, _ := m["audits"].([]any)
+	for _, row := range rows {
+		r, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, _ := r["requestId"].(string); id == requestID {
+			return r, raw
+		}
+	}
+	return nil, raw
+}
+
+// AuditFlag 读审计行上的布尔列 (fromCache / calledUpstream / billed / foundData)。
+func AuditFlag(row map[string]any, field string) bool {
+	if row == nil {
+		return false
+	}
+	v, _ := row[field].(bool)
+	return v
+}
+
+// UniqueIdentity 造一个本次运行独一无二的个人三要素，保证首查必然是缓存未命中
+// （自然月缓存按 name+idCard+mobile 归一后取指纹，复用旧身份会命中上一次的条目）。
+// mobile 可指定：传 "" 用随机号；传 13800000000 可命中各 mock 的「查无」分支。
+func UniqueIdentity(namePrefix, mobile string) map[string]string {
+	n := time.Now().UnixNano()
+	if mobile == "" {
+		// 138 后 8 位取纳秒时间戳低位，避开 mock 的查无专用号 13800000000。
+		mobile = "138" + fmt.Sprintf("%08d", n%100000000)
+		if mobile == "13800000000" {
+			mobile = "13800000001"
+		}
+	}
+	// 身份证前 17 位数字 + 校验位占位 X（网关只校验格式 ^\d{17}[\dX]$）。
+	idCard := fmt.Sprintf("3301291991%07dX", n%10000000)
+	return map[string]string{
+		"name":   namePrefix + strconv.FormatInt(n%1000000, 10),
+		"idCard": idCard,
+		"mobile": mobile,
+	}
 }
 
 // ShortReqid builds a unique reqid (≤20 chars) for idempotency-sensitive cases.

@@ -6,17 +6,41 @@ import (
 	"sync"
 	"time"
 
+	"github.com/datahub/relay/internal/domain/cache"
 	"github.com/datahub/relay/internal/domain/model"
 	"github.com/datahub/relay/internal/domain/port"
 	"github.com/datahub/relay/internal/domain/quota"
 )
 
-// bookTask 是一次请求响应后的记账工作单：台账结算（可选）+ 审计落库。
-// 结算与审计对构造下游响应毫无贡献，从关键路径剥离（DESIGN 异步记账）。
+// bookTask 是一次请求响应后的记账工作单：台账结算（可选）+ 审计落库 + 写结果缓存
+// （可选）。这些对构造下游响应毫无贡献，从关键路径剥离（DESIGN 异步记账）。
 type bookTask struct {
 	token    *quota.ReserveToken    // 与 decision 成对；nil = 无需结算（鉴权/参数失败、幂等重放、PENDING）
 	decision *model.BillingDecision // 上游确定结论；PENDING 场景为 nil（台账留待复查/对账结算）
 	rec      *model.AuditRecord     // 恒非 nil：每次请求都写审计
+	// cacheHit 是自然月缓存命中的结算单：命中路径没开 PENDING 台账，由记账器一次
+	// INSERT 写成终态 (quota.SettleCached)。与 token/decision 互斥。
+	cacheHit *cachedSettlement
+	// cacheSet 是回源后待写入缓存的条目。**尽力而为**：队列满降级同步时会被丢弃，
+	// 详见 Submit。
+	cacheSet *cacheWrite
+}
+
+// cachedSettlement 是一次自然月缓存命中的结算上下文（记账器补齐终态台账与计数）。
+type cachedSettlement struct {
+	lic       *model.LicenseView
+	route     string
+	reqid     string
+	requestID string
+	entry     *cache.Entry
+}
+
+// cacheWrite 是一条待写入的缓存条目：key 与 TTL 已由 cache.Policy 在关键路径上算好
+// （纯 CPU，微秒级），记账器只负责那次 Redis 往返。
+type cacheWrite struct {
+	key   string
+	entry *cache.Entry
+	ttl   time.Duration
 }
 
 // Bookkeeper 把结算 + 审计移出请求关键路径：Handle 构造完响应即入队返回，
@@ -36,6 +60,7 @@ type bookTask struct {
 type Bookkeeper struct {
 	quota *quota.Service
 	audit port.AuditRepository
+	cache port.ResultCache // 自然月结果缓存；nil 时跳过写缓存
 	log   *slog.Logger
 
 	mu     sync.RWMutex // 保护 closed 与 tasks 的发送/关闭竞态
@@ -69,6 +94,12 @@ func NewBookkeeper(q *quota.Service, audit port.AuditRepository, queueSize, work
 	return b
 }
 
+// WithResultCache 挂接结果缓存写入端。未挂接时 cacheSet 任务被忽略。
+func (b *Bookkeeper) WithResultCache(c port.ResultCache) *Bookkeeper {
+	b.cache = c
+	return b
+}
+
 // Submit 入队一个记账任务；队列满或已关闭时同步执行（背压降级，不丢任务）。
 func (b *Bookkeeper) Submit(t bookTask) {
 	b.mu.RLock()
@@ -82,6 +113,10 @@ func (b *Bookkeeper) Submit(t bookTask) {
 		}
 	}
 	b.mu.RUnlock()
+	// 降级同步路径会在**响应写回之前**执行，这里的每一次 IO 都直接加到下游看到的
+	// 耗时里。计费台账/审计不能丢，只能认这几毫秒；写缓存则直接丢弃——丢一条缓存
+	// 只是损失一次上游调用，绝不允许它在背压时反过来拖慢响应。
+	t.cacheSet = nil
 	b.process(t)
 }
 
@@ -107,6 +142,18 @@ func (b *Bookkeeper) process(t bookTask) {
 	if b.quota != nil && t.token != nil && t.decision != nil {
 		if err := b.quota.Settle(ctx, t.token, t.decision); err != nil {
 			b.log.Error("async settle failed", "reqid", t.token.Reqid, "err", err)
+		}
+	}
+	if b.quota != nil && t.cacheHit != nil {
+		h := t.cacheHit
+		if err := b.quota.SettleCached(ctx, h.lic, h.route, h.reqid, h.requestID, h.entry); err != nil {
+			b.log.Error("async cached settle failed", "reqid", h.reqid, "err", err)
+		}
+	}
+	if b.cache != nil && t.cacheSet != nil {
+		// warn 而非 error：写缓存是尽力而为，失败只意味着下次同一查询仍会回源。
+		if err := b.cache.Set(ctx, t.cacheSet.key, t.cacheSet.entry, t.cacheSet.ttl); err != nil {
+			b.log.Warn("async result cache set failed", "err", err)
 		}
 	}
 	if b.audit != nil && t.rec != nil {

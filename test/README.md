@@ -47,6 +47,8 @@ pwsh ./test/route.ps1 -Route grgjj -KeepAlive  # 起 incomeag+bgjj 双源，跑�
 - 计数类断言用"前后差值"，不依赖绝对值；demo license 的 `serviceUsed` 会随每次成功查得累计（正常现象）。
 - `06_admin_crud` 创建的临时用户用完即删。
 - 审计日志为追加写、不可回收，会随每次运行累积（报告中会注明）。
+- `22_month_cache` 与 `11_license_route_stats` 的身份三要素每次运行都随机生成，会在线上 Redis 里留下若干条本月结果缓存（每条约 500 字节，月末自动过期）。
+- ⚠️ 写新用例时注意：自然月结果缓存（DESIGN §17）按 `name+idCard+mobile` 共享，**不按 appKey 隔离**。凡是断言「调用上游次数」`totalCalls` 的用例都必须用 `harness.UniqueIdentity(...)` 造唯一身份，否则第二次查询会命中缓存而不再累计 `totalCalls`。断言 `serviceUsed` 的用例不受影响（命中照常计费）。
 
 ---
 
@@ -76,6 +78,7 @@ pwsh ./test/route.ps1 -Route grgjj -KeepAlive  # 起 incomeag+bgjj 双源，跑�
 | `22_grsb_query.go` | grsb 版本 `POST querySrmxGRSB` 全场景（背景评估 BJPG-01，AES/CBC 加密 data + accountId/prodId 请求头，**入参仅 name+idCard 且均必填、不要手机号**） | 成功 `001` 且 `result.range` 为 JSON 含 `xm`/`sfz`/`jfdw`/`grsf`/`jfjs`/`cbjfzt`/`jfsj` 全 7 字段（解密后业务对象）；查无身份证号 `000000000000000404` → `999`；缺/非法 name、idCard `505062`；多余的非法 mobile **不被拦截**（口径对齐上游参数表）；错签/未知/缺 appKey 等同 x1 | mock bgpg(:9126) 未起或 encryptKey 不匹配 → `505062` |
 | `23_sfsm_query.go` | sfsm 版本 `POST querySrmxSFSM` 全场景（身份证实名核验，form POST + `md5(appid&timestamp&app_security)` 签名，**入参仅 name+idCard 且均必填、不要手机号**） | 成功 `001` 且 `result.range` 为 JSON 含 `result`/`desc`/`sex`/`birthday`/`address`；身份证号 `000000000000000001` → 上游 `result=1` 不一致，**仍为查得 `001`**（不是 `999`）；查无身份证号 `000000000000000404` → 上游 `result=2` 无记录 → `999`；身份证号 `000000000000000603` → 上游 `code=603` 余额不足 → `505062`；缺/非法 name、idCard `505062`；多余的非法 mobile **不被拦截**（口径对齐上游参数表）；整份响应不含上游订单号 `order_no`（`range` 与 `body.uid` 均不含）；错签/未知/缺 appKey 等同 x1 | mock idcheck(:9127) 未起或 appId/appSecret 不匹配 → `505062` |
 | `11_license_route_stats.go` | v8/v9 共享 license + 路由独立统计 | v8 建的用户在 v9 可见（共享 license），同一 appKey/secret 在 v8、v9 都能鉴权；对 v8 发 2 查得+1 查无、v9 发 1 查得后：`/quotaV8` serviceUsed=2/totalCalls=3，`/quotaV9` serviceUsed=1/totalCalls=1（计数互不影响，查无也计调用次数） | income mock(:9113) 未起 → 鉴权后上游错误；计数串扰 → 断言 FAIL |
+| `22_month_cache.go` | 自然月结果缓存（DESIGN §17，在 v9 上验证） | 同一人连查两次：`totalCalls` 只 +1、`serviceUsed` +2、`range` 一致、`body.uid` 保持首查原值而 `body.reqid` 每次新生成、审计行 `fromCache=true`/`calledUpstream=false`/`billed=true`；查无(999) 同样缓存但不计费；仅换姓名即回源；v8 查询不复用 v9 的条目 | 配置未开 `versions.v9.cache.enabled` → 全部 **SKIP**（日志给出开启方法）；异步记账未及时落地 → 用 `SETTLE_WAIT_MS` 调大等待 |
 
 > 说明：所有业务接口无论成功/失败均返回 HTTP 200，错误体现在信封里的 `head.errorCode`（x1）或 `code`（v9）。
 

@@ -35,6 +35,7 @@ export default function Audits({ version }) {
     <div className="card">
       <h2>{ver} 操作记录 / 审计日志</h2>
       <p className="muted">仅展示 {ver} 路由自己的调用记录，与其它路由相互独立（v8/v9 虽共用 license，操作日志也按路由分开）。</p>
+      <p className="muted">「走缓存」= 命中自然月结果缓存：本月已查过同一人，直接回放首查结果，没有再调上游。这类行「调用上游=否」但「计费=计」，上游uid/logId 是首查时的原值，向上游对账时须排除。</p>
       <form className="toolbar" onSubmit={(e) => { e.preventDefault(); load() }}>
         <div>
           <label>检索（uuid / 名称 / 手机号）</label>
@@ -56,7 +57,7 @@ export default function Audits({ version }) {
           <thead>
             <tr>
               <th>时间</th><th>requestId(seqNo)</th><th>appKey</th><th>来源IP</th>
-              <th>调用上游</th><th>查得数据</th><th>计费</th>
+              <th>调用上游</th><th>走缓存</th><th>查得数据</th><th>计费</th>
               <th>busiCode</th><th>上游code</th><th>上游uid</th><th>上游logId</th>
               <th>耗时(ms)</th><th>入参(脱敏)</th><th>tradeNo/reqid</th><th>错误</th>
             </tr>
@@ -69,6 +70,7 @@ export default function Audits({ version }) {
                 <td>{a.appKey || '-'}</td>
                 <td>{a.clientIp || '-'}</td>
                 <td className={a.calledUpstream ? 'tag-ok' : 'tag-no'}>{a.calledUpstream ? '是' : '否'}</td>
+                <td className={a.fromCache ? 'tag-ok' : 'tag-no'}>{a.fromCache ? '是' : '否'}</td>
                 <td className={a.foundData ? 'tag-ok' : 'tag-no'}>{a.foundData ? '是' : '否'}</td>
                 <td className={a.billed ? 'tag-ok' : 'tag-no'}>{a.billed ? '计' : '不计'}</td>
                 <td>{a.busiCode}</td>
@@ -82,7 +84,7 @@ export default function Audits({ version }) {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan="15" className="muted">暂无记录</td></tr>
+              <tr><td colSpan="16" className="muted">暂无记录</td></tr>
             )}
           </tbody>
         </table>

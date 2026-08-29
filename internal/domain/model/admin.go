@@ -48,7 +48,10 @@ type AuditRecord struct {
 	UpstreamUID    string    `json:"upstreamUid"`
 	UpstreamLogID  string    `json:"upstreamLogId"`
 	Billed         bool      `json:"billed"` // 是否查得数据（计入成功查得数）
-	LatencyMs      int64     `json:"latencyMs"`
+	// FromCache 标记本次由「自然月结果缓存」命中回放（未调用上游）。它解释了
+	// calledUpstream=false 与 billed=true 同时出现的行：钱照收，只是没花上游的钱。
+	FromCache bool  `json:"fromCache"`
+	LatencyMs int64 `json:"latencyMs"`
 	NameMask       string    `json:"nameMask"`
 	IDCardMask     string    `json:"idCardMask"`
 	MobileMask     string    `json:"mobileMask"`

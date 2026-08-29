@@ -5,7 +5,9 @@ package port
 
 import (
 	"context"
+	"time"
 
+	"github.com/datahub/relay/internal/domain/cache"
 	"github.com/datahub/relay/internal/domain/model"
 )
 
@@ -26,6 +28,17 @@ type QuotaRepository interface {
 	TotalCalls(ctx context.Context, licenseID, route string) (calls int64, err error)
 	// IncTotalCalls increments the 调用上游次数 by 1 for (license, route).
 	IncTotalCalls(ctx context.Context, licenseID, route string) error
+}
+
+// ResultCache 是「自然月结果缓存」的存储端口（见 domain/cache 包注释）。键与 TTL
+// 由 cache.Policy 在域内算好，适配器只负责存取。
+//
+// 可靠性口径：缓存是**尽力而为**的旁路，任何一侧失败都不得影响请求成败——
+//   - Get 未命中返回 (nil, nil)；基础设施故障返回 error，由调用方降级为未命中。
+//   - 适配器自带短超时，绝不让 Redis 抖动传导成下游请求变慢（关键路径铁律）。
+type ResultCache interface {
+	Get(ctx context.Context, key string) (*cache.Entry, error)
+	Set(ctx context.Context, key string, e *cache.Entry, ttl time.Duration) error
 }
 
 // LedgerRepository is the append-only billing台账 store (DESIGN §11.3).

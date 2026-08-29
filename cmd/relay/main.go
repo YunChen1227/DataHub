@@ -23,6 +23,7 @@ import (
 	"github.com/datahub/relay/internal/domain/admin"
 	"github.com/datahub/relay/internal/domain/auth"
 	"github.com/datahub/relay/internal/domain/billing"
+	"github.com/datahub/relay/internal/domain/cache"
 	"github.com/datahub/relay/internal/domain/model"
 	"github.com/datahub/relay/internal/domain/parse"
 	"github.com/datahub/relay/internal/domain/port"
@@ -47,6 +48,10 @@ type domainStorage struct {
 	adminRepo   port.AdminUserRepository
 	userRepo    port.UserAdminRepository
 	secrets     port.SecretProvider
+	// resultCache 是本域的「自然月结果缓存」存储（与配额计数器共用同一个 Redis
+	// 逻辑库，靠 qc:* 前缀区分）。恒被创建，是否真正启用由各路由配置决定
+	// (buildRouteStack)；域内共享一份，故 v8/v9 不会各开一份连接池。
+	resultCache port.ResultCache
 	// auth 是本域共享的鉴权服务（license+secret 进程内缓存）。按域而非按路由建：
 	// v8/v9 共用 v8v9 域的同一实例，后台在任一路由改 license 都能命中同一份缓存
 	// 失效（admin.WithLicenseChangeHook → auth.Invalidate）。
@@ -262,7 +267,9 @@ func buildDomainStorage(ctx context.Context, cfg config, domain string, logger *
 		ds := &domainStorage{
 			licenseRepo: pg, ledgerRepo: pg, quotaRepo: rq, auditRepo: pg,
 			adminRepo: pg, userRepo: pg, secrets: secret.NewStore(pg),
-			cleanup: func() { rq.Close(); pg.Close() },
+			// 复用 Quota 已建立的连接池；超时取域 owner 路由的配置。
+			resultCache: redisq.NewResultCacheOn(rq, vc.cache.lookupTimeout),
+			cleanup:     func() { rq.Close(); pg.Close() },
 		}
 		ds.auth = auth.New(ds.licenseRepo, ds.secrets, auth.Md5Verifier{})
 		return ds, nil
@@ -272,7 +279,8 @@ func buildDomainStorage(ctx context.Context, cfg config, domain string, logger *
 		ds := &domainStorage{
 			licenseRepo: store, ledgerRepo: store, quotaRepo: store, auditRepo: store,
 			adminRepo: store, userRepo: store, secrets: secret.NewStore(store),
-			cleanup: func() {},
+			resultCache: memory.NewResultCache(),
+			cleanup:     func() {},
 		}
 		ds.auth = auth.New(ds.licenseRepo, ds.secrets, auth.Md5Verifier{})
 		return ds, nil
@@ -340,9 +348,50 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// mobile**——不能沿用三要素口径，用专属 ParseBgPG。
 		orch.WithParser(parse.ParseBgPG)
 	}
+	// 自然月结果缓存（默认关闭）：同一人在同一自然月内的重复查询直接回放本月首查
+	// 结果，跨月才回源。读在关键路径上（1 次 Redis GET），写由 Bookkeeper 在响应
+	// 写回后异步完成，故对下游耗时只有命中变快、未命中 +0.5ms 的影响。
+	if vc.cache.enabled {
+		if err := attachResultCache(orch, books, ds, route, vc.cache, log); err != nil {
+			return nil, err
+		}
+	}
 	requery := job.NewRequeryWorker(ds.ledgerRepo, ds.licenseRepo, upClient, billSvc, quotaSvc, cfg.requeryInterval, log)
 
 	return &routeStack{orch: orch, admin: adminSvc, requery: requery, books: books}, nil
+}
+
+// cacheableRoutes 是允许启用「自然月结果缓存」的路由白名单。
+//
+// 缓存身份只含个人三要素 (name/idCard/mobile)，所以只有**入参恰好就是这三项**的
+// 路由才可能命中正确的条目。rlbd1/rlbd2/sfzhy (人像照片)、xfjy (授权书编号)、
+// tsfx (命中级别策略 poly) 这类入参含额外判别字段的路由**绝不可加进来**——缓存键
+// 看不见那些字段，会把「换了照片/换了策略的另一次查询」错判成同一次，返回错答案。
+// zlf/blk/lxf/grgjj 虽同为三要素入参，但上游合约对结果复用的限制尚未逐一确认，
+// 暂不开放。配置开关 + 本白名单双重把关：配错路由会让启动直接失败而不是静默生效。
+var cacheableRoutes = map[string]bool{"x1": true, "v8": true, "v9": true}
+
+// attachResultCache 校验并装配一条路由的结果缓存（读端挂到编排器、写端挂到记账器）。
+// 任何配置问题都 fail fast：缓存配错会静默返回错数据/泄露可反查的指纹，绝不容许
+// 降级启动。
+func attachResultCache(orch *application.QueryOrchestrator, books *application.Bookkeeper,
+	ds *domainStorage, route string, cc cacheConfig, log *slog.Logger) error {
+	if !cacheableRoutes[route] {
+		return fmt.Errorf("route %s 不在结果缓存白名单内：缓存身份仅含 name/idCard/mobile，"+
+			"入参含其它判别字段的路由启用后会返回错答案 (见 cacheableRoutes)", route)
+	}
+	if ds.resultCache == nil {
+		return fmt.Errorf("route %s 启用了结果缓存但本域未装配缓存存储", route)
+	}
+	policy, err := cache.NewPolicy(def(cc.shareGroup, route), cc.pepper, cc.ttlJitter)
+	if err != nil {
+		return fmt.Errorf("route %s 结果缓存配置无效: %w", route, err)
+	}
+	orch.WithResultCache(ds.resultCache, policy)
+	books.WithResultCache(ds.resultCache)
+	log.Info("自然月结果缓存已启用", "route", route, "shareGroup", policy.Group(),
+		"ttlJitter", cc.ttlJitter, "lookupTimeout", cc.lookupTimeout)
+	return nil
 }
 
 // buildUpstreams 把一条路由的上游子源列表装配成一个 port.UpstreamPort，返回装配后的

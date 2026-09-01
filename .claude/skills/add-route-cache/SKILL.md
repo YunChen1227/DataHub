@@ -14,8 +14,7 @@ description: DataHub 为一条**已有路由**新增「自然月结果缓存」�
 
 | 类别 | 路径 |
 |---|---|
-| 对外接口手册 md | `docs/API_接口文档与使用手册*.md` |
-| 对外接口手册 PDF | `docs/API_接口文档与使用手册_*.pdf` |
+| 对外接口手册 PDF | `docs/API_接口文档与使用手册_*.pdf`（手册唯一交付物形态，docs/ 下不应存在 md/html 底稿） |
 | README 客户向段落 | README 里任何「操作手册」「对客户说明」「结果时效性」章节 |
 
 **严禁出现的措辞**（对外文档、商务话术、交付物里一律不得有）：
@@ -71,7 +70,8 @@ description: DataHub 为一条**已有路由**新增「自然月结果缓存」�
 | `rlbd1` / `rlbd2` / `sfzhy` | 人像照片 | **绝不可开**：换张照片是另一次查询，缓存键看不见 |
 | `xfjy` | 授权书编号 `authlet` | **绝不可开** |
 | `tsfx` | 命中级别策略 `poly` | **绝不可开**：换策略结果不同 |
-| `zlf` / `blk` / `lxf` / `grgjj` | 无（同为三要素） | 字段合格，但需过 0.2 |
+| `blk` | 无（同为三要素） | **绝不可开**：该路由查无也计费，与命中记账口径冲突，见 0.3 |
+| `zlf` / `lxf` / `grgjj` | 无（同为三要素） | 字段合格，但需过 0.2 与 0.3 |
 | `x1` / `v8` / `v9` | 无 | 已在白名单内 |
 
 若用户确实想给含额外字段的路由做缓存，那是**扩展缓存维度**（要把新字段纳入
@@ -95,6 +95,21 @@ description: DataHub 为一条**已有路由**新增「自然月结果缓存」�
 - 下游收入不变（`serviceUsed` 照常累计）。
 - 我方上游成本下降（`totalCalls` 不增），下降幅度 = 该路由的月内重复查询比例。
 - 见文首「对外文档禁令」——**不得向客户披露任何缓存机制**。
+
+**硬性排除：「查无也计费」的路由不得开缓存。** 命中路径按
+[cache.Entry.Found()](internal/domain/cache/cache.go) 记账，**只认 `001`**；而
+`billing.billNotFoundRoutes` 里的路由（当前 `blk`）连 `999` 也该收费。给这种路由开缓存，
+该收的查无会被重放成不收费，**账目随命中率漂移**——命中率越高亏得越多，且症状是慢性的，
+对账时很难定位。
+
+`attachResultCache` 已用 `billing.BillsNotFound(route)` 在**启动时**拒绝这种组合，往白名单
+里硬塞只会让服务起不来。若将来确实要放开，正确做法是先让缓存记账认得该路由的计费码表
+（`SettleCached` 改用 `billing.TableFor(route)` 而非 `Entry.Found()`，并补单测），
+而不是放宽白名单。判定方法：
+
+```bash
+go test ./internal/domain/billing/ -run TestTableFor_PerRouteChargeScope -v
+```
 
 ## 第 1 步：代码改动
 

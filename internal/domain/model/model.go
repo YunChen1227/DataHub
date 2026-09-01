@@ -128,12 +128,26 @@ const (
 	StateUnbilled BillingState = "UNBILLED"
 )
 
+// 上游归一码：所有上游客户端把各自的业务码归一到这三个值之一，下游 body.code
+// 直接回显。不在此列的一律是「上游侧错误」，由客户端返回 *UpstreamError。
+const (
+	CodeFound    = "001" // 查得数据
+	CodeNotFound = "999" // 查无结果（上游给出了确定结论，只是没数据）
+	CodePartial  = "002" // 部分数据源成功/失败（仅多源路由产生）
+)
+
+// IsFoundCode 报告归一码是否为「查得数据」。**这是报文形态的判据，不是计费判据**：
+// 是否计费由 billing.DecisionTable 按路由决定（blk 的查无也计费）。
+func IsFoundCode(code string) bool { return code == CodeFound }
+
 // BillingDecision is the verdict the billing engine produces.
 //   - Resolved → 上游给出了确定结论（查得或查无）→ 台账 BILLED；否则 UNBILLED。
-//   - Returned → upstream produced查得数据 (成功查得数 +1, = busiCode 10).
+//   - Returned → 本次按上游口径**应计费**（成功查得数 +1）。
 //
 // The two are kept separate so the口径 can diverge by config (DESIGN §7.4):
-// 999 查无结果 is Resolved=true, Returned=false.
+// 999 查无结果默认 Resolved=true, Returned=false——但 blk 这类上游对查无也收费的
+// 路由会把 999 也置 Returned=true (billing.TableFor)，故 Returned 不可当作
+// 「是否查得」使用，判查得请用 IsFoundCode。
 type BillingDecision struct {
 	Resolved bool
 	Returned bool
@@ -159,6 +173,21 @@ type Ledger struct {
 	// 计费 (CountedService 随查得/查无)，但 UpstreamUID/LogID 是首次回源时的原值，
 	// 对账时须凭本列排除，避免把同一笔上游订单号重复报给上游。
 	FromCache bool
+}
+
+// LedgerSettlement 是一次台账终态结算要写回的全部字段 (DESIGN §7.3 step 2)。
+//
+// 上游归一码与订单号/请求号必须随结算一起落库：
+//   - UpstreamCode 是幂等重放时判「查得还是查无」的唯一依据。不能用 CountedService
+//     代替——blk 这类路由的查无也计费，两者会分叉 (billing.TableFor)。
+//   - UpstreamUID/LogID 是向上游对账时定位那笔订单的键。缺了它们，台账只能证明
+//     「我方认为该收费」，无法证明「上游那边是哪一笔」。
+type LedgerSettlement struct {
+	State          BillingState
+	CountedService bool
+	UpstreamCode   string // 归一码 001/999/002；上游未给出结论(PENDING/失败)时为空
+	UpstreamUID    string
+	UpstreamLogID  string
 }
 
 // ServiceQuotaView is the client-facing snapshot (DESIGN §5.2). 无额度限制，

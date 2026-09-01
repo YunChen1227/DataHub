@@ -74,13 +74,18 @@ type Entry struct {
 	CachedAt     int64  `json:"t"` // 首次回源的 Unix 秒
 }
 
-// Found 报告该条目是否为「查得数据」(计入成功查得数)。
-func (e *Entry) Found() bool { return e != nil && e.Code == "001" }
+// Found 报告该条目是否为「查得数据」。
+//
+// 缓存命中的结算 (quota.SettleCached) 也用它当计费判据，这只在「查得⟺计费」的路由
+// 上成立——即 billing.DefaultTable 的口径。cacheableRoutes 白名单 (x1/v8/v9) 目前
+// 全部满足。若将来要给 blk 这类「上游对查无也收费」的路由开缓存，必须先把
+// SettleCached 的计费判据换成该路由的 billing.TableFor，否则缓存命中会漏计费。
+func (e *Entry) Found() bool { return e != nil && e.Code == model.CodeFound }
 
 // Cacheable 报告一个上游结论是否可入缓存：仅 001 查得与 999 查无属「确定结论」。
 // 其余（上游业务错误码、网络失败、PENDING）一律不缓存，见包注释铁律 3。
 func Cacheable(r *model.UpstreamResult) bool {
-	return r != nil && (r.Code == "001" || r.Code == "999")
+	return r != nil && (r.Code == model.CodeFound || r.Code == model.CodeNotFound)
 }
 
 // EntryOf 把一次回源的确定结论装成缓存条目。调用方须先用 Cacheable 判定。

@@ -127,11 +127,17 @@ func (s *Store) Append(ctx context.Context, l *model.Ledger) error {
 	).Scan(&l.ID)
 }
 
-func (s *Store) UpdateState(ctx context.Context, id int64, state model.BillingState, countedService bool) error {
+// Settle 写回终态。上游标识用 NULLIF+COALESCE 合并而非直接覆盖：复查 worker 结算一条
+// PENDING 时若上游只应答了部分字段，不该把开台账阶段已记下的标识抹成空。
+func (s *Store) Settle(ctx context.Context, id int64, st model.LedgerSettlement) error {
 	const q = `UPDATE billing_ledger
-		SET state=$2, counted_service=$3, settled_at=now()
+		SET state=$2, counted_service=$3, settled_at=now(),
+		    upstream_code=COALESCE(NULLIF($4,''), upstream_code),
+		    upstream_uid=COALESCE(NULLIF($5,''), upstream_uid),
+		    upstream_logid=COALESCE(NULLIF($6,''), upstream_logid)
 		WHERE id=$1`
-	_, err := s.pool.Exec(ctx, q, id, string(state), countedService)
+	_, err := s.pool.Exec(ctx, q, id, string(st.State), st.CountedService,
+		st.UpstreamCode, st.UpstreamUID, st.UpstreamLogID)
 	return err
 }
 

@@ -55,10 +55,19 @@ type idVerifyResponse struct {
 }
 
 // Query performs the signed JSON POST to 身份证三要素核验 and normalizes the
-// response: Code=0 → "001" 查得(计费)，Range = Data 富对象 JSON 字符串
-// (Result/ResultMessage/ImageScore；上游 Result 0–5 均为可计费的确定结论)；
-// Code≠0 → error (账户/参数/照片/系统等上游侧异常，不计费，触发 re-query/对账)。
-// 本上游无「查无」概念，不产生 "999"。
+// response 严格以上游的**权威计费标志 IsCharge** 为准 (接口文档 §3 返回结果表:
+// 「IsCharge 计费标志 本次请求是否计费 true:计费,false:不计费」)：
+//   - Code=0 且 IsCharge=true  → "001" 查得(计费)，Range = Data 富对象 JSON 字符串
+//     (Result/ResultMessage/ImageScore)。文档 §5.2 的 Result 0–5 均标「计费」，
+//     正常情况恒走此分支。
+//   - Code=0 但 IsCharge=false → "999"：上游明说本次不收费，我方也不得计费。
+//     文档未列出这种组合，出现即说明上游口径变了，落 warn 供对账排查。
+//   - Code≠0                   → error (账户/参数/照片/系统等上游侧异常，不计费，
+//     触发 re-query/对账)。文档 §4.2.2 失败示例的 IsCharge 恒为 false；若竟为
+//     true 说明上游对失败也扣了我方的费，同样落 warn 供人工对账。
+//
+// 不用 Code 推断计费：IsCharge 是上游逐笔下发的结论，Code/Result 码表只是它的
+// 文档快照，上游改口径时先变的是 IsCharge。
 func (c *IDVerifyClient) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
 	ts := time.Now().UnixMilli()
 	tsStr := strconv.FormatInt(ts, 10)
@@ -128,6 +137,10 @@ func (c *IDVerifyClient) Query(ctx context.Context, req *model.UpstreamRequest) 
 		// 401–463 客户端错误 / 501–504 服务端错误：均为我方在上游侧的账户/参数/
 		// 照片/系统问题，视为上游侧错误 (不计费)，由 orchestrator 走 re-query/对账。
 		// 失败也带上游标识(RequestId=请求号 / OutBizNo=订单号)落审计，供对账追查。
+		if ir.IsCharge {
+			slog.Warn("idverify 上游对失败请求标记了计费，我方按不计费返回，请人工对账",
+				"code", ir.Code, "outBizNo", ir.OutBizNo, "requestId", ir.RequestId, "reqid", req.Reqid)
+		}
 		msg := ir.Message
 		if ir.ErrorAddress != "" {
 			msg += " errAddr=" + ir.ErrorAddress
@@ -138,6 +151,21 @@ func (c *IDVerifyClient) Query(ctx context.Context, req *model.UpstreamRequest) 
 	uid := ir.OutBizNo
 	if uid == "" {
 		uid = ir.RequestId
+	}
+	if !ir.IsCharge {
+		// 上游给了结论却明说不收费——我方同步不计费。归一为 999 (确定结论、不计费)
+		// 而不是错误：这是一次正常应答，不该触发 re-query/对账兜底。
+		slog.Warn("idverify 上游返回 Code=0 但 IsCharge=false，按不计费归一为 999",
+			"outBizNo", ir.OutBizNo, "requestId", ir.RequestId, "reqid", req.Reqid)
+		return &model.UpstreamResult{
+			Code: model.CodeNotFound,
+			// mapping.NotFound 会把 Msg 原样写进下游 body.msg，故此处只能写对客
+			// 措辞——「上游/计费标志」这类内部归因留在上面的 warn 里。
+			Msg:   "查无核验结论",
+			UID:   uid,
+			Reqid: req.Reqid,
+			LogID: ir.RequestId,
+		}, nil
 	}
 	// LogID 恒填上游 RequestId（请求号），成功也要能在后台「上游logId」列对账追查。
 	return &model.UpstreamResult{

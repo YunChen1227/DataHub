@@ -48,8 +48,9 @@ type LedgerRepository interface {
 	FindByReqid(ctx context.Context, appKey, route, reqid string) (*model.Ledger, error)
 	// Append inserts a new PENDING ledger and back-fills the assigned ID.
 	Append(ctx context.Context, l *model.Ledger) error
-	// UpdateState settles a ledger to BILLED/UNBILLED with the 成功查得 flag.
-	UpdateState(ctx context.Context, id int64, state model.BillingState, countedService bool) error
+	// Settle 把台账推到终态 BILLED/UNBILLED，并落上游归一码与订单号/请求号
+	// (见 model.LedgerSettlement 说明)。
+	Settle(ctx context.Context, id int64, s model.LedgerSettlement) error
 	// ListByState powers the re-query worker and reconciliation job.
 	ListByState(ctx context.Context, state model.BillingState, limit int) ([]*model.Ledger, error)
 }

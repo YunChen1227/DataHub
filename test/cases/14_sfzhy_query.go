@@ -2,7 +2,8 @@
 
 // 14_sfzhy_query: sfzhy 版本 POST /v1/openapi/zlx/querySrmxSFZHY（x1 信封格式；
 // 内部对接身份证三要素核验 mock）。全场景：成功查得(富对象 JSON range)/上游
-// 错误码归一 error/鉴权与参数错误。三要素核验无「查无」概念，故不测 999。
+// 错误码归一 error/鉴权与参数错误。三要素核验本身无「查无」概念，999 只出现在
+// 「上游 IsCharge=false 明说不收费」这一条上。
 //
 // Run: go run test/cases/14_sfzhy_query.go
 package main
@@ -15,8 +16,11 @@ import (
 
 const version = "sfzhy"
 
-// 与 scripts/mock_idverify.go 约定的「上游错误」触发身份证号（合法 18 位格式）。
-const errIDCard = "000000000000000007"
+// 与 scripts/mock_idverify.go 约定的场景触发身份证号（均为合法 18 位格式）。
+const (
+	errIDCard      = "000000000000000007" // Code=461 上游错误
+	noChargeIDCard = "000000000000000015" // Code=0 但 IsCharge=false
+)
 
 func base() map[string]string {
 	return map[string]string{
@@ -39,6 +43,14 @@ func main() {
 	up["idCard"] = errIDCard
 	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, up, nil)
 	rec.Check("上游错误码归一 error", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
+
+	// 上游给了结论却把 IsCharge 置 false（明说本次不收费）→ 归一 999，不计费。
+	// IsCharge 是上游权威计费标志，不能靠 Code=0 反推收费。
+	nc := base()
+	nc["idCard"] = noChargeIDCard
+	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, nc, nil)
+	rec.Check("上游 IsCharge=false 不计费", "errorCode=0 & body.code=999",
+		r.ErrorCode == "0" && r.BodyCode == "999", r.Raw)
 
 	r = harness.Query(version, harness.AppKeyFor(version), harness.Secret, base(), map[string]any{"sign": "deadbeef"})
 	rec.Check("错误签名", "errorCode=505002 且无 body", r.ErrorCode == "505002" && r.BodyCode == "", r.Raw)

@@ -34,6 +34,40 @@ func DefaultTable() *DecisionTable {
 	}
 }
 
+// billNotFoundRoutes 列出「上游对查无也收费」的路由。绝大多数上游只对查得收费
+// （DefaultTable），但个别产品的码表把查无也标了【计费】，此时我方必须同步向下游
+// 计费，否则上游账单与我方成功查得数长期对不平（我方净亏）。
+//
+// 逐条给出文档依据，新增前必须先在上游文档里找到明确的计费标注：
+//
+//   - blk 黑名单因子V35（docs/黑名单因子V35.pdf §2.1 busiCode 表）：
+//     「10 查询成功【计费】/ 1000 未查得【计费】」——两个码都带【计费】。
+//     注意同一供应商（应诺尔 enol）的 x1 伽马分层分（docs/伽马分层分_定制版.pdf
+//     §2.1）是「10 查询成功【计费】/ 1000 数据未查得」——1000 **不带**计费标注。
+//     同端点、同信封、同 busiCode 语义，计费口径却不同，故必须按路由分别配置，
+//     不能因为"看起来一样"而复用。
+var billNotFoundRoutes = map[string]bool{
+	"blk": true,
+}
+
+// TableFor 返回某条路由的计费码表。默认只有 001 查得计费；billNotFoundRoutes 里的
+// 路由额外把 999 查无也计入计费（依据见该表的逐条文档出处）。
+//
+// 计费口径只影响「是否累计成功查得数 / 台账 counted_service」，**不影响下游报文
+// 形态**：下游看到的 body.code 恒由上游归一码决定（001 查得 / 999 查无），
+// 见 application.respondX1。两者解耦后，"查无但计费"这种上游口径才能如实落地。
+func TableFor(route string) *DecisionTable {
+	t := DefaultTable()
+	if billNotFoundRoutes[route] {
+		t.returnedCodes[model.CodeNotFound] = true
+	}
+	return t
+}
+
+// BillsNotFound 报告该路由的查无结果是否也计费。供装配期做交叉校验用（如结果缓存
+// 白名单必须与之互斥，见 cmd/relay/main.go attachResultCache）。
+func BillsNotFound(route string) bool { return billNotFoundRoutes[route] }
+
 // NewTable builds a table from explicit resolved/returned code sets (config).
 func NewTable(resolvedCodes, returnedCodes map[string]bool) *DecisionTable {
 	return &DecisionTable{

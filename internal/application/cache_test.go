@@ -64,8 +64,11 @@ func newCacheFixture(t *testing.T, route, upstreamCode string, withCache bool) *
 
 	up := &countingUpstream{code: upstreamCode}
 	q := quota.New(store, store)
+	// 计费码表按路由取，与 cmd/relay/main.go 一致——否则 blk 这类「查无也计费」的
+	// 路由在测试里会走成默认口径，测不出真实行为。
 	orch := NewQueryOrchestrator(route,
-		auth.New(store, secret.NewStore(store), auth.Md5Verifier{}), q, billing.New(nil), up, store, nil)
+		auth.New(store, secret.NewStore(store), auth.Md5Verifier{}), q,
+		billing.New(billing.TableFor(route)), up, store, nil)
 
 	f := &cacheFixture{orch: orch, store: store, quota: q, up: up, lic: lic, secret: "sec"}
 	if withCache {
@@ -152,9 +155,10 @@ func TestCacheHitSkipsUpstreamAndStillBills(t *testing.T) {
 	if r2.Body == nil || r2.Body.Code != "001" || r2.Body.Result == nil || r2.Body.Result.Range != "7" {
 		t.Fatalf("回放结果不一致: %+v", r2.Body)
 	}
-	// 3. uid/logId 用缓存原值（能追回上游那笔订单）。
-	if r2.Body.UID != r1.Body.UID {
-		t.Fatalf("回放 uid=%q, want 首查原值 %q", r2.Body.UID, r1.Body.UID)
+	// 3. body.uid 恒为**我方**本次流水号，绝不透出上游订单号（mapping.Found 铁律）；
+	//    上游原值只经台账/审计留存，见第 6、7 条。
+	if r2.Body.UID != "req-2" || r1.Body.UID != "req-1" {
+		t.Fatalf("body.uid=%q/%q, want 各自的 requestId（上游订单号不得外泄）", r1.Body.UID, r2.Body.UID)
 	}
 	// 4. reqid 每次唯一（下游去重逻辑不会误判成重复报文）。
 	if r2.Body.Reqid == "" || r2.Body.Reqid == r1.Body.Reqid {
@@ -178,6 +182,18 @@ func TestCacheHitSkipsUpstreamAndStillBills(t *testing.T) {
 	}
 	if l.State != model.StateBilled || !l.CountedService || !l.FromCache {
 		t.Fatalf("命中台账口径错: state=%s counted=%v fromCache=%v", l.State, l.CountedService, l.FromCache)
+	}
+	// 上游标识用缓存里的原值落台账——对账时凭它追回首次回源的那笔上游订单。
+	if l.UpstreamCode != "001" || l.UpstreamUID != "up-uid-1" || l.UpstreamLogID != "up-log-1" {
+		t.Fatalf("命中台账上游标识错: code=%q uid=%q logid=%q", l.UpstreamCode, l.UpstreamUID, l.UpstreamLogID)
+	}
+	// 回源行的台账同样要有上游标识（结算时写入），否则无法向上游对账。
+	l1, err := f.store.FindByReqid(context.Background(), f.lic.AppKey, "x1", r1.Body.Reqid)
+	if err != nil || l1 == nil {
+		t.Fatalf("回源未落台账: %v %v", l1, err)
+	}
+	if l1.UpstreamCode != "001" || l1.UpstreamUID != "up-uid-1" || l1.UpstreamLogID != "up-log-1" {
+		t.Fatalf("回源台账上游标识错: code=%q uid=%q logid=%q", l1.UpstreamCode, l1.UpstreamUID, l1.UpstreamLogID)
 	}
 	// 7. 审计：fromCache=true 解释了「未调上游却计费」。
 	a1, a2 := f.auditOf(t, "req-1"), f.auditOf(t, "req-2")

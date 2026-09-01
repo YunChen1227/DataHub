@@ -51,7 +51,7 @@
 
 ### 决策基线
 1. **签名**：**客户侧（下游）**采用 **appKey + MD5 加签**（对 body 业务参数按键 ASCII 升序拼接后追加 `secret`，再 MD5；见 §8.1）；**上游侧（伽马）**因是第三方服务无法修改，沿用伽马 MD5 信封加签（对 body 业务参数按键 ASCII 升序拼接后追加 `secret`，再 MD5；见 §8.2）。
-2. **成功查得数统计（v0.6）**：**仅查得数据（busiCode=10，上游 001）才计入用户的「成功查得数」**。上游查无结果（999 → busiCode 1000）、鉴权/参数拦截、我方内部错误、上游我方原因失败等一律**不计**。这是本服务唯一对客户维度的统计口径。
+2. **成功查得数统计（v0.6，口径按路由取见 §6.5）**：**默认仅查得数据（busiCode=10，上游 001）才计入用户的「成功查得数」**。上游查无结果（999 → busiCode 1000）、鉴权/参数拦截、我方内部错误、上游我方原因失败等一律**不计**。这是本服务唯一对客户维度的统计口径。**例外**：上游码表对查无也标【计费】的路由（`billing.billNotFoundRoutes`，当前只有 `blk`）连 `999` 一起计——上游照收我方的钱，不同步计费就是我方净亏。
 3. **无额度限制 + 单维度统计（v0.7）**：**不做任何次数上限拦截**，且**已彻底移除维度②上游配额/调用计数与对账作业**。台账（PENDING→BILLED/UNBILLED）与异步复查仅用于幂等与「成功查得数」结算，不再有任何上游计数或对账门槛。
 4. **无 UNKNOWN 态**：超时/无响应一律通过**幂等 re-query（按 reqid 复查）**得到确定结论，最终以**上游扣费记录**为准，因此请求结算状态只有"已计费/未计费"两种终态。
 5. **客户查询路由**：提供 `GET /v1/openapi/zlx/quota` 查询路由，返回该用户**累计成功查得数**与 license 状态（无余额/上限概念）。
@@ -69,7 +69,7 @@
 1. **协议转接**：屏蔽上游接口细节，对客户提供稳定、统一的 API 契约。
 2. **License 鉴权**：只有持有合法 license 的客户才能调用。
 3. **成功查得数统计（v0.7，单维度）**：
-   - 仅一个对客户的统计口径——**累计成功查得数**：客户调用本服务且**查得数据（busiCode=10）才计**，查无结果/错误一律不计。
+   - 仅一个对客户的统计口径——**累计成功查得数**：客户调用本服务且**查得数据（busiCode=10）才计**，查无结果/错误一律不计（按路由取，`blk` 等「上游对查无也收费」的路由连查无一起计，见 §6.5）。
    - ~~维度②（我方上游成本）~~：**已移除**（不再有上游配额、上游调用计数与对账）。
 4. **结算正确性**：
    - 通过"开台账 → 以上游确定结论结算 → 异步幂等复查"驱动 PENDING→BILLED/UNBILLED，**消除不确定态**；查得时累计成功查得数。
@@ -90,8 +90,8 @@
 | appKey | 网关分配给客户的公开标识（下游信封字段名；DB 列 `app_key`） |
 | appSecret | 客户 MD5 加签密钥（仅创建/轮换时一次性返回；DB 列 `app_secret_enc`） |
 | 上游 / Provider | 伽马分层分（《伽马分层分_定制版》PDF）经济能力数据源 |
-| 成功查得数（serviceUsed） | 客户调用本服务且**查得数据**（busiCode=10，上游 001）的**累计次数**；无上限 |
-| 查得数据（returned） | 上游查得到数据（001 → busiCode 10），是**唯一计数**条件；查无(999)不算 |
+| 成功查得数（serviceUsed） | 客户调用本服务且**计费**的**累计次数**；无上限。默认等于「查得数据」次数（busiCode=10，上游 001），`blk` 等 §6.5 例外路由还含查无 |
+| 查得数据（returned） | 计费判定位（`BillingDecision.Returned`），由 `billing.TableFor(route)` 定：默认只有 001，例外路由（blk）还含 999。**它只决定计不计费，不决定下游 `body.code`**——报文形态恒由上游归一码定，见 §7.4 |
 | re-query（幂等复查） | 超时/无响应时按 `reqid` 向上游复查的设计能力；**当前伽马 client 的 Requery 为 stub** |
 | 计费台账（billing ledger） | 记录每次请求结算状态的追加写流水（PENDING/BILLED/UNBILLED） |
 | reqid | 幂等键：x1 由本服务内部生成（≤20）；v9 由客户传入 |
@@ -355,7 +355,14 @@ sequenceDiagram
 - **归一化**：`data.busiCode 10 → UpstreamResult.Code "001"`（查得，`Range = json.Marshal(result)` 紧凑 JSON 字符串）、`1000 → "999"`（查无）、其余 busiCode（1001–1009，我方在应诺尔侧的账户/参数/系统问题）→ 视为上游侧错误：不计费，交由 re-query/对账兜底。
 - **富对象 → 单字符串**：下游 `result.range` 只有单字符串，故将上游 `result` 整体 `json.Marshal` 为紧凑 JSON 字符串写入 `UpstreamResult.Range`，经下游 `result.range` 原样透出，客户自行 `JSON.parse`。
 - **字段映射**：客户 `mobile → mobile`、`idCard → idCard`、`name → name`（`encryptionType=2` 时取 MD5 后入 body）；`appId/secret/apiKey/encryptionType` 为我方与上游凭证/约定，存于服务端安全配置（YAML）。
-- **计数口径**：与 §6.3 一致——上游对 `1000`（未查得）亦计费，但本服务统一**仅 `busiCode=10`（归一 001）计入成功查得数**，`1000→999` 不计。`billing`/`quota` 共享逻辑无需改动。
+- **计数口径（与 §6.3 不同，已按上游对齐）**：黑名单因子V35 文档 §2.1 把
+  **`10 查询成功【计费】` 与 `1000 未查得【计费】` 双双标了计费**——上游对未查得
+  照样收我方的钱，故本服务对 blk 的 `1000→999` **也计入成功查得数**。实现方式是
+  `billing.TableFor("blk")` 把 `999` 加进 returnedCodes（登记表见
+  `billing.billNotFoundRoutes`），**不是**把归一码改成 001：下游必须照常看到
+  `body.code=999`（查无就是查无），计费与报文形态在此处必然分叉。
+  注意同为应诺尔 enol、同端点同 busiCode 语义的 **x1（伽马）`1000` 不带计费标注、
+  不计费**——逐产品看文档，禁止复用兄弟路由的结论。详见 `billing-scope` skill。
 
 ---
 
@@ -394,10 +401,10 @@ Quota (表 quota, 主键 (license_id, route, dim))
 
 | 统计 | dim | 计的是什么 | 计数时机 |
 |---|---|---|---|
-| 成功查得数 serviceUsed | SERVICE | 客户调用且**查得数据**（busiCode=10）的累计次数 | `Settle` 时 `Returned=true` → `IncServiceUsed` |
+| 成功查得数 serviceUsed | SERVICE | 客户调用且**计费**的累计次数（默认=查得数据 busiCode=10；`blk` 等 §6.5 例外路由还含查无） | `Settle` 时 `Returned=true` → `IncServiceUsed`，`Returned` 由 `billing.TableFor(route)` 定 |
 | 调用次数 totalCalls | CALL | **成功调用到上游**（上游已应答查得或查无，= CalledUpstream）的累计次数 | `Settle` 时 `decision.Result != nil` → `IncTotalCalls` |
 
-- 鉴权失败 / 参数非法 / 上游连不上（PENDING 未决）**不计** totalCalls；上游应答的查无（999）**计** totalCalls 但不计 serviceUsed。
+- 鉴权失败 / 参数非法 / 上游连不上（PENDING 未决）**不计** totalCalls；上游应答的查无（999）**计** totalCalls，是否计 serviceUsed 按路由取（默认不计，`blk` 计——见 §6.5）。
 - **自然月缓存命中**（x1/v8/v9，见 §17）：serviceUsed 口径与回源一致（查得计、查无不计），但 **totalCalls 不增**（确实没调上游）。于是两者的差额天然就是缓存省下的上游调用量。
 - 每个台账仅结算一次（同步路径或复查 worker），故计数不重复。
 - 存储：memory 内存计数；生产 Redis `quota:{licenseId}:{route}:svc_used` / `:call_total` + PG `quota` 表镜像。
@@ -426,9 +433,15 @@ stateDiagram-v2
 ### 7.4 上游伽马 busiCode → 客户响应
 | 伽马 busiCode | 含义 | 归一化 Code | 客户 busiCode | serviceUsed |
 |---|---|---|---|---|
-| 10 | 查询成功 | 001 | 10 | +1 |
-| 1000 | 数据未查得 | 999 | 1000 | 0 |
+| 10 | 查询成功【计费】 | 001 | 10 | +1 |
+| 1000 | 数据未查得（无计费标注） | 999 | 1000 | 0 |
 | 其它 | 我方伽马账户/参数/系统问题 | - | 1007 | 0 |
+
+> **归一码与计费口径是两件事**：上表最后一列是 x1 的口径，不通用。归一码只描述
+> "有没有数据"（决定 `body.code`），是否计费由**该路由的**计费码表
+> `billing.TableFor(route)` 决定。目前只有 blk 例外（其上游对未查得也收费，
+> `999` 照样 `serviceUsed+1`，但 `body.code` 仍是 `999`）。**全部 14 条路由的
+> 逐码计费口径与文档出处，见 `billing-scope` skill——改任何一条前先读它。**
 
 ### 7.5 并发与原子性
 - **serviceUsed 递增**必须原子：Redis `INCR` + PG 写回（生产）；memory 单 mutex（开发）。
@@ -627,7 +640,10 @@ requestId = ts(Base36) + "-" + clientShort(≤8) + "-" + bodyHash + "-" + core
 
 ### 15.1 仍待联调
 1. `encryptionType` 是否需要支持**密文**（本期仅明文 `1`；非 1 暂按 `1007` 处理）。
-2. 上游对 `999 查无结果` 的**实际扣费口径**（以上游为准；据此校准 §7.4）。
+2. ~~上游对 `999 查无结果` 的**实际扣费口径**~~ —— **已按各上游文档逐条核定**，
+   结论固化在 `billing.TableFor` 与 `billing-scope` skill 的权威表里。仅剩三处
+   缺上游书面口径待确认：**bgjj**（备用公积金，文档无码表）、**sfsm**（idcheck，
+   该源文档未落到本仓 `docs/`）、**tsfx**（投诉分析，状态码字典无计费列）。
 3. 上游是否提供**对账文件 / 单笔查询（按 reqid 复查）接口**及其格式 —— 这是消除不确定态与对账兜底的前提。
 4. 伽马上游联调参数：正式/测试`域名`、`appId/secret`、`apiKey`；reqid 由本服务内部生成（≤20 位）。
 5. 各 `busiCode` 与上游 code 的最终映射（特别是我方原因失败是否细分到 1002/1005 等）。
@@ -747,6 +763,7 @@ qc:{group}:{YYYYMM}:{fingerprint}
 | `999` 查无 | 不计 | 不增 | 一次 INSERT 成 `BILLED` + `counted_service=false` + `from_cache=true` |
 
 - 对客户的计费口径与回源**完全一致**（查得计、查无不计）。
+- **缓存白名单与「查无也计费」的路由必须互斥**：上表按 `cache.Entry.Found()` 记账，只认 `001`。若给 `blk` 这类 §6.5 路由开缓存，该收费的查无会被重放成不收费，账目随命中率漂移。`attachResultCache` 用 `billing.BillsNotFound(route)` 在启动时拒绝这种组合；将来要放开，得先让命中路径认得该路由的计费码表，而不是只放宽白名单。
 - `totalCalls` 的语义是「调用上游次数」，命中确实没调上游，故不增。于是 `serviceUsed`（收入侧）与 `totalCalls`（成本侧）的差额天然就是缓存省下的上游调用量，不必另加计数器。
 - 台账不走「先 PENDING 后 UPDATE」两步：命中路径不存在「上游是否已扣费未知」的窗口，结论在读到缓存那一刻即确定，没有需要 PENDING 锚点保护的崩溃窗口。
 

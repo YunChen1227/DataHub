@@ -300,7 +300,7 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 
 	authSvc := ds.auth // 域级共享（含 license 缓存；v8/v9 同域同缓存）
 	quotaSvc := quota.New(ds.quotaRepo, ds.ledgerRepo)
-	billSvc := billing.New(billing.DefaultTable())
+	billSvc := billing.New(billing.TableFor(route)) // 计费口径按路由取，与该路由上游码表一致
 	adminSvc := admin.New(route, ds.adminRepo, ds.userRepo, ds.auditRepo, admin.Config{
 		JWTSecret: cfg.adminJWTSecret,
 		TokenTTL:  cfg.adminTokenTTL,
@@ -382,6 +382,13 @@ func attachResultCache(orch *application.QueryOrchestrator, books *application.B
 	}
 	if ds.resultCache == nil {
 		return fmt.Errorf("route %s 启用了结果缓存但本域未装配缓存存储", route)
+	}
+	// 「查无也计费」的路由不能走结果缓存：命中路径按 cache.Entry.Found() 记账，只认
+	// 001，会把该收费的查无重放成不收费，账目随缓存命中率漂移。两张表哪天有交集都
+	// 必须先让缓存记账认得该路由的计费码表，再放开。
+	if billing.BillsNotFound(route) {
+		return fmt.Errorf("route %s 的查无结果计费，暂不支持结果缓存："+
+			"命中记账走 cache.Entry.Found() 只认 001，会漏计查无 (见 quota.SettleCached)", route)
 	}
 	policy, err := cache.NewPolicy(def(cc.shareGroup, route), cc.pepper, cc.ttlJitter)
 	if err != nil {

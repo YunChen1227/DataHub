@@ -200,14 +200,26 @@ func (s *Store) Append(_ context.Context, l *model.Ledger) error {
 	return nil
 }
 
-func (s *Store) UpdateState(_ context.Context, id int64, state model.BillingState, countedService bool) error {
+func (s *Store) Settle(_ context.Context, id int64, st model.LedgerSettlement) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if l := s.ledgerByID[id]; l != nil {
-		l.State = state
-		l.CountedService = countedService
+	l := s.ledgerByID[id]
+	if l == nil {
+		return nil
 	}
+	l.State = st.State
+	l.CountedService = st.CountedService
+	// 空值不覆盖，与 postgres 的 COALESCE(NULLIF(...)) 同语义。
+	setIfNonEmpty(&l.UpstreamCode, st.UpstreamCode)
+	setIfNonEmpty(&l.UpstreamUID, st.UpstreamUID)
+	setIfNonEmpty(&l.UpstreamLogID, st.UpstreamLogID)
 	return nil
+}
+
+func setIfNonEmpty(dst *string, v string) {
+	if v != "" {
+		*dst = v
+	}
 }
 
 func (s *Store) ListByState(_ context.Context, state model.BillingState, limit int) ([]*model.Ledger, error) {

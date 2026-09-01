@@ -4,9 +4,10 @@
 // for sfzhy full-link testing. Run: go run scripts/mock_idverify.go
 //
 // Verifies signature = SHA256(升序 "k=v&k=v..." + "&AppSecret=" + 商户密钥), then:
-//   - bad sign / appId       -> Code 405 / 404 (IsCharge=false -> 网关 505062)
-//   - idcard == errIDCard    -> Code 461 请求照片大小不符合要求 (IsCharge=false)
-//   - otherwise              -> Code 0 + Data{Result,ResultMessage,ImageScore}
+//   - bad sign / appId          -> Code 405 / 404 (IsCharge=false -> 网关 505062)
+//   - idcard == errIDCard       -> Code 461 请求照片大小不符合要求 (IsCharge=false)
+//   - idcard == noChargeIDCard  -> Code 0 但 IsCharge=false (上游不收费 -> 归一 999)
+//   - otherwise                 -> Code 0 + IsCharge=true + Data{Result,ResultMessage,ImageScore}
 package main
 
 import (
@@ -41,6 +42,9 @@ func main() {
 	appSecret := env("SFZHY_APP_SECRET", "demo-sfzhy-secret")
 	// 约定「上游错误」触发用身份证号（合法 18 位格式），驱动 Code=461 场景。
 	errIDCard := env("SFZHY_ERR_IDCARD", "000000000000000007")
+	// 驱动「Code=0 但 IsCharge=false」场景：上游给了结论却明说不收费，我方须归一
+	// 为 999 不计费（接口文档 §3 IsCharge 是权威计费标志）。
+	noChargeIDCard := env("SFZHY_NOCHARGE_IDCARD", "000000000000000015")
 
 	http.HandleFunc("/api/idCardThreeElements", func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -89,6 +93,12 @@ func main() {
 			resp = map[string]any{"Code": 405, "Message": "签名校验错误", "IsCharge": false, "ErrorAddress": "00000", "RequestId": "sfzhy-mock-405"}
 		case req.IDCard == errIDCard:
 			resp = map[string]any{"Code": 461, "Message": "请求照片大小不符合要求", "IsCharge": false, "ErrorAddress": "00000", "RequestId": "sfzhy-mock-461"}
+		case req.IDCard == noChargeIDCard:
+			resp = map[string]any{
+				"Code": 0, "Message": "请求成功", "IsCharge": false, "OutBizNo": req.OutBizNo,
+				"Data":      map[string]any{"Result": 3, "ResultMessage": "库中无人像信息", "ImageScore": 0},
+				"RequestId": "sfzhy-mock-nocharge",
+			}
 		default:
 			resp = map[string]any{
 				"Code":     0,

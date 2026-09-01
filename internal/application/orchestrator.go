@@ -307,7 +307,11 @@ func (o *QueryOrchestrator) cacheLookup(ctx context.Context, key string, log *sl
 }
 
 // respondX1 maps a queryOutcome to the x1 head/body response (DESIGN §6.2/§7.4):
-// 查得→body.code 001(累计成功查得数), 查无→body.code 999, 其余→head.errorCode.
+// 查得→body.code 001, 查无→body.code 999, 其余→head.errorCode.
+//
+// 报文形态只看**上游归一码**，不看计费口径：是否累计成功查得数由 decision.Returned
+// 决定，两者在 blk 这类「上游对查无也收费」的路由上必然分叉 (billing.TableFor)。
+// 早期版本用 Returned 兼作分支条件，会把这类路由的查无错报成查得。
 func (o *QueryOrchestrator) respondX1(out queryOutcome, requestID string, rec *model.AuditRecord, latencyMs int64) *model.QueryResponse {
 	switch {
 	case out.cached != nil:
@@ -321,11 +325,11 @@ func (o *QueryOrchestrator) respondX1(out queryOutcome, requestID string, rec *m
 	}
 	d := out.decision
 	switch {
-	case d.Resolved && d.Returned && d.Result != nil:
+	case d.Resolved && model.IsFoundCode(codeOf(d.Result)):
 		rec.BusiCode = int(errs.BusiSuccess)
 		rec.BusiMsg = "success"
 		return mapping.Found(d.Result, requestID, latencyMs)
-	case d.Resolved && !d.Returned:
+	case d.Resolved:
 		rec.BusiCode = int(errs.BusiNotFound)
 		rec.BusiMsg = "查无结果"
 		return mapping.NotFound(d.Result, requestID, latencyMs)
@@ -354,15 +358,31 @@ func (o *QueryOrchestrator) replayCached(e *cache.Entry, reqid, requestID string
 	return mapping.NotFound(r, requestID, latencyMs)
 }
 
+// codeOf 取上游归一码，result 为空时回空串（走查无分支）。
+func codeOf(r *model.UpstreamResult) string {
+	if r == nil {
+		return ""
+	}
+	return r.Code
+}
+
 // replay reconstructs a response from an already-BILLED ledger. The full result
 // body is not cached yet, so a查得数据 replay echoes body.code 001 with an empty
 // range (TODO: cache the full result keyed by reqid for byte-identical replays).
+//
+// 分支依据是台账里的**上游归一码**而非 counted_service：blk 这类路由的查无也计费，
+// 用计费标志分支会把重放报文从 999 错升成 001（老台账没有 upstream_code 时才退回
+// counted_service）。
 func (o *QueryOrchestrator) replay(l *model.Ledger, requestID string, rec *model.AuditRecord, latencyMs int64) *model.QueryResponse {
 	// 幂等重放也回填台账里的上游标识，保证「上游uid/上游logId」列不因命中缓存而空。
 	rec.CalledUpstream = true
 	rec.UpstreamUID = l.UpstreamUID
 	rec.UpstreamLogID = l.UpstreamLogID
-	if l.CountedService {
+	found := l.CountedService
+	if l.UpstreamCode != "" {
+		found = model.IsFoundCode(l.UpstreamCode)
+	}
+	if found {
 		rec.BusiCode = int(errs.BusiSuccess)
 		rec.BusiMsg = "success"
 		// 不传 UID：上游订单号只进上面的审计字段，body.uid 由 mapping 填我方流水号。

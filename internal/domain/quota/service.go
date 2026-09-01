@@ -98,15 +98,19 @@ func (s *Service) Settle(ctx context.Context, token *ReserveToken, d *model.Bill
 			return errs.Wrap(errs.BusiDataRequestErr, "调用次数累计失败", err)
 		}
 	}
+	st := model.LedgerSettlement{State: model.StateUnbilled}
+	if d.Result != nil {
+		st.UpstreamCode, st.UpstreamUID, st.UpstreamLogID = d.Result.Code, d.Result.UID, d.Result.LogID
+	}
 	if d.Resolved {
 		if d.Returned {
 			if err := s.quota.IncServiceUsed(ctx, token.LicenseID, token.Route); err != nil {
 				return errs.Wrap(errs.BusiDataRequestErr, "成功查得数累计失败", err)
 			}
 		}
-		return s.ledger.UpdateState(ctx, token.LedgerID, model.StateBilled, d.Returned)
+		st.State, st.CountedService = model.StateBilled, d.Returned
 	}
-	return s.ledger.UpdateState(ctx, token.LedgerID, model.StateUnbilled, false)
+	return s.ledger.Settle(ctx, token.LedgerID, st)
 }
 
 // SettleCached 结算一次「自然月结果缓存」命中（domain/cache）。与 Settle 的两处关键

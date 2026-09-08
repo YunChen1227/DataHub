@@ -210,10 +210,20 @@ func ParseIDCheck(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	return parseNameIDCard(cmd)
 }
 
+// ParseIDRisk 校验 sffx (身份风险V107) 入参。字段口径严格对齐上游参数表
+// (docs/身份风险V107.pdf §2.2 body 参数说明)：业务字段只有 name(姓名) 与
+// idCard(身份证) 两项且**均标必填、没有 mobile**；第三项 tradeNo(业务单号) 标
+// **选填**，本网关不透传（下游 x1 契约无业务单号字段，见 upstream/idrisk.go 注释），
+// 故不纳入校验。appId/sign/apiKey/encryptionType 属协议字段，由上游客户端填充，
+// 非下游入参。失败返回 busiCode 1007 数据请求异常 (我方拦截，不调上游/不计费)。
+func ParseIDRisk(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+	return parseNameIDCard(cmd)
+}
+
 // parseNameIDCard 是「name + idCard 两项均必填、无 mobile」口径的共用实现。
-// 目前 grsb(bgpg) 与 sfsm(idcheck) 两条上游的参数表恰好同口径；若将来某一条
-// 上游放宽/收紧（如接受 15 位身份证号），把该路由的导出入口改为独立实现即可，
-// 不要在此处按路由分支——校验口径必须逐条上游对着文档来。
+// 目前 grsb(bgpg)、sfsm(idcheck) 与 sffx(idrisk) 三条上游的参数表恰好同口径；
+// 若将来某一条上游放宽/收紧（如接受 15 位身份证号），把该路由的导出入口改为独立
+// 实现即可，不要在此处按路由分支——校验口径必须逐条上游对着文档来。
 func parseNameIDCard(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	if cmd == nil {
 		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")

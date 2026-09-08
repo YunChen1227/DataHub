@@ -261,15 +261,19 @@ type RangeResult struct {
 // sfsm 转接身份证实名核验 (idcheck 上游，数脉 id_card/check，与 rlbd1/rlbd2 同一
 // 服务商同一套签名：form POST + sign=md5(appid&timestamp&app_security)，入参仅
 // name+idCard 两项均必填 (无 mobile)，响应 data 的 {result,desc,sex,birthday,address}
-// 经 result.range 透出、result 0 一致/1 不一致均为收费结论，见 upstream/idcheck.go)。
+// 经 result.range 透出、result 0 一致/1 不一致均为收费结论，见 upstream/idcheck.go)；
+// sffx 转接身份风险V107 (idrisk 上游，应诺尔 enol，与 x1/blk 同端点同信封：JSON POST
+// + apiKey=idRiskTagV107、encryptionType=2 (PII 走 MD5)，入参仅 name+idCard 两项
+// 均必填 (无 mobile)，响应 result 富对象 {detail:[风险类型码+周期码]} 序列化经
+// result.range 透出；busiCode 10 查得 / 1000 未查得**均计费**，见 upstream/idrisk.go)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -313,6 +317,8 @@ func DemoAppKey(route string) string {
 		return "y890grsb"
 	case "sfsm":
 		return "y890sfsm"
+	case "sffx":
+		return "y890sffx"
 	default:
 		return "demo-" + route
 	}

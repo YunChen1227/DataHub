@@ -347,6 +347,11 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// grsb 背景评估 BJPG-01：请求体参数表只有 idCard+name 两项且均必填，**不含
 		// mobile**——不能沿用三要素口径，用专属 ParseBgPG。
 		orch.WithParser(parse.ParseBgPG)
+	case upstream.ProviderIDRisk:
+		// sffx 身份风险V107：body 参数表只有 name+idCard 两项必填 + tradeNo 选填，
+		// **不含 mobile**——虽与兄弟路由 blk 同端点同信封，入参集合却不同，
+		// 不能沿用 blk 的三要素口径，用专属 ParseIDRisk。
+		orch.WithParser(parse.ParseIDRisk)
 	}
 	// 自然月结果缓存（默认关闭）：同一人在同一自然月内的重复查询直接回放本月首查
 	// 结果，跨月才回源。读在关键路径上（1 次 Redis GET），写由 Bookkeeper 在响应
@@ -528,6 +533,18 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 		return client, nil
 	case upstream.ProviderBlacklist:
 		client := upstream.NewBlacklist(upstream.BlacklistConfig{
+			BaseURL:        uc.baseURL,
+			AppID:          uc.appID,
+			Secret:         uc.appSecret,
+			APIKey:         uc.apiKey,
+			EncryptionType: uc.encryptionType,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderIDRisk:
+		// sffx 身份风险V107 (应诺尔 enol)：与 blk/x1 同端点同信封，
+		// appID=appId、appSecret=secret、apiKey 缺省 idRiskTagV107、
+		// encryptionType 缺省 2 (name/idCard 取 MD5 摘要)。
+		client := upstream.NewIDRisk(upstream.IDRiskConfig{
 			BaseURL:        uc.baseURL,
 			AppID:          uc.appID,
 			Secret:         uc.appSecret,

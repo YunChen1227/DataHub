@@ -39,10 +39,12 @@ func TestDecide_BillingScope(t *testing.T) {
 // TestTableFor_PerRouteChargeScope 钉住「哪条路由对查无也收费」。这张表直接对应
 // 上游文档里的计费标注，改动前必须先回文档核对：
 //   - docs/黑名单因子V35.pdf §2.1：10 查询成功【计费】/ 1000 未查得【计费】
+//   - docs/身份风险V107(1).pdf §1.6：10 查询成功【计费】/ 1000 数据未查得【计费】
 //   - docs/伽马分层分_定制版.pdf §2.1：10 查询成功【计费】/ 1000 数据未查得（不计费）
 //
-// 两者是同一供应商的同一端点、同一 busiCode 语义，唯独计费口径不同——最容易被
-// "看起来一样就复用"的直觉改错，故单列测试。
+// 三者是同一供应商（应诺尔 enol）的同一端点、同一 busiCode 语义，唯独计费口径不同
+// （blk/sffx 的查无收费，x1 的不收）——最容易被"看起来一样就复用"的直觉改错，
+// 故单列测试。
 func TestTableFor_PerRouteChargeScope(t *testing.T) {
 	cases := []struct {
 		route        string
@@ -52,6 +54,8 @@ func TestTableFor_PerRouteChargeScope(t *testing.T) {
 	}{
 		{"blk", "001", true, "黑名单 10 查询成功【计费】"},
 		{"blk", "999", true, "黑名单 1000 未查得【计费】"},
+		{"sffx", "001", true, "身份风险V107 10 查询成功【计费】"},
+		{"sffx", "999", true, "身份风险V107 1000 数据未查得【计费】"},
 		{"x1", "001", true, "伽马 10 查询成功【计费】"},
 		{"x1", "999", false, "伽马 1000 数据未查得，文档未标计费"},
 		{"zlf", "999", false, "租赁分 SW0002 查无记录 不收费"},

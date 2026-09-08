@@ -74,13 +74,13 @@ func (c *BlacklistClient) Query(ctx context.Context, req *model.UpstreamRequest)
 	// body 只放产品文档定义的业务参数 (非空才放); encryptionType=2 时对 PII 取 MD5。
 	body := map[string]string{}
 	if req.Name != "" {
-		body["name"] = c.encodePII(req.Name)
+		body["name"] = encodePII(req.Name, c.cfg.EncryptionType)
 	}
 	if req.IDCard != "" {
-		body["idCard"] = c.encodePII(req.IDCard)
+		body["idCard"] = encodePII(req.IDCard, c.cfg.EncryptionType)
 	}
 	if req.Mobile != "" {
-		body["mobile"] = c.encodePII(req.Mobile)
+		body["mobile"] = encodePII(req.Mobile, c.cfg.EncryptionType)
 	}
 	env := gamaEnvelope{
 		EncryptionType: c.cfg.EncryptionType,
@@ -163,9 +163,10 @@ func (c *BlacklistClient) Requery(ctx context.Context, reqid string) (*model.Req
 }
 
 // encodePII MD5-hashes a PII value (小写 hex) when encryptionType=2 (应诺尔 PDF §1.4);
-// 明文模式 (1) 原样返回。
-func (c *BlacklistClient) encodePII(v string) string {
-	if c.cfg.EncryptionType != 2 {
+// 明文模式 (1) 原样返回。应诺尔 enol 系各产品 (blk 黑名单因子V35 / sffx 身份风险V107)
+// 共用同一套加密类型约定，故提在包级供各 client 复用。
+func encodePII(v string, encryptionType int) string {
+	if encryptionType != 2 {
 		return v
 	}
 	sum := md5.Sum([]byte(v))

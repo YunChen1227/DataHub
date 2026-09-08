@@ -16,4 +16,5 @@ const (
 	ProviderBgJJ        = "bgjj"        // grgjj: 备用公积金源 (jeoho，串行寻源的低优先级备源)
 	ProviderBgPG        = "bgpg"        // grsb: 背景评估 BJPG-01
 	ProviderIDCheck     = "idcheck"     // sfsm: 身份证实名核验 (数脉 id_card/check)
+	ProviderIDRisk      = "idrisk"      // sffx: 身份风险V107 (应诺尔 enol，同 gama/blacklist 端点)
 )

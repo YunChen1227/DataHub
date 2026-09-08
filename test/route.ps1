@@ -171,6 +171,19 @@ $routeMap = @{
         appSecret: "demo-sfsm-secret"
 '@
     }
+    "sffx" = @{
+        mocks = @(@{ name = "mock_idrisk"; port = 9128 })
+        # 应诺尔 enol 同一套信封（与 x1/blk 同端点路径）：apiKey 固定 idRiskTagV107、
+        # encryptionType=2 时 name/idCard 取 MD5 摘要后入 body 加签。
+        yaml  = @'
+      - kind: "idrisk"
+        baseURL: "http://127.0.0.1:9128/enol/api/v1/doCheck"
+        appId: "demo-sffx-appid"
+        appSecret: "demo-sffx-secret"
+        apiKey: "idRiskTagV107"
+        encryptionType: 2
+'@
+    }
 }
 
 $Route = $Route.Trim().ToLower()

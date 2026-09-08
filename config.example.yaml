@@ -7,10 +7,12 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM
-#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM
-# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb / sfsm 各域独占一套 DB + Redis 逻辑库。
+# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb / sfsm / sffx 各域独占一套 DB + Redis 逻辑库。
+# ★ Redis 逻辑库已用到 db15——标准 Redis 只有 0~15 共 16 个库，**下一条新路由需要先扩容
+#   databases 配置或换实例**，不要复用已占用的编号（启动防呆校验会直接拒绝）。
 # v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
 # 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
 # 跨域使用 license 一律鉴权失败。启动时会做防呆校验：两个不同的域配置同一个数据库
@@ -26,6 +28,7 @@
 # grgjj 转接收入A_g版 (yrzx)：JSON POST + data 走 3DES/ECB/PKCS5+base64 加密、verify=MD5(account+加密前JSON串+reqid+type+key) 大写，name/cid/mobile 入参；响应 result 为 3DES 密文，解密得 {cbjfzt,jfjs,jfsj} 经 result.range 透出；code 001 查得计费 / 999 查无 / 其余(002/003/004/…)上游侧错误。
 # grsb 转接背景评估 BJPG-01：JSON POST {data} + data 走 AES/CBC/PKCS5+base64 加密（密钥=encryptKey 的 hex 解码值，IV 固定 16 个 ASCII 字符 "0000000000000000"），请求头带 accountId/prodId；入参仅 idCard+name 两项均必填（**无 mobile**）；响应 data 为同一套 AES 密文，解密得 {xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj} 全字段经 result.range 透出；code 200 查得计费 / 2-404 与 3-404 查无 / 其余(2-5xx、3-5xx)上游侧错误不计费。
 # sfsm 转接身份证实名核验 (数脉 id_card/check，与 rlbd1/rlbd2 同服务商同签名)：form POST + sign=md5(appid&timestamp&app_security)，入参仅 name+idCard 两项均必填（**无 mobile**）；响应 data 的 {result,desc,sex,birthday,address} 经 result.range 透出、order_no 只落审计；result 0 一致 / 1 不一致 均为收费结论(001) / 2 无记录查无(999) / code≠200 上游侧错误不计费。
+# sffx 转接身份风险V107 (应诺尔 enol，与 x1/gama、blk/blacklist 同端点同信封)：apiKey=idRiskTagV107、encryptionType=2 (PII 走 MD5)，入参仅 name+idCard 两项均必填（**无 mobile**）；响应 result 富对象 {detail:[风险类型码A~P+周期码0~6]} 经 result.range 透出；busiCode 10 查得 / 1000 未查得 **均计费**（与同供应商 x1 伽马的 1000 不计费口径相反）。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
 #   - 单源路由：列表长度 1（当前所有路由均为单源）。
@@ -358,3 +361,37 @@ versions:
     redis:
       <<: *redis_base
       db: 14
+  # sffx 对接「身份风险V107」(应诺尔 enol，与 x1/gama、blk/blacklist 同端点同信封)：
+  # JSON POST {encryptionType,appId,sign,apiKey,body} + sign=MD5(body 参数按键名 ASCII
+  # 升序拼「键值」+ secret) 小写 hex；apiKey 固定 idRiskTagV107；encryptionType=2 时
+  # name/idCard 取 MD5 摘要后入 body 并参与加签。
+  # 入参仅 name + idCard 两项且均必填（网关前置拦截）——该上游**不要手机号**；文档另有
+  # tradeNo(业务单号) 选填，本网关不透传（下游契约无该字段）。
+  # 响应 {code,msg,seqNo,data{busiCode,busiMsg,result}}，result 为富对象
+  # {"detail":["A0"]}（风险类型码 A~P + 风险周期码 0~6），整体序列化经 result.range 透出；
+  # seqNo(交易流水号) 是唯一上游标识，成功/查无/失败三条路径都落审计（uid=logId）。
+  # ★ 计费：busiCode 10 查得 → 001 **计费**；1000 数据未查得 → 999 **查无也计费**
+  #   （文档 busiCode 表两个码都带【计费】，已在 billing.billNotFoundRoutes 登记 sffx；
+  #   注意同供应商的 x1 伽马 1000 **不**计费，口径相反，勿混用）。
+  #   其余 1001 余额不足 / 1002 账户信息不存在 / 1003 appId 异常 / 1004 产品编号异常
+  #   / 1005 账号信息异常 / 1006 透支余额已达上限 / 1007 数据请求异常 / 1009 服务尚未开通
+  #   以及全局 code=-1 响应异常，均为上游侧错误，不计费。
+  # 独立成域（库 datahub_sffx_db / redis db15 / 独立 license 与统计）。
+  # ★ 接入前需把部署机（阿里云 ECS）出口 IP 报给上游加白（文档 §1.2 合作公司须知）。
+  sffx:
+    upstreams:
+      - kind: "idrisk"
+        # 生产域名 enol.com.cn；测试域名 testenol.cn（测试账号仅返回挡板数据）。
+        # 注：文档 §3.2 Demo 里的地址是 https://api.enolfax.com/enol/api/v1/doCheck，
+        # 与 §2.1 的域名表不一致——联调时以上游实际下发的域名为准。
+        baseURL: "https://enol.com.cn/enol/api/v1/doCheck"
+        appId: "REPLACE_WITH_SFFX_UPSTREAM_APP_ID"
+        appSecret: "REPLACE_WITH_SFFX_UPSTREAM_APP_SECRET"
+        apiKey: "idRiskTagV107"   # 身份风险V107 固定产品码
+        encryptionType: 2         # 2=MD5：name/idCard 取 MD5 摘要后入 body 加签
+    database:
+      <<: *pg_base
+      name: "datahub_sffx_db"
+    redis:
+      <<: *redis_base
+      db: 15

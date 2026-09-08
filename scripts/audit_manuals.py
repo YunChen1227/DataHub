@@ -22,11 +22,11 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 ROUTES = [
     "x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy",
-    "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm",
+    "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx",
 ]
 
 # 与 internal/domain/billing/billing.go 的 billNotFoundRoutes 保持一致。
-BILL_NOT_FOUND_ROUTES = {"blk"}
+BILL_NOT_FOUND_ROUTES = {"blk", "sffx"}
 
 # 这些路由的数据源只有「有结论 / 无结论」两态，永远不产生 999，手册里不出现 999 属正常：
 #   rlbd1/rlbd2 (facecompare) 与 tsfx (complaint) 的客户端只返回 001 或 *UpstreamError。

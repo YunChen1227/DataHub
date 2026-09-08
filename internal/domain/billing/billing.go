@@ -46,8 +46,14 @@ func DefaultTable() *DecisionTable {
 //     §2.1）是「10 查询成功【计费】/ 1000 数据未查得」——1000 **不带**计费标注。
 //     同端点、同信封、同 busiCode 语义，计费口径却不同，故必须按路由分别配置，
 //     不能因为"看起来一样"而复用。
+//
+//   - sffx 身份风险V107（docs/身份风险V107(1).pdf §1.6 busiCode 返回码表）：
+//     「10 查询成功【计费】/ 1000 数据未查得【计费】」——两个码都带【计费】，
+//     与同供应商（应诺尔 enol）的 blk 口径一致、与 x1 伽马相反。另 §1.4 响应结构
+//     的 busiCode 行也写明「10:查得数据，计费标识」。
 var billNotFoundRoutes = map[string]bool{
-	"blk": true,
+	"blk":  true,
+	"sffx": true,
 }
 
 // TableFor 返回某条路由的计费码表。默认只有 001 查得计费；billNotFoundRoutes 里的

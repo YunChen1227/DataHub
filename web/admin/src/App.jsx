@@ -3,9 +3,11 @@ import { getToken, setToken, getVersion, setVersion, VERSIONS } from './api.js'
 import Login from './pages/Login.jsx'
 import Users from './pages/Users.jsx'
 import Audits from './pages/Audits.jsx'
+import Stats from './pages/Stats.jsx'
 
 const TABS = [
   { id: 'users', label: '用户管理' },
+  { id: 'stats', label: '用量统计' },
   { id: 'audits', label: '操作记录' },
 ]
 
@@ -68,6 +70,7 @@ export default function App() {
       <div className="container">
         {/* version 作为 key：切换版本时强制重挂载，重新拉取该版本作用域的数据 */}
         {tab === 'users' && <Users key={'users-' + version} version={version} />}
+        {tab === 'stats' && <Stats key={'stats-' + version} version={version} />}
         {tab === 'audits' && <Audits key={'audits-' + version} version={version} />}
       </div>
     </>

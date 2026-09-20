@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/datahub/relay/internal/domain/admin"
 	"github.com/datahub/relay/internal/domain/model"
@@ -29,6 +30,7 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/{ver}/users/{id}/rotate-secret", s.requireAdmin(s.adminRotateSecret))
 
 	mux.HandleFunc("GET /admin/api/{ver}/audits", s.requireAdmin(s.adminListAudits))
+	mux.HandleFunc("GET /admin/api/{ver}/stats", s.requireAdmin(s.adminUsageStats))
 
 	if s.spaDir != "" {
 		mux.HandleFunc("GET /admin/", s.serveSPA)
@@ -194,6 +196,18 @@ func (s *Server) adminListAudits(w http.ResponseWriter, r *http.Request) {
 			f.BusiCode = &n
 		}
 	}
+	// 按年/月/日查看：前端把选中周期换算成 [from, to) 的 RFC3339 边界传入。
+	f.From = parseTimeParam(q.Get("from"))
+	f.To = parseTimeParam(q.Get("to"))
+	// 成败过滤：success=仅查得数据，fail=仅未查得(查无/错误)，空=全部。
+	switch q.Get("status") {
+	case "success":
+		t := true
+		f.Success = &t
+	case "fail", "failure":
+		fl := false
+		f.Success = &fl
+	}
 	// ?q= 按 uuid(appKey)/名称/手机号过滤：先解析为匹配的 appKey 集合 (DESIGN §16.3)。
 	if kw := strings.TrimSpace(q.Get("q")); kw != "" {
 		matched, err := svc.SearchUsers(r.Context(), kw)
@@ -218,6 +232,56 @@ func (s *Server) adminListAudits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAdminJSON(w, http.StatusOK, map[string]any{"audits": audits})
+}
+
+// --- §16.4 usage stats (按年/月/日 请求次数与成功次数) ---
+
+func (s *Server) adminUsageStats(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.adminFor(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	f := model.StatsFilter{
+		Granularity: model.StatsGranularity(q.Get("granularity")),
+		From:        parseTimeParam(q.Get("from")),
+		To:          parseTimeParam(q.Get("to")),
+		Limit:       atoiDefault(q.Get("limit"), 0),
+	}
+	// ?q= 按 uuid(appKey)/名称/手机号过滤：先解析为匹配的 appKey 集合，再限定统计范围。
+	if kw := strings.TrimSpace(q.Get("q")); kw != "" {
+		matched, err := svc.SearchUsers(r.Context(), kw)
+		if err != nil {
+			writeAdminError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		appKeys := make([]string, 0, len(matched))
+		for _, u := range matched {
+			appKeys = append(appKeys, u.AppKey)
+		}
+		if len(appKeys) == 0 {
+			writeAdminJSON(w, http.StatusOK, map[string]any{"stats": []*model.UsageStat{}})
+			return
+		}
+		f.AppKeys = appKeys
+	}
+	stats, err := svc.UsageStats(r.Context(), f)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeAdminJSON(w, http.StatusOK, map[string]any{"stats": stats})
+}
+
+// parseTimeParam 解析 RFC3339 时间参数，非法/空返回零值 (表示不限)。
+func parseTimeParam(v string) time.Time {
+	if v == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t
+	}
+	return time.Time{}
 }
 
 // --- SPA static serving (§16.0) ---

@@ -19,8 +19,9 @@ type QueryCommand struct {
 	// xfjy (消费交易特征) 入参：授权书编号 authlet，配合 name/idcard/mobile
 	// （字段名对齐上游 data-bean params：name/idcard/mobile/authlet）。
 	Authlet string `json:"authlet"`
-	// tsfx (投诉分析识别名单) 入参：命中级别策略 poly（C1 高危/C2 敏感/C3 一般），
-	// 配合 mobile（字段名对齐上游 kfongtech api.complaint.query 的 poly/mobile）。
+	// tsfx (投诉分析识别名单) 入参：仅 mobile。命中级别 poly 已不再是下游入参——
+	// 网关对每次请求固定并发查询 C1/C2/C3 三档并整合结果 (见 upstream/complaint.go)。
+	// 本字段保留仅为兼容仍携带 poly 的旧客户端，服务端一律忽略、不校验、不参与查询。
 	Poly string `json:"poly"`
 }
 
@@ -60,7 +61,8 @@ type UpstreamRequest struct {
 	ProfilePicture string
 	// xfjy (消费交易特征) 用 Authlet(终端授权书编号) + Name/IDCard/Mobile。
 	Authlet string
-	// tsfx (投诉分析识别名单) 用 Poly(命中级别 C1/C2/C3) + Mobile。
+	// tsfx (投诉分析识别名单) 用 Mobile；命中级别 C1/C2/C3 由上游客户端内部逐档
+	// 固定查询，不再来自下游 (见 upstream/complaint.go)。Poly 保留但已不填/不使用。
 	Poly   string
 	Reqid  string
 }
@@ -244,8 +246,9 @@ type RangeResult struct {
 // 见 upstream/idverify.go)；xfjy 转接消费交易特征 (consumetxn 上游 data-bean，
 // JSON POST + MD5 sign，name/idcard/mobile/authlet 入参，有查得/查无，
 // 见 upstream/consumetxn.go)；tsfx 转接投诉分析识别名单 (complaint 上游 kfongtech，
-// JSON POST + AES 加密 param + MD5 sign，mobile/poly 入参，data gzip 压缩，
-// 调用成功即计费、命中状态经 result.range 透出，见 upstream/complaint.go)；
+// JSON POST + AES 加密 param + MD5 sign，下游仅 mobile 入参、命中级别 C1/C2/C3 由
+// 客户端逐档并发查询后整合成 poly 字典透出 result.range，data gzip 压缩，调用成功即
+// 计费，见 upstream/complaint.go)；
 // lxf 转接灵犀分 score_195_v1 (lxscore 上游 fullink，JSON POST + DES/CBC 签名，
 // name/mobile/idCardNo 取 MD5 摘要，响应 data 为 DES 密文、解密得 300-900 评分，
 // 评分经 result.range 透出，见 upstream/lxscore.go)；

@@ -1,0 +1,64 @@
+{
+  "suite": "17_tsfx_query",
+  "title": "tsfx 主接口全场景 (投诉分析识别名单 kfongtech)",
+  "startedAt": "2026-09-20T09:59:01.161906+08:00",
+  "endedAt": "2026-09-20T09:59:01.1937466+08:00",
+  "cases": [
+    {
+      "name": "成功查得(命中)：三档整合",
+      "status": "FAIL",
+      "expected": "errorCode=0 \u0026 body.code=001 \u0026 range 含 C1/C2/C3 与 forbid",
+      "actual": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.",
+      "reason": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it."
+    },
+    {
+      "name": "未命中仍计费：三档整合",
+      "status": "FAIL",
+      "expected": "errorCode=0 \u0026 body.code=001 \u0026 range 含 C1/C2/C3 与 forbid",
+      "actual": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.",
+      "reason": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it."
+    },
+    {
+      "name": "携带 poly 被忽略",
+      "status": "FAIL",
+      "expected": "errorCode=0 \u0026 body.code=001 \u0026 range 含 C1/C2/C3",
+      "actual": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.",
+      "reason": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it."
+    },
+    {
+      "name": "错误签名",
+      "status": "FAIL",
+      "expected": "errorCode=505002 且无 body",
+      "actual": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.",
+      "reason": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it."
+    },
+    {
+      "name": "未知 appKey",
+      "status": "FAIL",
+      "expected": "errorCode=505004",
+      "actual": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.",
+      "reason": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it."
+    },
+    {
+      "name": "缺失 appKey",
+      "status": "FAIL",
+      "expected": "errorCode=505001",
+      "actual": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.",
+      "reason": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it."
+    },
+    {
+      "name": "手机号非法",
+      "status": "FAIL",
+      "expected": "errorCode=505062",
+      "actual": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.",
+      "reason": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it."
+    },
+    {
+      "name": "二次成功查得",
+      "status": "FAIL",
+      "expected": "errorCode=0 \u0026 body.code=001 \u0026 range 含 callee",
+      "actual": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.",
+      "reason": "Post \"http://localhost:8080/v1/openapi/zlx/querySrmxTSFX\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it."
+    }
+  ]
+}

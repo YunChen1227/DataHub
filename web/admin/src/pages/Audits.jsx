@@ -1,5 +1,26 @@
 import React, { useEffect, useState } from 'react'
-import { api } from '../api.js'
+import { api, timeRange } from '../api.js'
+
+// 时间粒度：不限 / 按年 / 按月 / 按日。
+const GRANS = [
+  { id: '', label: '不限时间' },
+  { id: 'year', label: '按年' },
+  { id: 'month', label: '按月' },
+  { id: 'day', label: '按日' },
+]
+
+// 成败筛选：全部 / 仅成功(查得数据) / 仅失败(未查得)。
+const STATUSES = [
+  { id: '', label: '全部' },
+  { id: 'success', label: '成功（查得数据）' },
+  { id: 'fail', label: '失败（未查得）' },
+]
+
+function periodInputType(gran) {
+  if (gran === 'year') return 'number'
+  if (gran === 'month') return 'month'
+  return 'date'
+}
 
 export default function Audits({ version }) {
   const ver = (version || '').toUpperCase()
@@ -7,6 +28,9 @@ export default function Audits({ version }) {
   const [err, setErr] = useState('')
   const [keyword, setKeyword] = useState('')
   const [busiCode, setBusiCode] = useState('')
+  const [gran, setGran] = useState('')
+  const [period, setPeriod] = useState('')
+  const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(false)
 
   const load = async () => {
@@ -16,6 +40,10 @@ export default function Audits({ version }) {
       const params = new URLSearchParams()
       if (keyword) params.set('q', keyword)
       if (busiCode) params.set('busiCode', busiCode)
+      if (status) params.set('status', status)
+      const { from, to } = timeRange(gran, period)
+      if (from) params.set('from', from)
+      if (to) params.set('to', to)
       params.set('limit', '200')
       const q = params.toString()
       const { audits } = await api.listAudits(q ? '?' + q : '')
@@ -29,6 +57,7 @@ export default function Audits({ version }) {
 
   useEffect(() => {
     load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
@@ -44,6 +73,29 @@ export default function Audits({ version }) {
         <div>
           <label>busiCode 筛选</label>
           <input value={busiCode} onChange={(e) => setBusiCode(e.target.value)} placeholder="如 10 / 1000 / 1007" />
+        </div>
+        <div>
+          <label>时间粒度</label>
+          <select value={gran} onChange={(e) => { setGran(e.target.value); setPeriod('') }}>
+            {GRANS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+          </select>
+        </div>
+        {gran && (
+          <div>
+            <label>{gran === 'year' ? '年份' : gran === 'month' ? '月份' : '日期'}</label>
+            <input
+              type={periodInputType(gran)}
+              value={period}
+              onChange={(e) => setPeriod(e.target.value)}
+              placeholder={gran === 'year' ? '如 2026' : ''}
+            />
+          </div>
+        )}
+        <div>
+          <label>展示</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            {STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
         </div>
         <div>
           <button className="btn" type="submit" disabled={loading}>{loading ? '查询中…' : '查询'}</button>

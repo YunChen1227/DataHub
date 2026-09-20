@@ -333,7 +333,8 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// 查询要素 (name/idCard/mobile)，对齐上游必填口径不臆造多余必填。
 		orch.WithParser(parse.ParseConsumeTxn)
 	case upstream.ProviderComplaint:
-		// tsfx 投诉分析识别名单：mobile + poly(C1/C2/C3) 均必填 (对齐 kfongtech 契约)。
+		// tsfx 投诉分析识别名单：下游仅传 mobile。命中级别 C1/C2/C3 由客户端逐档
+		// 并发查询后整合返回 (见 upstream/complaint.go)，poly 不再是下游入参。
 		orch.WithParser(parse.ParseComplaint)
 	case upstream.ProviderLXScore:
 		// lxf 灵犀分：上游 name/mobile/idCardNo 三项参数表都标"必传"，但文档 §2.2 明确

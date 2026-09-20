@@ -23,7 +23,7 @@
 #   rlbd1 与 rlbd2 是同一个上游接口，仅 appId/appSecret 不同 (各自独立库/统计/license)。
 # sfzhy 转接身份证三要素核验：JSON POST + signature=SHA256(升序 k=v&... + "&AppSecret=" + 商户密钥)，name+idCard+profilePicture 入参。
 # xfjy 转接消费交易特征 (data-bean)：JSON POST + sign=MD5(过滤空值升序 k=v&... + "&appkey=" + appkey)，name/idcard/mobile/authlet 入参 (全选填，至少一个查询要素)；有查得(001)/查无(999)。
-# tsfx 转接投诉分析识别名单 (kfongtech)：JSON POST + 业务参数 param 走 AES 加密 + 外层 sign，响应 data 为 gzip 压缩结果集；mobile+poly(C1/C2/C3) 入参；调用成功即计费(001)，命中状态 forbid 随结果数组经 result.range 透出。
+# tsfx 转接投诉分析识别名单 (kfongtech)：JSON POST + 业务参数 param 走 AES 加密 + 外层 sign，响应 data 为 gzip 压缩结果集；下游仅 mobile 入参，命中级别 C1/C2/C3 由客户端逐档并发查询后整合成 poly 字典经 result.range 透出（每档含 forbid/hit/callee）；至少一档成功即计费(001)，对上游产生 3 次调用。
 # lxf 转接灵犀分 score_195_v1 (fullink)：JSON POST + sign=DES/CBC(升序 k=v&... , encryptKey) 大写 hex，name/mobile/idCardNo 传 MD5 摘要；响应 data 为 DES 密文，解密得 300-900 评分经 result.range 透出；分数=-1 视为查无(999)。
 # grgjj 转接收入A_g版 (yrzx)：JSON POST + data 走 3DES/ECB/PKCS5+base64 加密、verify=MD5(account+加密前JSON串+reqid+type+key) 大写，name/cid/mobile 入参；响应 result 为 3DES 密文，解密得 {cbjfzt,jfjs,jfsj} 经 result.range 透出；code 001 查得计费 / 999 查无 / 其余(002/003/004/…)上游侧错误。
 # grsb 转接背景评估 BJPG-01：JSON POST {data} + data 走 AES/CBC/PKCS5+base64 加密（密钥=encryptKey 的 hex 解码值，IV 固定 16 个 ASCII 字符 "0000000000000000"），请求头带 accountId/prodId；入参仅 idCard+name 两项均必填（**无 mobile**）；响应 data 为同一套 AES 密文，解密得 {xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj} 全字段经 result.range 透出；code 200 查得计费 / 2-404 与 3-404 查无 / 其余(2-5xx、3-5xx)上游侧错误不计费。

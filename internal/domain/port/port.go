@@ -104,4 +104,7 @@ type UserAdminRepository interface {
 type AuditRepository interface {
 	AppendAudit(ctx context.Context, rec *model.AuditRecord) error
 	ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.AuditRecord, error)
+	// UsageStats aggregates request/success counts per (user, 时间桶) for the
+	// admin 「按年/月/日」统计面板 (§16.4)。时间桶按北京时间 (+08:00) 归档。
+	UsageStats(ctx context.Context, f model.StatsFilter) ([]*model.UsageStat, error)
 }

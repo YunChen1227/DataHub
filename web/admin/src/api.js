@@ -64,4 +64,34 @@ export const api = {
   deleteUser: (id) => req('DELETE', '/users/' + encodeURIComponent(id)),
   rotateSecret: (id) => req('POST', '/users/' + encodeURIComponent(id) + '/rotate-secret'),
   listAudits: (query) => req('GET', '/audits' + (query || '')),
+  usageStats: (query) => req('GET', '/stats' + (query || '')),
+}
+
+// timeRange 把「粒度 + 选中周期值」换算成 [from, to) 的 RFC3339 边界 (北京时间
+// +08:00)，供统计与明细的按年/月/日过滤共用。gran 为空或 value 为空返回空区间
+// (表示不限)。与后端按 Asia/Shanghai (+08:00) 分桶口径一致。
+export function timeRange(gran, value) {
+  if (!gran || !value) return { from: '', to: '' }
+  const pad = (n) => String(n).padStart(2, '0')
+  if (gran === 'year') {
+    const y = parseInt(value, 10)
+    if (!y) return { from: '', to: '' }
+    return { from: `${y}-01-01T00:00:00+08:00`, to: `${y + 1}-01-01T00:00:00+08:00` }
+  }
+  if (gran === 'month') {
+    const [ys, ms] = String(value).split('-')
+    const y = parseInt(ys, 10)
+    const m = parseInt(ms, 10)
+    if (!y || !m) return { from: '', to: '' }
+    const ny = m === 12 ? y + 1 : y
+    const nm = m === 12 ? 1 : m + 1
+    return { from: `${y}-${pad(m)}-01T00:00:00+08:00`, to: `${ny}-${pad(nm)}-01T00:00:00+08:00` }
+  }
+  // day: value 形如 '2026-09-20'
+  const start = new Date(value + 'T00:00:00+08:00')
+  if (isNaN(start.getTime())) return { from: '', to: '' }
+  const next = new Date(start.getTime() + 86400000)
+  // 取 next 在 +08:00 下的日历日期字符串。
+  const nextDay = new Date(next.getTime() + 8 * 3600000).toISOString().slice(0, 10)
+  return { from: `${value}T00:00:00+08:00`, to: `${nextDay}T00:00:00+08:00` }
 }

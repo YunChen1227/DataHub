@@ -66,6 +66,44 @@ type AuditFilter struct {
 	AppKey   string
 	AppKeys  []string
 	BusiCode *int
-	Limit    int
-	Offset   int
+	// From/To 是可选的时间区间过滤 [From, To) (按年/月/日查看明细时由前端算好边界)。
+	// 零值表示不限。created_at 为 timestamptz，比较时天然按绝对时刻，与展示时区无关。
+	From time.Time
+	To   time.Time
+	// Success 是可选的成败过滤：nil=全部，true=仅成功(查得数据 found_data)，
+	// false=仅失败(未查得，含查无与各类错误)。「成功」口径与「成功查得数」一致。
+	Success *bool
+	Limit   int
+	Offset  int
+}
+
+// StatsGranularity 是用量统计的时间桶粒度 (按年/月/日)。
+type StatsGranularity string
+
+const (
+	GranularityDay   StatsGranularity = "day"
+	GranularityMonth StatsGranularity = "month"
+	GranularityYear  StatsGranularity = "year"
+)
+
+// StatsFilter narrows a usage-stats aggregation over the audit log (§16.4).
+// 统计按 (用户 appKey, 时间桶) 分组：每个用户各自的时间趋势 (请求次数/成功次数)。
+type StatsFilter struct {
+	Version     string // 路由作用域 (由 admin.Service 注入)
+	AppKeys     []string
+	Granularity StatsGranularity // 默认 day
+	From        time.Time        // 可选区间 [From, To)
+	To          time.Time
+	Limit       int
+}
+
+// UsageStat is one (user, time-bucket) aggregate of request/success counts,
+// powering the admin 「按年/月/日」统计面板 (§16.4)。时间桶按北京时间 (+08:00)
+// 归档，Bucket 为其可读标签 (YYYY / YYYY-MM / YYYY-MM-DD)。
+type UsageStat struct {
+	Bucket  string `json:"bucket"`  // 时间桶标签 (北京时间)
+	AppKey  string `json:"appKey"`  // 用户 uuid
+	Name    string `json:"name"`    // 用户名称/备注
+	Total   int64  `json:"total"`   // 请求次数 (审计行总数，含鉴权/参数失败)
+	Success int64  `json:"success"` // 成功次数 (查得数据 found_data)
 }

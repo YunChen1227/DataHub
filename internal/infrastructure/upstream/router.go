@@ -19,4 +19,5 @@ const (
 	ProviderIDRisk       = "idrisk"       // sffx: 身份风险V107 (应诺尔 enol，同 gama/blacklist 端点)
 	ProviderMultiLoan    = "multiloan"    // dtjd: 多头借贷行为 (守信 shouxin168，同 rental 端点同信封)
 	ProviderCompassBlack = "compassblack" // snhmd: 司南黑名单 (守信 shouxin168，同 rental 端点同信封，mode_compass_black)
+	ProviderManyOverdue  = "manyoverdue"  // dtly: 多头履约行为 (守信 shouxin168，同 rental 端点同信封，mode_many_overdue_behavior)
 )

@@ -72,6 +72,11 @@ func TestTableFor_PerRouteChargeScope(t *testing.T) {
 		// 故本路由的 999 **只**来自 SW0002 不收费，同样不进 billNotFoundRoutes。
 		{"snhmd", "001", true, "司南黑名单 SW0000 认证成功【收费】（black_list=0 未命中亦属查得）"},
 		{"snhmd", "999", false, "司南黑名单 SW0002 查询无记录 不收费"},
+		// dtly 多头履约行为：同供应商同端点，SW0001 的计费列与 snhmd 相同、与 dtjd
+		// 相反——本产品标【不收费】，客户端按上游侧错误返回，故 999 只来自 SW0002，
+		// 同样不进 billNotFoundRoutes。
+		{"dtly", "001", true, "多头履约 SW0000 认证成功【收费】（因子大多为空/模型分 -1 亦属查得）"},
+		{"dtly", "999", false, "多头履约 SW0002 查询无记录 不收费"},
 	}
 
 	for _, c := range cases {

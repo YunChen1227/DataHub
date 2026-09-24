@@ -281,15 +281,22 @@ type RangeResult struct {
 // 均必填；响应 resp_data 为 black_list + black_tag04..12 共 10 个 "0"/"1" 标签的对象，
 // 整体序列化经 result.range 透出 (black_list=0 未命中亦属查得结论，计费)；SW0000 查得
 // 计费 / SW0002 查无不计费 / **SW0001 认证失败本产品标【不收费】→ 按上游侧错误处理**
-// (与兄弟产品 dtjd 的同码口径相反，禁止互相套用)，见 upstream/compassblack.go)。
+// (与兄弟产品 dtjd 的同码口径相反，禁止互相套用)，见 upstream/compassblack.go)；
+// dtly 转接多头履约行为 (manyoverdue 上游，守信 shouxin168，与 zlf/dtjd/snhmd 同一端点
+// 同一信封：AES/ECB/PKCS5 加密 biz_data + form POST，service 同为 financial_rent_service、
+// **mode=mode_many_overdue_behavior** 是同端点区分产品的唯一位，入参 name+idCard+mobile
+// 三要素均必填；响应 resp_data 为357 个 xyp_* 履约/逾期因子 (含 xyp_model_score_
+// high/mid/low 三个星耀Pro 评分，范围 [350,950]、未命中 -1) 的扁平富对象，整体序列化经
+// result.range 透出；SW0000 查得计费 / SW0002 查无不计费 / **SW0001 认证失败本产品标
+// 【不收费】→ 按上游侧错误处理** (同 snhmd，与 dtjd 相反)，见 upstream/manyoverdue.go)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -339,6 +346,8 @@ func DemoAppKey(route string) string {
 		return "y890dtjd"
 	case "snhmd":
 		return "y89snhmd"
+	case "dtly":
+		return "y890dtly"
 	default:
 		return "demo-" + route
 	}

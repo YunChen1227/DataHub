@@ -22,7 +22,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 ROUTES = [
     "x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy",
-    "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd",
+    "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly",
 ]
 
 # 与 internal/domain/billing/billing.go 的 billNotFoundRoutes 保持一致。

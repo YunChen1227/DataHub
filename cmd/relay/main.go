@@ -317,10 +317,10 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	// incomeag 的 ParseWithName 即 name+idCard+mobile 三要素，备源 bgjj 同口径)。
 	switch routeKind {
 	case upstream.ProviderRental, upstream.ProviderBlacklist, upstream.ProviderMultiLoan,
-		upstream.ProviderCompassBlack:
+		upstream.ProviderCompassBlack, upstream.ProviderManyOverdue:
 		// zlf (租赁分 name 必传) / blk (黑名单V35 name 参与摘要匹配) 均要求姓名必填。
-		// dtjd (多头借贷行为) / snhmd (司南黑名单)：两者上游 §2.5 业务数据表都把
-		// name/ident_number/phone 三项全标「必传」，故三要素齐全才放行
+		// dtjd (多头借贷行为) / snhmd (司南黑名单) / dtly (多头履约行为)：三者上游 §2.5
+		// 业务数据表都把 name/ident_number/phone 三项全标「必传」，故三要素齐全才放行
 		// （licenseUrl/licenseType/service/mode 是我方配置侧的固定值，不来自下游入参）。
 		orch.WithParser(parse.ParseWithName)
 	case upstream.ProviderFaceCompare:
@@ -492,7 +492,8 @@ func labelFor(uc upstreamConfig, idx int) string {
 }
 
 // uploadAuthLicense 在启动时把固定授权书上传到 OSS 并返回 licenseUrl, 供该上游的
-// 所有查询复用 (守信系上游 rental/multiloan/compassblack 的 biz_data 都要带 licenseUrl)。
+// 所有查询复用 (守信系上游 rental/multiloan/compassblack/manyoverdue 的 biz_data 都要带
+// licenseUrl)。
 // OSS/授权书未配置时 (dev/memory) 返回空串, 由上游在调用时报错, 不阻塞服务启动。
 func uploadAuthLicense(uc upstreamConfig, kind string, logger *slog.Logger) string {
 	if uc.licenseFile == "" {
@@ -562,6 +563,20 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			Service:       uc.service,
 			Mode:          uc.mode,
 			LicenseURL:    uploadAuthLicense(uc, upstream.ProviderCompassBlack, logger),
+			LicenseType:   uc.licenseType,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderManyOverdue:
+		// dtly 多头履约行为：与 zlf/dtjd/snhmd 同一供应商 (守信 shouxin168)、同一端点与
+		// 信封，授权书 OSS 上传流程也完全一致，仅 mode (mode_many_overdue_behavior) 与
+		// 响应主体不同。
+		client := upstream.NewManyOverdue(upstream.ManyOverdueConfig{
+			BaseURL:       uc.baseURL,
+			InstitutionID: uc.institutionID,
+			AESKey:        uc.aesKey,
+			Service:       uc.service,
+			Mode:          uc.mode,
+			LicenseURL:    uploadAuthLicense(uc, upstream.ProviderManyOverdue, logger),
 			LicenseType:   uc.licenseType,
 		}, httpClient)
 		return client, nil

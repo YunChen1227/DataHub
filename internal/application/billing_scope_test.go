@@ -55,6 +55,15 @@ func TestBillingScopeDecoupledFromWireCode(t *testing.T) {
 			why: "司南黑名单 SW0002 查询无记录 不收费（本产品 SW0001 标不收费、走上游侧" +
 				"错误不归一到 999，故这条 999 口径单一，与 dtjd 不同）",
 		},
+		{
+			route: "dtly", upstreamCode: "001", wantBodyCode: "001", wantUsed: 1,
+			why: "多头履约 SW0000 认证成功【收费】",
+		},
+		{
+			route: "dtly", upstreamCode: "999", wantBodyCode: "999", wantUsed: 0,
+			why: "多头履约 SW0002 查询无记录 不收费（本产品 SW0001 标不收费、走上游侧" +
+				"错误不归一到 999，与 snhmd 同、与 dtjd 相反）",
+		},
 	}
 
 	for _, tc := range cases {

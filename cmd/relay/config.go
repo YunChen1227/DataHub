@@ -13,9 +13,10 @@ import (
 // 的上游是 []upstreamConfig：单源路由列表长度 1，多源路由长度 N，每条自带完整凭证。
 // kind 决定使用哪种上游客户端：gama(伽马, x1) | income(经济能力, v9/v8) |
 // rental(租赁分V2-D, zlf) | blacklist(黑名单因子V35, blk) | facecompare | idverify |
-// consumetxn | complaint | lxscore | incomeag | bgjj | bgpg | idcheck | idrisk。
+// consumetxn | complaint | lxscore | incomeag | bgjj | bgpg | idcheck | idrisk |
+// multiloan(多头借贷行为, dtjd) | compassblack(司南黑名单, snhmd)。
 type upstreamConfig struct {
-	kind    string // gama | income | rental | blacklist | facecompare | idverify | consumetxn | complaint | lxscore | incomeag | bgjj | bgpg | idcheck | idrisk
+	kind    string // gama | income | rental | blacklist | facecompare | idverify | consumetxn | complaint | lxscore | incomeag | bgjj | bgpg | idcheck | idrisk | multiloan | compassblack
 	baseURL string
 	// gama (伽马) / blacklist (黑名单因子V35) / idrisk (身份风险V107) 凭证
 	// ——三者同为应诺尔 enol 端点，共用 appID/appSecret/apiKey/encryptionType。
@@ -28,7 +29,10 @@ type upstreamConfig struct {
 	// income (经济能力) 凭证
 	account string
 	key     string
-	// rental (租赁分V2-D / 守信) 凭证 + 授权书
+	// rental (租赁分V2-D, zlf) / multiloan (多头借贷行为, dtjd) /
+	// compassblack (司南黑名单, snhmd) 凭证 + 授权书——三者同为守信 shouxin168 同一端点
+	// 同一信封，凭证字段与 OSS 约定完全共用（但 institutionID/aesKey 的**取值**可能
+	// 按产品分配，不要假定三条路由填同一把密钥）。
 	institutionID string
 	aesKey        string
 	service       string
@@ -53,7 +57,7 @@ type upstreamConfig struct {
 	costOn   string
 }
 
-// ossConfig holds aliyun OSS 凭证 for uploading the租赁分授权书 (rental 专用)。
+// ossConfig holds aliyun OSS 凭证 for uploading the 授权书 (守信系上游 rental/multiloan)。
 type ossConfig struct {
 	endpoint        string
 	accessKeyID     string
@@ -183,7 +187,7 @@ type fileUpstream struct {
 	EncryptionType int    `yaml:"encryptionType"`
 	Account        string `yaml:"account"`
 	Key            string `yaml:"key"`
-	// rental (租赁分V2-D) 专用
+	// rental (zlf) / multiloan (dtjd) / compassblack (snhmd) 专用（同一供应商共用）
 	InstitutionID string  `yaml:"institutionId"`
 	AESKey        string  `yaml:"aesKey"`
 	Service       string  `yaml:"service"`
@@ -202,7 +206,7 @@ type fileUpstream struct {
 	CostOn   string `yaml:"costOn"`
 }
 
-// fileOSS mirrors the rental upstream's oss YAML block.
+// fileOSS mirrors the 守信系 (rental/multiloan/compassblack) upstream's oss YAML block.
 type fileOSS struct {
 	Endpoint        string `yaml:"endpoint"`
 	AccessKeyID     string `yaml:"accessKeyId"`
@@ -409,7 +413,7 @@ func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
 // defaultKind picks the upstream client family by version: x1→gama, zlf→rental,
 // blk→blacklist, rlbd1/rlbd2→facecompare, sfzhy→idverify, xfjy→consumetxn,
 // tsfx→complaint, lxf→lxscore, grgjj→incomeag, grsb→bgpg, sfsm→idcheck,
-// sffx→idrisk, others→income.
+// sffx→idrisk, dtjd→multiloan, snhmd→compassblack, others→income.
 func defaultKind(version string) string {
 	switch version {
 	case "x1":
@@ -436,6 +440,10 @@ func defaultKind(version string) string {
 		return "idcheck"
 	case "sffx":
 		return "idrisk"
+	case "dtjd":
+		return "multiloan"
+	case "snhmd":
+		return "compassblack"
 	default:
 		return "income"
 	}

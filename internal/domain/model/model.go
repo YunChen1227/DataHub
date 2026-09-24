@@ -63,8 +63,8 @@ type UpstreamRequest struct {
 	Authlet string
 	// tsfx (投诉分析识别名单) 用 Mobile；命中级别 C1/C2/C3 由上游客户端内部逐档
 	// 固定查询，不再来自下游 (见 upstream/complaint.go)。Poly 保留但已不填/不使用。
-	Poly   string
-	Reqid  string
+	Poly  string
+	Reqid string
 }
 
 // UpstreamResult is the normalized upstream response (DESIGN §6). 唯一上游伽马把原生
@@ -268,15 +268,28 @@ type RangeResult struct {
 // sffx 转接身份风险V107 (idrisk 上游，应诺尔 enol，与 x1/blk 同端点同信封：JSON POST
 // + apiKey=idRiskTagV107、encryptionType=2 (PII 走 MD5)，入参仅 name+idCard 两项
 // 均必填 (无 mobile)，响应 result 富对象 {detail:[风险类型码+周期码]} 序列化经
-// result.range 透出；busiCode 10 查得 / 1000 未查得**均计费**，见 upstream/idrisk.go)。
+// result.range 透出；busiCode 10 查得 / 1000 未查得**均计费**，见 upstream/idrisk.go)；
+// dtjd 转接多头借贷行为 (multiloan 上游，守信 shouxin168，与 zlf/rental 同一端点同一
+// 信封：AES/ECB/PKCS5 加密 biz_data + form POST，service=financial_rent_service、
+// mode=mode_loan_intent_v1，入参 name+idCard+mobile 三要素均必填；响应 resp_data 为约
+// 700 个 als_* 多头因子 + Rule_* 决策字段的富对象，整体序列化经 result.range 透出；
+// SW0000 查得计费 / SW0002 查无不计费 / **SW0001 认证失败上游标【收费】但我方按查无
+// 且不向下游计费**(落 warn 人工对账)，见 upstream/multiloan.go)；
+// snhmd 转接司南黑名单 (compassblack 上游，守信 shouxin168，与 zlf/dtjd 同一端点同一
+// 信封：AES/ECB/PKCS5 加密 biz_data + form POST，service 同为 financial_rent_service、
+// **mode=mode_compass_black** 是同端点区分产品的唯一位，入参 name+idCard+mobile 三要素
+// 均必填；响应 resp_data 为 black_list + black_tag04..12 共 10 个 "0"/"1" 标签的对象，
+// 整体序列化经 result.range 透出 (black_list=0 未命中亦属查得结论，计费)；SW0000 查得
+// 计费 / SW0002 查无不计费 / **SW0001 认证失败本产品标【不收费】→ 按上游侧错误处理**
+// (与兄弟产品 dtjd 的同码口径相反，禁止互相套用)，见 upstream/compassblack.go)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -322,6 +335,10 @@ func DemoAppKey(route string) string {
 		return "y890sfsm"
 	case "sffx":
 		return "y890sffx"
+	case "dtjd":
+		return "y890dtjd"
+	case "snhmd":
+		return "y89snhmd"
 	default:
 		return "demo-" + route
 	}

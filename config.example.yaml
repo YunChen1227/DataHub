@@ -7,12 +7,15 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX
-#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX
-# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb / sfsm / sffx 各域独占一套 DB + Redis 逻辑库。
-# ★ Redis 逻辑库已用到 db15——标准 Redis 只有 0~15 共 16 个库，**下一条新路由需要先扩容
+# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb / sfsm / sffx / dtjd / snhmd 各域独占一套 DB + Redis 逻辑库。
+# ★ Redis 逻辑库：本示例文件里 db0~db15 **已全部占满**（dtjd 取 db2、snhmd 取 db5，
+#   为最后两个空位）。标准 Redis 只有 0~15 共 16 个库，**再新增路由必须先扩容
 #   databases 配置或换实例**，不要复用已占用的编号（启动防呆校验会直接拒绝）。
+#   真实部署配置的编号分配与本示例不同（config.aliyun.prod.yaml 已用到 db18），
+#   改那边时按那边的已用编号顺延。
 # v8 与 v9 同属 v8v9 域——共用同一套 license/appKey/secret，但调用次数/成功查得数/
 # 操作日志按各自路由独立统计（v8v9 域库内 quota/台账/审计带 route 字段区分）。
 # 跨域使用 license 一律鉴权失败。启动时会做防呆校验：两个不同的域配置同一个数据库
@@ -29,6 +32,8 @@
 # grsb 转接背景评估 BJPG-01：JSON POST {data} + data 走 AES/CBC/PKCS5+base64 加密（密钥=encryptKey 的 hex 解码值，IV 固定 16 个 ASCII 字符 "0000000000000000"），请求头带 accountId/prodId；入参仅 idCard+name 两项均必填（**无 mobile**）；响应 data 为同一套 AES 密文，解密得 {xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj} 全字段经 result.range 透出；code 200 查得计费 / 2-404 与 3-404 查无 / 其余(2-5xx、3-5xx)上游侧错误不计费。
 # sfsm 转接身份证实名核验 (数脉 id_card/check，与 rlbd1/rlbd2 同服务商同签名)：form POST + sign=md5(appid&timestamp&app_security)，入参仅 name+idCard 两项均必填（**无 mobile**）；响应 data 的 {result,desc,sex,birthday,address} 经 result.range 透出、order_no 只落审计；result 0 一致 / 1 不一致 均为收费结论(001) / 2 无记录查无(999) / code≠200 上游侧错误不计费。
 # sffx 转接身份风险V107 (应诺尔 enol，与 x1/gama、blk/blacklist 同端点同信封)：apiKey=idRiskTagV107、encryptionType=2 (PII 走 MD5)，入参仅 name+idCard 两项均必填（**无 mobile**）；响应 result 富对象 {detail:[风险类型码A~P+周期码0~6]} 经 result.range 透出；busiCode 10 查得 / 1000 未查得 **均计费**（与同供应商 x1 伽马的 1000 不计费口径相反）。
+# dtjd 转接多头借贷行为 (守信 shouxin168，与 zlf/rental 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service=financial_rent_service、mode=mode_loan_intent_v1，入参 name+idCard+mobile 三要素均必填；响应 resp_data 为约 700 个 als_* 多头因子 + Rule_* 决策字段的富对象，整体序列化经 result.range 透出；SW0000 查得计费 / SW0002 查无不计费 / **SW0001 认证失败上游标【收费】但我方按查无且不向下游计费**(落 warn 人工对账)。
+# snhmd 转接司南黑名单 (守信 shouxin168，与 zlf/dtjd 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service 同为 financial_rent_service、**mode=mode_compass_black**（同端点区分产品的唯一位），入参 name+idCard+mobile 三要素均必填；响应 resp_data 为 black_list + black_tag04..black_tag12 共 10 个 "0"/"1" 标签的对象，整体序列化经 result.range 透出（black_list=0 未命中黑名单亦属**查得结论**，计费）；SW0000 查得计费 / SW0002 查无不计费 / **SW0001 认证失败本产品标【不收费】→ 按上游侧错误处理**（与兄弟产品 dtjd 的同码口径相反，禁止互相套用）。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
 #   - 单源路由：列表长度 1（当前所有路由均为单源）。
@@ -395,3 +400,104 @@ versions:
     redis:
       <<: *redis_base
       db: 15
+  # dtjd 对接「多头借贷行为」(守信 shouxin168)：与 zlf/rental **同一供应商、同一端点、
+  # 同一信封**——业务数据 JSON 经 AES/ECB/PKCS5Padding + Base64 放进 biz_data，与
+  # institution_id 一起 form POST；仅 service/mode 与响应主体不同。
+  # 入参 name + idCard + mobile 三要素**均必填**（上游 §2.5 业务数据表三项全标必传，
+  # 网关前置拦截）；licenseUrl/licenseType 是我方启动时上传授权书到 OSS 后缓存的固定值。
+  # 响应 {resp_code,resp_msg,resp_order,timestamp,resp_data}，resp_data 是约 700 个
+  # als_* 多头借贷因子 + Rule_* 决策字段（Rule_final_decision Accept/Reject/Review、
+  # Rule_final_weight 评分、Rule_name_*/Rule_weight_* 命中规则）的富对象，
+  # 整体序列化经 result.range 透出（与 blk/sffx 同口径）；resp_order 是唯一上游标识，
+  # 成功/查无/失败三条路径都落审计（uid=logId）。
+  # ★ 计费：SW0000 认证成功【上游收费】→ 001 查得计费；SW0002 查询无记录 不收费 → 999；
+  #   **SW0001 认证失败上游标【收费】，但我方按「下游查无 + 不计费」处理**（落 warn
+  #   人工对账）——SW0001 与 SW0002 都归一到 999 而计费口径相反，无法用
+  #   billing.billNotFoundRoutes（整条路由 999 一刀切）区分，故 dtjd **不在**该表里。
+  #   其余 SW0003 通道超时 / SW0017 biz_data参数错误 / SW0018 参数错误 / SW003x 验签解密
+  #   / SW0040 产品未开通 / SW0041 调用量上限 / SW0042 余额不足 / SW10xx 格式有误
+  #   / SW9999 系统错误 均为上游侧错误，不计费。
+  # 独立成域（库 datahub_dtjd_db / redis db2 / 独立 license 与统计）。
+  # ★ 接入前需把部署机（阿里云 ECS）出口 IP 报给上游加白（文档「需要添加服务器白名单」）；
+  #   非白名单来源在 TLS 层即被断开，拿不到任何业务报文——那是环境问题不是协议问题。
+  dtjd:
+    upstreams:
+      - kind: "multiloan"
+        # 生产；测试(沙箱)环境为 http://sit-shouwei.shouxin168.com/sandbox/lightning/product/query
+        baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
+        institutionId: "REPLACE_WITH_DTJD_INSTITUTION_ID"
+        aesKey: "REPLACE_WITH_DTJD_AES_KEY"       # AES/ECB/PKCS5Padding 密钥（16/24/32 字节；hex/Base64 形态会自动解码）
+        service: "financial_rent_service"         # 可省，默认值
+        mode: "mode_loan_intent_v1"               # 可省，默认值
+        # 授权书：固定本地文件，服务启动时上传 OSS 一次并缓存 licenseUrl 复用
+        licenseFile: "REPLACE_WITH_LOCAL_AUTH_FILE_PATH"   # 如 ./config/approve.pdf
+        licenseType: 1                            # 0:图片(jpg/jpeg/png/bmp) 1:pdf
+        oss:
+          endpoint: "oss-cn-shanghai.aliyuncs.com"
+          accessKeyId: "REPLACE_WITH_OSS_ACCESS_KEY_ID"
+          accessKeySecret: "REPLACE_WITH_OSS_ACCESS_KEY_SECRET"
+          bucket: "shouwei"
+          objectPrefix: "approve_files/"          # 必须以 approve_files/ 开头
+    database:
+      <<: *pg_base
+      name: "datahub_dtjd_db"
+    redis:
+      <<: *redis_base
+      # 本示例文件里 db2 与 db5 尚未被占用，dtjd 取 db2（仍在标准 0~15 范围内）。
+      # ⚠️ 真实部署配置的编号分配与本示例**不同**（config.aliyun.prod.yaml 已用到
+      # db18），务必在该文件里另取一个未占用的编号，别照抄这里的 2——启动防呆校验
+      # (checkStorageIsolation) 会拒绝两个域共用同一个 Redis 逻辑库。
+      db: 2
+  # snhmd 对接「司南黑名单」(守信 shouxin168)：与 zlf/dtjd **同一供应商、同一端点、
+  # 同一信封**——业务数据 JSON 经 AES/ECB/PKCS5Padding + Base64 放进 biz_data，与
+  # institution_id 一起 form POST。service 与那两条相同，**唯一的区分位是
+  # mode=mode_compass_black**：同端点靠 mode 选产品，抄成别的 mode 会静默查到另一个
+  # 产品的数据（不报错，更难发现）。institutionId/aesKey 按产品分配，**不要假定与
+  # zlf/dtjd 共用同一把密钥**。
+  # 入参 name + idCard + mobile 三要素**均必填**（上游 §2.5 业务数据表三项全标必传，
+  # 网关前置拦截）；licenseUrl/licenseType 是我方启动时上传授权书到 OSS 后缓存的固定值。
+  # 响应 {resp_code,resp_msg,resp_order,timestamp,resp_data}，resp_data 是 black_list
+  # 与 black_tag04..black_tag12 共 10 个 "0"/"1" 标签的对象（1 命中 / 0 未命中：
+  # black_list 是否命中黑名单、tag04 短期频繁还款失败、tag05 短期频繁借贷、tag06 短期新
+  # 机构频繁借贷、tag07 短期还款失败比例高、tag08 短期多机构逾期、tag09 中期频繁还款
+  # 失败、tag10 短期新机构频繁还款失败、tag11 当前逾期较严重、tag12 高风险客户），
+  # 整体序列化经 result.range 透出（与 blk/sffx/dtjd 同口径）；resp_order 是唯一上游
+  # 标识，成功/查无/失败三条路径都落审计（uid=logId）。
+  # ★ 计费：SW0000 认证成功【上游收费】→ 001 查得计费（**black_list=0 未命中黑名单同样
+  #   是有效结论，属查得，照常计费**，不得因为标签全 0 就改判 999）；SW0002 查询无记录
+  #   不收费 → 999；**SW0001 认证失败本产品文档标【不收费】→ 按上游侧错误返回不计费**。
+  #   ⚠️ 兄弟产品 dtjd 的同一个 SW0001 标的是【收费】、被迫归一成 999——两份文档口径
+  #   相反，**禁止互相套用**。因本路由的 999 只来自 SW0002，故与 dtjd 一样都**不在**
+  #   billing.billNotFoundRoutes 里，但理由不同。
+  #   其余 SW0003 通道超时 / SW0017 biz_data参数错误 / SW0018 参数错误 / SW003x 验签解密
+  #   / SW0040 产品未开通 / SW0041 调用量上限 / SW0042 余额不足 / SW10xx 格式有误
+  #   / SW9999 系统错误 均为上游侧错误，不计费。
+  # 独立成域（库 datahub_snhmd_db / redis db5 / 独立 license 与统计）。
+  # ★ 接入前需把部署机（阿里云 ECS）出口 IP 报给上游加白（文档「需要添加服务器白名单」）；
+  #   非白名单来源在 TLS 层即被断开，拿不到任何业务报文——那是环境问题不是协议问题。
+  snhmd:
+    upstreams:
+      - kind: "compassblack"
+        # 生产；测试(沙箱)环境为 http://sit-shouwei.shouxin168.com/sandbox/lightning/product/query
+        baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
+        institutionId: "REPLACE_WITH_SNHMD_INSTITUTION_ID"
+        aesKey: "REPLACE_WITH_SNHMD_AES_KEY"       # AES/ECB/PKCS5Padding 密钥（16/24/32 字节；hex/Base64 形态会自动解码）
+        service: "financial_rent_service"          # 可省，默认值
+        mode: "mode_compass_black"                 # 可省，默认值；**这是区分产品的唯一位**
+        # 授权书：固定本地文件，服务启动时上传 OSS 一次并缓存 licenseUrl 复用
+        licenseFile: "REPLACE_WITH_LOCAL_AUTH_FILE_PATH"   # 如 ./config/approve.pdf
+        licenseType: 1                             # 0:图片(jpg/jpeg/png/bmp) 1:pdf，与 licenseFile 真实类型一致
+        oss:
+          endpoint: "oss-cn-shanghai.aliyuncs.com"
+          accessKeyId: "REPLACE_WITH_OSS_ACCESS_KEY_ID"
+          accessKeySecret: "REPLACE_WITH_OSS_ACCESS_KEY_SECRET"
+          bucket: "shouwei"
+          objectPrefix: "approve_files/"           # 必须以 approve_files/ 开头
+    database:
+      <<: *pg_base
+      name: "datahub_snhmd_db"
+    redis:
+      <<: *redis_base
+      # db5 是本示例文件 0~15 里最后一个空位，取它之后本文件已排满（见文件头 ★）。
+      # ⚠️ 真实部署配置（config.aliyun.prod.yaml）另有编号分配，别照抄这里的 5。
+      db: 5

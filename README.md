@@ -15,14 +15,16 @@
 - **对外（下游，grsb=背景评估）**：`POST /v1/openapi/zlx/querySrmxGRSB`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参**仅** `name`+`idCard`（两项均必填，**本路由不需要手机号**）；上游结果富对象（`xm`/`sfz`/`jfdw` 缴费单位 /`grsf`/`jfjs` 缴费基数 /`cbjfzt` 参保状态 /`jfsj` 缴费时间）**全字段**整体 **JSON 序列化为字符串**经 `result.range` 透出。区分「查得」（`001` 计费）与「查无」（`999` 不计费）。详见 [`docs/API_接口文档与使用手册_grsb.pdf`](docs/API_接口文档与使用手册_grsb.pdf)。
 - **对外（下游，sfsm=身份证实名核验）**：`POST /v1/openapi/zlx/querySrmxSFSM`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参**仅** `name`+`idCard`（两项均必填，**本路由不需要手机号**）；核验结果富对象（`result` 一致性判定 /`desc` 结果描述 /`sex`/`birthday`/`address`）整体 **JSON 序列化为字符串**经 `result.range` 透出。「一致」与「不一致」都是确定结论，**同为「查得」**（`001` 计费）——是否一致看 `range` 里的 `result`/`desc`，不要用 `body.code` 判断；`999` 查无仅对应上游「无记录」。详见 [`docs/API_接口文档与使用手册_sfsm.pdf`](docs/API_接口文档与使用手册_sfsm.pdf)。
 - **对外（下游，sffx=身份风险）**：`POST /v1/openapi/zlx/querySrmxSFFX`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参**仅** `name`+`idCard`（两项均必填，**本路由不需要手机号**）；风险结果富对象（`detail` 风险标签数组，每项为「风险类型码 `A`~`P` + 风险周期码 `0`~`6`」的两字符组合，如 `C2` = 涉赌人员·1年内；无风险时为 `["A0"]`）整体 **JSON 序列化为字符串**经 `result.range` 透出。⚠️ **本路由「查得」`001` 与「查无」`999` 均计费**（上游码表对两者都标【计费】），`body.code` 只表示有无数据、不表示是否收费。详见 [`docs/API_接口文档与使用手册_sffx.pdf`](docs/API_接口文档与使用手册_sffx.pdf)。
+- **对外（下游，dtjd=多头借贷行为）**：`POST /v1/openapi/zlx/querySrmxDTJD`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参 `name`+`idCard`+`mobile`（三项**均必填**）；多头借贷结果富对象整体 **JSON 序列化为字符串**经 `result.range` 透出——含决策字段（`Rule_final_decision` `Accept`/`Reject`/`Review`、`Rule_final_weight` 评分、`Rule_name_*`/`Rule_weight_*` 命中规则）与约 700 个多头申请因子（`als_<时间窗d7/d15/m1/m3/m6/m12>_<主体id|cell>_<机构/业务类别>_<度量allnum|orgnum|…>`，如 `als_m12_id_nbank_finlea_orgnum` = 按身份证号近 12 个月在非银-持牌融资租赁机构的申请机构数）。区分「查得」（`001` 计费）与「查无」（`999` 不计费）。⚠️ 上游「认证失败」码被其文档标为收费，但我方**按查无返回且不向下游计费**（成本侧人工对账），详见 [`docs/上游对接_多头借贷行为_守信_钉钉文档整理.md`](docs/上游对接_多头借贷行为_守信_钉钉文档整理.md) §4。
+- **对外（下游，snhmd=司南黑名单）**：`POST /v1/openapi/zlx/querySrmxSNHMD`，对外契约与 x1 **完全一致**（同信封/同 MD5 加签/同 `head/body`），仅路由名不同；入参 `name`+`idCard`+`mobile`（三项**均必填**）；黑名单结果富对象整体 **JSON 序列化为字符串**经 `result.range` 透出——`black_list`（是否命中黑名单）+ `black_tag04`~`black_tag12` 共 10 个标签（`1` 命中 / `0` 未命中：短期频繁还款失败、短期频繁借贷、短期新机构频繁借贷、短期还款失败比例高、短期多机构逾期、中期频繁还款失败、短期新机构频繁还款失败、当前逾期较严重、高风险客户）。区分「查得」（`001` 计费）与「查无」（`999` 不计费）；⚠️ **`black_list=0` 未命中黑名单同样是有效结论，属「查得」照常计费**，是否命中看 `range` 里的 `black_list`，不要用 `body.code` 判断。详见 [`docs/上游对接_司南黑名单_守信_钉钉文档整理.md`](docs/上游对接_司南黑名单_守信_钉钉文档整理.md)。
 
 > **额度策略（v0.6+）**：已**取消额度限制**——不限制客户调用次数；系统仅**统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。维度②（上游配额/调用计数/对账作业）已在 v0.7 **彻底移除**。
 >
-> **计费口径按路由取（v1.0）**：计入成功查得数的上游码由 `billing.TableFor(route)` 决定，**不是全仓一律「仅 001」**——上游对查无也收费的路由（当前只有 `blk`）须同步向下游计费，否则上游账单与我方统计长期对不平。计费口径与下游报文形态是两件事：`blk` 的查无照旧回 `body.code=999`，只是内部计费。逐路由口径与上游文档出处见 `billing-scope` skill，改动前先读它。
+> **计费口径按路由取（v1.0）**：计入成功查得数的上游码由 `billing.TableFor(route)` 决定，**不是全仓一律「仅 001」**——上游对查无也收费的路由（当前为 `blk`、`sffx`）须同步向下游计费，否则上游账单与我方统计长期对不平。计费口径与下游报文形态是两件事：`blk` 的查无照旧回 `body.code=999`，只是内部计费。反向的例外也存在：`dtjd` 的「认证失败」码被上游标为收费，但我方刻意**不**向下游计费（宁可自己吃成本，不可向客户多收）。逐路由口径与上游文档出处见 `billing-scope` skill，改动前先读它。
 
 > **IP 准入（v0.7）**：网关**不再**做全局/每用户 IP 白名单校验；来源 IP 仅写入审计日志。生产环境由**阿里云 ECS 安全组**等网络层控制访问。
 
-> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` / `tsfx` / `lxf` / `grgjj` / `grsb` / `sfsm` / `sffx` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
+> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` / `tsfx` / `lxf` / `grgjj` / `grsb` / `sfsm` / `sffx` / `dtjd` / `snhmd` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
 
 > **`result.range` 不透出上游标识（v0.9+ 铁律）**：`range` 只承载**业务数据**。上游订单号/流水号/交易号、请求号/日志号/追踪号、上游侧凭证与签名、上游账户/产品/场景编号一律**不进响应体**——它们经 `UpstreamResult.UID`/`LogID` 落进审计（管理后台「上游uid / 上游logId」两列）供运营向上游对账，并打进服务端日志供排障，但下游看不到。实现是所有「序列化透出」路由共用的 [`internal/infrastructure/upstream/sanitize.go`](internal/infrastructure/upstream/sanitize.go) 的 `sanitizeRange`：按字段名（忽略大小写与 `_`/`-`）**递归**剥离标识类字段，保留字段顺序与数字字面量，非法 JSON 则 fail closed 置空。聚合路由（`aggregate.go`）的失败段同理只给中性 `status:"error"`，不带上游 code/msg/单号；段名由装配层给中性的 `source1/source2…`，不暴露上游 kind。新增上游若响应带了新的标识字段，在 `upstreamOnlyKeys` 补一条即可全局生效。回归见 `upstream/sanitize_test.go`。
 
@@ -41,6 +43,8 @@
   - `grsb` → **背景评估 BJPG-01**（`bgpg`，`POST /api/getData` **JSON** 提交；请求头带 `accountId`/`prodId`(`BJPG-01`)，请求体 `{data}`，`data = Base64(AES/CBC/PKCS5(明文业务JSON {idCard,name}))`——密钥由 `encryptKey` **hex 解码**得来（32 个 hex 字符 = AES-128），IV 固定为 16 个 ASCII 字符 `"0000000000000000"`；响应 `{data,code,uuid,retMsg}`，`data` 为同套 AES 密文、解密得 `{xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj}` 全字段经 `result.range` 透出；`code=200` 查得 / `2-404`·`3-404` 查无 / 其余 `2-5xx`·`3-5xx` 上游侧错误。**入参不含手机号**）。
   - `sfsm` → **身份证实名核验 / 数脉**（`idcheck`，`POST /v4/id_card/check` **form** 提交（文档明确"不要 json 方式"）；与 `rlbd1`/`rlbd2` 同一服务商、同一套鉴权 `sign = md5(appid&timestamp&app_security)`，`name`/`idcard` 明文传（`secretMode` 缺省不发，如需加密则 AES/ECB/PKCS5+Base64、key = `app_security`）；响应 `{msg,success,code,data{result,order_no,desc,sex,birthday,address}}`，业务字段经 `result.range` 透出、`order_no` 只落审计；`code=200` 且 `result=0` 一致 / `result=1` 不一致 **都归一 `001` 计费**（上游对两者均标"收费"，是确定结论），`result=2` 无记录归一 `999`，`code≠200`（`400`/`404`/`500`/`501`/`601`/`602`/`603`/`604`/`606`/`1001`）归一上游侧错误不计费。**入参不含手机号**）。
   - `sffx` → **身份风险V107 / 应诺尔 enol**（`idrisk`，`POST /enol/api/v1/doCheck` **JSON** 提交；与 `x1`(gama)、`blk`(blacklist) 同一服务商同一端点同一信封 `{encryptionType,appId,sign,apiKey,body}`，`sign = MD5(body 参数按键名 ASCII 升序拼「键值」串 + secret)` 小写 hex，`apiKey` 固定 `idRiskTagV107`，`encryptionType=2` 时 `name`/`idCard` 取 MD5 摘要后入 body 并参与加签；响应 `{code,msg,seqNo,data{busiCode,busiMsg,result}}`，`result` 富对象 `{detail:[...]}` 经 `result.range` 透出、`seqNo` 只落审计；`busiCode=10` 查得归一 `001`、`1000` 数据未查得归一 `999`（**两者上游都标【计费】，故本路由查无也计费**——与同服务商 `x1` 伽马的 `1000` 不计费口径**相反**），其余 `1001`/`1002`/`1003`/`1004`/`1005`/`1006`/`1007`/`1009` 与全局 `code=-1` 归一上游侧错误不计费。**入参不含手机号**）。
+  - `dtjd` → **多头借贷行为 / 守信 shouxin168**（`multiloan`，`POST /api/lightning/product/query` **form** 提交；与 `zlf`(rental) 同一服务商、同一端点、同一信封——`institution_id` 明文 + `biz_data = Base64(AES/ECB/PKCS5(明文业务JSON))`，业务 JSON 为 `{name,ident_number,phone,service,mode,licenseUrl,licenseType}` 七项**全必传**，`service=financial_rent_service`、`mode=mode_loan_intent_v1`，授权书启动时上传 OSS 缓存 `licenseUrl` 复用；响应 `{resp_code,resp_msg,resp_order,timestamp,resp_data}`，`resp_data` 富对象（`Rule_*` 决策 + 约 700 个 `als_*` 多头因子）整体序列化经 `result.range` 透出、`resp_order` 只落审计；`SW0000` 查得归一 `001` 计费、`SW0002` 查无归一 `999` 不计费、**`SW0001` 认证失败虽被上游标【收费】仍归一 `999` 且不向下游计费**（与兄弟路由 `zlf` 的 SW0001 口径**相反**，见 `billing-scope` skill），其余 `SW0003`/`SW0017`/`SW0018`/`SW003x`/`SW004x`/`SW10xx`/`SW9999` 归一上游侧错误不计费）。
+  - `snhmd` → **司南黑名单 / 守信 shouxin168**（`compassblack`，`POST /api/lightning/product/query` **form** 提交；与 `zlf`(rental)、`dtjd`(multiloan) 同一服务商、同一端点、同一信封——`institution_id` 明文 + `biz_data = Base64(AES/ECB/PKCS5(明文业务JSON))`，业务 JSON 为 `{name,ident_number,phone,service,mode,licenseUrl,licenseType}` 七项**全必传**，`service` 与那两条相同、**`mode=mode_compass_black` 是同端点区分产品的唯一位**，授权书启动时上传 OSS 缓存 `licenseUrl` 复用；响应 `{resp_code,resp_msg,resp_order,timestamp,resp_data}`，`resp_data` 为 `black_list` + `black_tag04`~`black_tag12` 共 10 个 `"0"`/`"1"` 标签的对象，整体序列化经 `result.range` 透出、`resp_order` 只落审计；`SW0000` 查得归一 `001` 计费（含标签全 `0` 的未命中结论）、`SW0002` 查无归一 `999` 不计费、**`SW0001` 认证失败本产品文档标【不收费】故归一上游侧错误**（与兄弟路由 `dtjd` 的同码口径**相反**，见 `billing-scope` skill），其余 `SW0003`/`SW0017`/`SW0018`/`SW003x`/`SW004x`/`SW10xx`/`SW9999` 同样归一上游侧错误不计费）。
   保留 `upstream.Router` 抽象，每版本一个单 provider 路由。
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，架构图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
@@ -180,8 +184,8 @@ storage:
   driver: "postgres"             # 生产必须为 postgres
   migrationsDir: "migrations"    # 相对 relay 工作目录；启动时自动跑 DDL
 
-# 存储按域独立：x1/v8v9/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx 各一套 PG 库 + Redis 逻辑库。
-# 注意 Redis 逻辑库已用到 db15（标准 Redis 仅 0~15），再加路由需先扩容 databases 或换实例。
+# 存储按域独立：x1/v8v9/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd 各一套 PG 库 + Redis 逻辑库。
+# 注意 Redis 逻辑库编号已接近用满（标准 Redis 仅 0~15），再加路由需先扩容 databases 或换实例。
 # 上游按 upstreams 列表配置：单源路由列表长度 1；多源路由长度 N，每个子源自带完整凭证。
 # 多源有两种装配（自动判定）：
 #   - 串行寻源 Sourcer（命中即停，源间可互相替代/同一种数据不同供应商，如 grgjj）：
@@ -238,7 +242,7 @@ versions:
         appSecret: "<上游 app_security>"
     database: { host: "<RDS>", name: "datahub_rlbd1_db", ... }
     redis:    { db: 8, ... }
-  # 其余路由 (rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx) 见 config.example.yaml
+  # 其余路由 (rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd) 见 config.example.yaml
 
 admin:
   bootstrapUser: "admin"

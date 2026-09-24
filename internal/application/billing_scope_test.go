@@ -37,6 +37,24 @@ func TestBillingScopeDecoupledFromWireCode(t *testing.T) {
 			route: "blk", upstreamCode: "999", wantBodyCode: "999", wantUsed: 1,
 			why: "黑名单 1000 未查得【计费】——查无照样收费，但下游仍应看到 999",
 		},
+		{
+			route: "dtjd", upstreamCode: "001", wantBodyCode: "001", wantUsed: 1,
+			why: "多头借贷 SW0000 认证成功【收费】",
+		},
+		{
+			route: "dtjd", upstreamCode: "999", wantBodyCode: "999", wantUsed: 0,
+			why: "多头借贷 SW0002 查询无记录 不收费；SW0001 认证失败虽被上游标【收费】" +
+				"也走这条 999 且不向下游计费（上游侧成本靠 warn + 上游订单号人工对账）",
+		},
+		{
+			route: "snhmd", upstreamCode: "001", wantBodyCode: "001", wantUsed: 1,
+			why: "司南黑名单 SW0000 认证成功【收费】",
+		},
+		{
+			route: "snhmd", upstreamCode: "999", wantBodyCode: "999", wantUsed: 0,
+			why: "司南黑名单 SW0002 查询无记录 不收费（本产品 SW0001 标不收费、走上游侧" +
+				"错误不归一到 999，故这条 999 口径单一，与 dtjd 不同）",
+		},
 	}
 
 	for _, tc := range cases {

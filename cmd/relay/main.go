@@ -316,8 +316,12 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 	// 选校验器；约定同一路由各源入参口径取并集、由该校验器统一覆盖 (grgjj 主源
 	// incomeag 的 ParseWithName 即 name+idCard+mobile 三要素，备源 bgjj 同口径)。
 	switch routeKind {
-	case upstream.ProviderRental, upstream.ProviderBlacklist:
+	case upstream.ProviderRental, upstream.ProviderBlacklist, upstream.ProviderMultiLoan,
+		upstream.ProviderCompassBlack:
 		// zlf (租赁分 name 必传) / blk (黑名单V35 name 参与摘要匹配) 均要求姓名必填。
+		// dtjd (多头借贷行为) / snhmd (司南黑名单)：两者上游 §2.5 业务数据表都把
+		// name/ident_number/phone 三项全标「必传」，故三要素齐全才放行
+		// （licenseUrl/licenseType/service/mode 是我方配置侧的固定值，不来自下游入参）。
 		orch.WithParser(parse.ParseWithName)
 	case upstream.ProviderFaceCompare:
 		// rlbd1 人脸身份证比对：name+idCard 必填、image|url 二选一（对齐数脉契约）。
@@ -487,6 +491,29 @@ func labelFor(uc upstreamConfig, idx int) string {
 	return fmt.Sprintf("source%d", idx+1)
 }
 
+// uploadAuthLicense 在启动时把固定授权书上传到 OSS 并返回 licenseUrl, 供该上游的
+// 所有查询复用 (守信系上游 rental/multiloan/compassblack 的 biz_data 都要带 licenseUrl)。
+// OSS/授权书未配置时 (dev/memory) 返回空串, 由上游在调用时报错, 不阻塞服务启动。
+func uploadAuthLicense(uc upstreamConfig, kind string, logger *slog.Logger) string {
+	if uc.licenseFile == "" {
+		logger.Warn("未配置授权书文件 (licenseFile), licenseUrl 留空", "kind", kind)
+		return ""
+	}
+	url, err := oss.UploadFile(oss.Config{
+		Endpoint:        uc.oss.endpoint,
+		AccessKeyID:     uc.oss.accessKeyID,
+		AccessKeySecret: uc.oss.accessKeySecret,
+		Bucket:          uc.oss.bucket,
+		ObjectPrefix:    uc.oss.objectPrefix,
+	}, uc.licenseFile)
+	if err != nil {
+		logger.Warn("授权书上传 OSS 失败, licenseUrl 留空", "kind", kind, "err", err)
+		return ""
+	}
+	logger.Info("授权书已上传 OSS", "kind", kind, "licenseUrl", url)
+	return url
+}
+
 // buildClient constructs one 上游子源 client (port.UpstreamPort) by kind.
 func buildClient(version string, uc upstreamConfig, httpClient *http.Client, logger *slog.Logger) (port.UpstreamPort, error) {
 	switch uc.kind {
@@ -502,33 +529,39 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderRental:
-		// 启动时把固定授权书上传到 OSS, 缓存 licenseUrl 供所有查询复用。OSS/授权书
-		// 未配置时 (dev/memory) 留空, 由上游在调用时报错, 不阻塞服务启动。
-		licenseURL := ""
-		if uc.licenseFile != "" {
-			url, err := oss.UploadFile(oss.Config{
-				Endpoint:        uc.oss.endpoint,
-				AccessKeyID:     uc.oss.accessKeyID,
-				AccessKeySecret: uc.oss.accessKeySecret,
-				Bucket:          uc.oss.bucket,
-				ObjectPrefix:    uc.oss.objectPrefix,
-			}, uc.licenseFile)
-			if err != nil {
-				logger.Warn("rental 授权书上传 OSS 失败, licenseUrl 留空", "err", err)
-			} else {
-				licenseURL = url
-				logger.Info("rental 授权书已上传 OSS", "licenseUrl", licenseURL)
-			}
-		} else {
-			logger.Warn("rental 未配置授权书文件 (licenseFile), licenseUrl 留空")
-		}
 		client := upstream.NewRental(upstream.RentalConfig{
 			BaseURL:       uc.baseURL,
 			InstitutionID: uc.institutionID,
 			AESKey:        uc.aesKey,
 			Service:       uc.service,
 			Mode:          uc.mode,
-			LicenseURL:    licenseURL,
+			LicenseURL:    uploadAuthLicense(uc, upstream.ProviderRental, logger),
+			LicenseType:   uc.licenseType,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderMultiLoan:
+		// dtjd 多头借贷行为：与 zlf/rental 同一供应商 (守信 shouxin168)、同一端点与
+		// 信封，授权书 OSS 上传流程也完全一致，仅 service/mode 与响应主体不同。
+		client := upstream.NewMultiLoan(upstream.MultiLoanConfig{
+			BaseURL:       uc.baseURL,
+			InstitutionID: uc.institutionID,
+			AESKey:        uc.aesKey,
+			Service:       uc.service,
+			Mode:          uc.mode,
+			LicenseURL:    uploadAuthLicense(uc, upstream.ProviderMultiLoan, logger),
+			LicenseType:   uc.licenseType,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderCompassBlack:
+		// snhmd 司南黑名单：与 zlf/dtjd 同一供应商 (守信 shouxin168)、同一端点与信封，
+		// 授权书 OSS 上传流程也完全一致，仅 mode (mode_compass_black) 与响应主体不同。
+		client := upstream.NewCompassBlack(upstream.CompassBlackConfig{
+			BaseURL:       uc.baseURL,
+			InstitutionID: uc.institutionID,
+			AESKey:        uc.aesKey,
+			Service:       uc.service,
+			Mode:          uc.mode,
+			LicenseURL:    uploadAuthLicense(uc, upstream.ProviderCompassBlack, logger),
 			LicenseType:   uc.licenseType,
 		}, httpClient)
 		return client, nil

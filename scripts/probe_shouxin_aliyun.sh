@@ -19,6 +19,10 @@
 # 覆盖探测三要素（默认：陈韫 / 440303200002163115 / 13670010670）：
 #   PROBE_NAME=... PROBE_IDCARD=... PROBE_MOBILE=... ./scripts/probe_shouxin_aliyun.sh
 #
+# 【凭证还没拿到时】只验证网络可达与出口 IP 是否已加白（不做业务调用）：
+#   PROBE_NET_ONLY=1 ./scripts/probe_shouxin_aliyun.sh
+#   上游文档 §2.3 规定 institution_id 必传，没有真值就无法发起真实业务查询。
+#
 # 成功：每条路由归一化码 001（查得）或 999（查无）即 PASS；任一条 FAIL 则整脚本 exit 1。
 
 set -euo pipefail
@@ -47,7 +51,12 @@ command -v go >/dev/null 2>&1 || fail "未找到 go，请先安装 Go 或使用�
 log "DataHub 守信三路由上游探测"
 log "  工作目录: $REPO_DIR"
 log "  配置:     $CONFIG_FILE"
-log "  样本:     name=$PROBE_NAME idCard=$PROBE_IDCARD mobile=$PROBE_MOBILE"
+if [ "${PROBE_NET_ONLY:-}" = "1" ]; then
+  export PROBE_NET_ONLY
+  log "  模式:     仅网络连通性（不做业务调用，无需真实凭证）"
+else
+  log "  样本:     name=$PROBE_NAME idCard=$PROBE_IDCARD mobile=$PROBE_MOBILE"
+fi
 echo ""
 
 PASS=0

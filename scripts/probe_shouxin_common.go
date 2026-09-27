@@ -7,7 +7,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -133,6 +135,12 @@ func runShouxinProbe(route, title string) int {
 	fmt.Printf("  endpoint=%s\n", u.BaseURL)
 	fmt.Printf("  institutionId=%s\n", maskID(u.InstitutionID))
 
+	// 网络层探测：凭证未到位时先验证「ECS 能否连上上游 + 出口 IP 是否已加白」。
+	// 上游文档 §2.3 规定 institution_id 必传，故这里拿不到真值就不做业务调用。
+	if os.Getenv("PROBE_NET_ONLY") == "1" {
+		return runNetProbe(u)
+	}
+
 	if placeholder(u.InstitutionID) {
 		fmt.Println("FAIL: institutionId 仍为占位符，请先在配置中填入上游分配的机构号")
 		return 1
@@ -223,6 +231,42 @@ func runShouxinProbe(route, title string) int {
 		fmt.Printf("FAIL: 未预期的归一化码 %s\n", result.Code)
 		return 1
 	}
+}
+
+// runNetProbe 只验证网络可达性与 IP 白名单：拿配置里的 institution_id（哪怕是占位符）
+// 加一段无效 biz_data 发一次真实 form POST。只要上游回了 HTTP 响应（哪怕是业务错误码），
+// 就说明 TLS 通、IP 已加白；连不上才是网络/白名单问题。
+func runNetProbe(u shouxinUpstream) int {
+	fmt.Println("  模式: 仅网络连通性 (PROBE_NET_ONLY=1)，不做业务调用")
+
+	form := url.Values{}
+	form.Set("institution_id", u.InstitutionID)
+	form.Set("biz_data", "net-probe-invalid-ciphertext")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.BaseURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		fmt.Println("FAIL: 构造请求:", err)
+		return 1
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json;charset=utf-8")
+
+	start := time.Now()
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		fmt.Printf("FAIL: 无法连接上游 (%.1fs): %v\n", time.Since(start).Seconds(), err)
+		fmt.Println("  提示: 本机出口 IP 很可能未加入守信白名单，或 ECS 安全组/网络不通")
+		return 1
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	fmt.Printf("  HTTP=%d 耗时=%.1fs\n", resp.StatusCode, time.Since(start).Seconds())
+	fmt.Printf("  响应=%s\n", trunc(strings.TrimSpace(string(body)), 300))
+	fmt.Println("== 结论: PASS（网络可达、上游已应答；凭证是否有效需填真值后再测）==")
+	return 0
 }
 
 func printHints(err error) {

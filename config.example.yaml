@@ -405,7 +405,8 @@ versions:
   # 同一信封**——业务数据 JSON 经 AES/ECB/PKCS5Padding + Base64 放进 biz_data，与
   # institution_id 一起 form POST；仅 service/mode 与响应主体不同。
   # 入参 name + idCard + mobile 三要素**均必填**（上游 §2.5 业务数据表三项全标必传，
-  # 网关前置拦截）；licenseUrl/licenseType 是我方启动时上传授权书到 OSS 后缓存的固定值。
+  # 网关前置拦截）；licenseUrl/licenseType 按上游 2026-09-28 书面答复测试/生产均不传
+  # （不配 licenseFile/oss，客户端即从 biz_data 省略这两个字段）。
   # 响应 {resp_code,resp_msg,resp_order,timestamp,resp_data}，resp_data 是约 700 个
   # als_* 多头借贷因子 + Rule_* 决策字段（Rule_final_decision Accept/Reject/Review、
   # Rule_final_weight 评分、Rule_name_*/Rule_weight_* 命中规则）的富对象，
@@ -426,40 +427,32 @@ versions:
       - kind: "multiloan"
         # 生产；测试(沙箱)环境为 http://sit-shouwei.shouxin168.com/sandbox/lightning/product/query
         baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
-        institutionId: "REPLACE_WITH_DTJD_INSTITUTION_ID"
-        aesKey: "REPLACE_WITH_DTJD_AES_KEY"       # AES/ECB/PKCS5Padding 密钥（16/24/32 字节；hex/Base64 形态会自动解码）
+        institutionId: "REPLACE_WITH_SHOUXIN_INSTITUTION_ID"   # dtjd/snhmd/dtly 共用同一套（zlf 另有一套）
+        aesKey: "REPLACE_WITH_SHOUXIN_AES_KEY"     # 16 字节原始 ASCII（hex/Base64 形态也会自动解码）；抄错上游返回 SW9999 AES解密错误
         service: "financial_rent_service"         # 可省，默认值
         mode: "mode_loan_intent_v1"               # 可省，默认值
-        # 授权书：固定本地文件，服务启动时上传 OSS 一次并缓存 licenseUrl 复用
-        licenseFile: "REPLACE_WITH_LOCAL_AUTH_FILE_PATH"   # 如 ./config/approve.pdf
-        licenseType: 1                            # 0:图片(jpg/jpeg/png/bmp) 1:pdf
-        # OSS：dtjd/snhmd/dtly 三条共用同一套凭证（上游 2026-09-24 确认）。
-        # ⚠️ zlf 虽同为守信，但**不在共用范围内**，其 oss 块独立，勿互相套用。
-        oss:
-          endpoint: "oss-cn-shanghai.aliyuncs.com"
-          accessKeyId: "REPLACE_WITH_OSS_ACCESS_KEY_ID"
-          accessKeySecret: "REPLACE_WITH_OSS_ACCESS_KEY_SECRET"
-          bucket: "shouwei"
-          objectPrefix: "approve_files/"          # 必须以 approve_files/ 开头
+        # 授权书：按上游答复不配。若日后上游要求传 licenseUrl，再加：
+        #   licenseFile: "./config/approve.pdf"   licenseType: 1（pdf=1，图片=0）
+        #   oss: { endpoint: "oss-cn-shanghai.aliyuncs.com", accessKeyId, accessKeySecret,
+        #          bucket: "shouwei", objectPrefix: "approve_files/" }（必须以 approve_files/ 开头）
     database:
       <<: *pg_base
       name: "datahub_dtjd_db"
     redis:
       <<: *redis_base
       # 本示例文件里 db2 与 db5 尚未被占用，dtjd 取 db2（仍在标准 0~15 范围内）。
-      # ⚠️ 真实部署配置的编号分配与本示例**不同**（config.aliyun.prod.yaml 里 dtjd 取
-      # db2、snhmd 取 db5、dtly 取 db15，该文件仅剩 db0/db1 空闲），改那个文件时务必
-      # 另取未占用的编号——启动防呆校验 (checkStorageIsolation) 会拒绝两个域共用同一
-      # 个 Redis 逻辑库。
+      # ⚠️ 真实部署配置的编号分配与本示例**不同**（config.aliyun.prod.yaml 里 dtjd/snhmd/
+      # dtly 取 db18/db19/db20），改那个文件时务必另取未占用的编号——启动防呆校验
+      # (checkStorageIsolation) 会拒绝两个域共用同一个 Redis 逻辑库。
       db: 2
   # snhmd 对接「司南黑名单」(守信 shouxin168)：与 zlf/dtjd **同一供应商、同一端点、
   # 同一信封**——业务数据 JSON 经 AES/ECB/PKCS5Padding + Base64 放进 biz_data，与
   # institution_id 一起 form POST。service 与那两条相同，**唯一的区分位是
   # mode=mode_compass_black**：同端点靠 mode 选产品，抄成别的 mode 会静默查到另一个
-  # 产品的数据（不报错，更难发现）。institutionId/aesKey 按产品分配，**不要假定与
-  # zlf/dtjd 共用同一把密钥**。
+  # 产品的数据（不报错，更难发现）。institutionId/aesKey 与 dtjd/dtly 共用上游
+  # 2026-09-28 分配的同一套（zlf 另有一套，勿混用）。
   # 入参 name + idCard + mobile 三要素**均必填**（上游 §2.5 业务数据表三项全标必传，
-  # 网关前置拦截）；licenseUrl/licenseType 是我方启动时上传授权书到 OSS 后缓存的固定值。
+  # 网关前置拦截）；licenseUrl/licenseType 按上游 2026-09-28 书面答复测试/生产均不传。
   # 响应 {resp_code,resp_msg,resp_order,timestamp,resp_data}，resp_data 是 black_list
   # 与 black_tag04..black_tag12 共 10 个 "0"/"1" 标签的对象（1 命中 / 0 未命中：
   # black_list 是否命中黑名单、tag04 短期频繁还款失败、tag05 短期频繁借贷、tag06 短期新
@@ -484,21 +477,11 @@ versions:
       - kind: "compassblack"
         # 生产；测试(沙箱)环境为 http://sit-shouwei.shouxin168.com/sandbox/lightning/product/query
         baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
-        institutionId: "REPLACE_WITH_SNHMD_INSTITUTION_ID"
-        aesKey: "REPLACE_WITH_SNHMD_AES_KEY"       # AES/ECB/PKCS5Padding 密钥（16/24/32 字节；hex/Base64 形态会自动解码）
+        institutionId: "REPLACE_WITH_SHOUXIN_INSTITUTION_ID"   # 与 dtjd/dtly 同一套
+        aesKey: "REPLACE_WITH_SHOUXIN_AES_KEY"     # 16 字节原始 ASCII；抄错上游返回 SW9999 AES解密错误
         service: "financial_rent_service"          # 可省，默认值
         mode: "mode_compass_black"                 # 可省，默认值；**这是区分产品的唯一位**
-        # 授权书：固定本地文件，服务启动时上传 OSS 一次并缓存 licenseUrl 复用
-        licenseFile: "REPLACE_WITH_LOCAL_AUTH_FILE_PATH"   # 如 ./config/approve.pdf
-        licenseType: 1                             # 0:图片(jpg/jpeg/png/bmp) 1:pdf，与 licenseFile 真实类型一致
-        # OSS：dtjd/snhmd/dtly 三条共用同一套凭证（上游 2026-09-24 确认）。
-        # ⚠️ zlf 虽同为守信，但**不在共用范围内**，其 oss 块独立，勿互相套用。
-        oss:
-          endpoint: "oss-cn-shanghai.aliyuncs.com"
-          accessKeyId: "REPLACE_WITH_OSS_ACCESS_KEY_ID"
-          accessKeySecret: "REPLACE_WITH_OSS_ACCESS_KEY_SECRET"
-          bucket: "shouwei"
-          objectPrefix: "approve_files/"           # 必须以 approve_files/ 开头
+        # 授权书：按上游答复不配（需要时的写法见 dtjd 块注释）。
     database:
       <<: *pg_base
       name: "datahub_snhmd_db"
@@ -511,10 +494,10 @@ versions:
   # 端点、同一信封**——业务数据 JSON 经 AES/ECB/PKCS5Padding + Base64 放进 biz_data，
   # 与 institution_id 一起 form POST。service 与 dtjd/snhmd 相同，**唯一的区分位是
   # mode=mode_many_overdue_behavior**：同端点靠 mode 选产品，抄成别的 mode 会静默查到
-  # 另一个产品的数据（不报错，更难发现）。institutionId/aesKey 按产品分配，**不要假定
-  # 与 zlf/dtjd/snhmd 共用同一把密钥**。
+  # 另一个产品的数据（不报错，更难发现）。institutionId/aesKey 与 dtjd/snhmd 共用上游
+  # 2026-09-28 分配的同一套（zlf 另有一套，勿混用）。
   # 入参 name + idCard + mobile 三要素**均必填**（上游 §2.5 业务数据表三项全标必传，
-  # 网关前置拦截）；licenseUrl/licenseType 是我方启动时上传授权书到 OSS 后缓存的固定值。
+  # 网关前置拦截）；licenseUrl/licenseType 按上游 2026-09-28 书面答复测试/生产均不传。
   # 响应 {resp_code,resp_msg,resp_order,timestamp,resp_data}，resp_data 是357 个扁平
   # 因子的富对象：xyp_cpl00xx 多头履约/逾期因子、xyp_t01/t02/t03td/t04 分层履约因子、
   # xyp_model_score_high/mid/low 三个星耀Pro 评分（[350,950]，越大逾期率越低，未命中
@@ -540,21 +523,11 @@ versions:
       - kind: "manyoverdue"
         # 生产；测试(沙箱)环境为 http://sit-shouwei.shouxin168.com/sandbox/lightning/product/query
         baseURL: "https://shouwei.shouxin168.com/api/lightning/product/query"
-        institutionId: "REPLACE_WITH_DTLY_INSTITUTION_ID"
-        aesKey: "REPLACE_WITH_DTLY_AES_KEY"        # AES/ECB/PKCS5Padding 密钥（16/24/32 字节；hex/Base64 形态会自动解码）
+        institutionId: "REPLACE_WITH_SHOUXIN_INSTITUTION_ID"   # 与 dtjd/snhmd 同一套
+        aesKey: "REPLACE_WITH_SHOUXIN_AES_KEY"     # 16 字节原始 ASCII；抄错上游返回 SW9999 AES解密错误
         service: "financial_rent_service"          # 可省，默认值
         mode: "mode_many_overdue_behavior"         # 可省，默认值；**这是区分产品的唯一位**
-        # 授权书：固定本地文件，服务启动时上传 OSS 一次并缓存 licenseUrl 复用
-        licenseFile: "REPLACE_WITH_LOCAL_AUTH_FILE_PATH"   # 如 ./config/approve.pdf
-        licenseType: 1                             # 0:图片(jpg/jpeg/png/bmp) 1:pdf，与 licenseFile 真实类型一致
-        # OSS：dtjd/snhmd/dtly 三条共用同一套凭证（上游 2026-09-24 确认）。
-        # ⚠️ zlf 虽同为守信，但**不在共用范围内**，其 oss 块独立，勿互相套用。
-        oss:
-          endpoint: "oss-cn-shanghai.aliyuncs.com"
-          accessKeyId: "REPLACE_WITH_OSS_ACCESS_KEY_ID"
-          accessKeySecret: "REPLACE_WITH_OSS_ACCESS_KEY_SECRET"
-          bucket: "shouwei"
-          objectPrefix: "approve_files/"           # 必须以 approve_files/ 开头
+        # 授权书：按上游答复不配（需要时的写法见 dtjd 块注释）。
     database:
       <<: *pg_base
       name: "datahub_dtly_db"

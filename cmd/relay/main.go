@@ -492,12 +492,18 @@ func labelFor(uc upstreamConfig, idx int) string {
 }
 
 // uploadAuthLicense 在启动时把固定授权书上传到 OSS 并返回 licenseUrl, 供该上游的
-// 所有查询复用 (守信系上游 rental/multiloan/compassblack/manyoverdue 的 biz_data 都要带
-// licenseUrl)。
-// OSS/授权书未配置时 (dev/memory) 返回空串, 由上游在调用时报错, 不阻塞服务启动。
+// 所有查询复用 (守信系上游 rental/multiloan/compassblack/manyoverdue)。
+// 未配 licenseFile 时返回空串, 不阻塞服务启动：
+//   - multiloan/compassblack/manyoverdue (dtjd/snhmd/dtly)：上游 2026-09-28 书面答复
+//     测试/生产均不传 licenseUrl/licenseType，这是正常状态，客户端会从 biz_data 省略两字段；
+//   - rental (zlf)：原文标必传且未获上游豁免，仍按缺配告警，客户端照旧送空值。
 func uploadAuthLicense(uc upstreamConfig, kind string, logger *slog.Logger) string {
 	if uc.licenseFile == "" {
-		logger.Warn("未配置授权书文件 (licenseFile), licenseUrl 留空", "kind", kind)
+		if kind == upstream.ProviderRental {
+			logger.Warn("未配置授权书文件 (licenseFile), licenseUrl 留空", "kind", kind)
+		} else {
+			logger.Info("未配置授权书文件, 按上游答复不传 licenseUrl/licenseType", "kind", kind)
+		}
 		return ""
 	}
 	url, err := oss.UploadFile(oss.Config{
@@ -542,7 +548,7 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 		return client, nil
 	case upstream.ProviderMultiLoan:
 		// dtjd 多头借贷行为：与 zlf/rental 同一供应商 (守信 shouxin168)、同一端点与
-		// 信封，授权书 OSS 上传流程也完全一致，仅 service/mode 与响应主体不同。
+		// 信封，仅 service/mode 与响应主体不同。授权书按上游答复不传 (见 uploadAuthLicense)。
 		client := upstream.NewMultiLoan(upstream.MultiLoanConfig{
 			BaseURL:       uc.baseURL,
 			InstitutionID: uc.institutionID,
@@ -555,7 +561,7 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 		return client, nil
 	case upstream.ProviderCompassBlack:
 		// snhmd 司南黑名单：与 zlf/dtjd 同一供应商 (守信 shouxin168)、同一端点与信封，
-		// 授权书 OSS 上传流程也完全一致，仅 mode (mode_compass_black) 与响应主体不同。
+		// 仅 mode (mode_compass_black) 与响应主体不同。授权书按上游答复不传。
 		client := upstream.NewCompassBlack(upstream.CompassBlackConfig{
 			BaseURL:       uc.baseURL,
 			InstitutionID: uc.institutionID,
@@ -568,8 +574,7 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 		return client, nil
 	case upstream.ProviderManyOverdue:
 		// dtly 多头履约行为：与 zlf/dtjd/snhmd 同一供应商 (守信 shouxin168)、同一端点与
-		// 信封，授权书 OSS 上传流程也完全一致，仅 mode (mode_many_overdue_behavior) 与
-		// 响应主体不同。
+		// 信封，仅 mode (mode_many_overdue_behavior) 与响应主体不同。授权书按上游答复不传。
 		client := upstream.NewManyOverdue(upstream.ManyOverdueConfig{
 			BaseURL:       uc.baseURL,
 			InstitutionID: uc.institutionID,

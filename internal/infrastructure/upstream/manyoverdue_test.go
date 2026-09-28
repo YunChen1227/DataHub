@@ -50,7 +50,7 @@ func manyOverdueServer(t *testing.T, body string) *httptest.Server {
 // 密钥形态必须验算, 不能想当然 (verify-source-doc skill 第 4 条)：AES 只接受
 // 16/24/32 字节。64 个十六进制字符是 32 字节 AES-256 密钥 (必须 hex 解码), **不是**
 // 64 字节 ASCII; Base64 形态的要先 Base64 解码。非法长度必须立刻报错, 禁止静默降级。
-// 本产品的 institution_id/aesKey **可能与 zlf/dtjd/snhmd 不同**, 不得假定共用同一把密钥。
+// 上游当前给 dtjd/snhmd/dtly 分配的是同一套 16 字节原始 ASCII 密钥 (zlf 另有一套)。
 func TestManyOverdueAESKeyDerivation(t *testing.T) {
 	hex32 := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")) // 64 hex 字符 → 32 字节
 	// Base64(32 字节) = 44 个字符: 长度不在 {16,24,32} 里, 才会走到 Base64 分支。

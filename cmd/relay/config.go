@@ -39,7 +39,7 @@ type upstreamConfig struct {
 	service       string
 	mode          string
 	oss           ossConfig
-	licenseFile   string // 固定授权书本地文件, 启动时上传 OSS
+	licenseFile   string // 固定授权书本地文件, 启动时上传 OSS；dtjd/snhmd/dtly 按上游答复不配
 	licenseType   int    // 0:图片 1:pdf
 	// bgjj (备用公积金源 / jeoho) 凭证：account=merchant_id、key=merchantKey (MD5 加签)、
 	// certPath/certPass=P12 客户端证书 (双向认证)。复用 account/key，仅新增证书两字段。

@@ -62,16 +62,17 @@ const (
 )
 
 // ManyOverdueConfig holds the 多头履约行为 (守信 shouxin168) 上游 endpoint + 凭证。
-// AESKey/InstitutionID 由上游商务分配 (**可能与 zlf/dtjd/snhmd 不同，不要假定共用**)；
-// LicenseURL/LicenseType 为我方启动时上传授权书到 OSS 后缓存的固定值，所有查询复用
-// (与 rental/multiloan/compassblack 共用 cmd/relay/main.go 的 uploadAuthLicense)。
+// AESKey/InstitutionID 由上游商务分配 (2026-09-28 起 dtjd/snhmd/dtly 共用同一套，zlf
+// 另有一套；AESKey 为 16 字节原始 ASCII)。LicenseURL/LicenseType 可选：上游书面答复
+// 测试/生产均不传，未配授权书时 biz_data 省略这两个字段；如日后要求再传，由
+// cmd/relay/main.go 的 uploadAuthLicense 启动时上传 OSS 后填入。
 type ManyOverdueConfig struct {
 	BaseURL       string
 	InstitutionID string
 	AESKey        string
 	Service       string // 默认 financial_rent_service
 	Mode          string // 默认 mode_many_overdue_behavior
-	LicenseURL    string // 授权书 OSS 地址 (启动上传后缓存)
+	LicenseURL    string // 授权书 OSS 地址 (可选，空则不传)
 	LicenseType   int    // 0:图片(jpg/jpeg/png/bmp) 1:pdf
 }
 

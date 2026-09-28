@@ -37,11 +37,17 @@ const (
 	defaultMerchantKe = "P8rT2wXyZ9aBcDeFgHiJkLmNoPqRsTuV"
 	defaultP12Path    = "docs/备用公积金1/0000000000005077.p12"
 	defaultP12Pass    = "KiC1VjLLRmNL0yCK"
-
-	defaultName   = "陈韫"
-	defaultIDCard = "440303200002163115"
-	defaultMobile = "13670010670"
 )
+
+// mustEnv 读取被查人三要素；个人信息不得写进仓库，缺失即退出。
+func mustEnv(k string) string {
+	v := strings.TrimSpace(os.Getenv(k))
+	if v == "" {
+		fmt.Fprintf(os.Stderr, "缺少环境变量 %s\n", k)
+		os.Exit(2)
+	}
+	return v
+}
 
 func env(k, def string) string {
 	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
@@ -68,9 +74,9 @@ func main() {
 	p12Path := env("BGJJ_P12", defaultP12Path)
 	p12Pass := env("BGJJ_P12_PASS", defaultP12Pass)
 
-	name := env("BGJJ_NAME", defaultName)
-	idCard := env("BGJJ_IDCARD", defaultIDCard)
-	mobile := env("BGJJ_MOBILE", defaultMobile)
+	name := mustEnv("BGJJ_NAME")
+	idCard := mustEnv("BGJJ_IDCARD")
+	mobile := mustEnv("BGJJ_MOBILE")
 
 	fmt.Println("==== grgjj 备用源 (bgjj / jeoho) 直连探针 ====")
 	fmt.Printf("接口:      POST %s\n", url)

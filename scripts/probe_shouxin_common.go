@@ -114,14 +114,9 @@ func probePerson() (name, idCard, mobile string) {
 	name = os.Getenv("PROBE_NAME")
 	idCard = os.Getenv("PROBE_IDCARD")
 	mobile = os.Getenv("PROBE_MOBILE")
-	if name == "" {
-		name = "陈韫"
-	}
-	if idCard == "" {
-		idCard = "440303200002163115"
-	}
-	if mobile == "" {
-		mobile = "13670010670"
+	if name == "" || idCard == "" || mobile == "" {
+		fmt.Fprintln(os.Stderr, "缺少环境变量 PROBE_NAME / PROBE_IDCARD / PROBE_MOBILE")
+		os.Exit(2)
 	}
 	return name, idCard, mobile
 }

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -27,9 +28,6 @@ const (
 	enolSecret = "a44ff24166206291f95e214a5f9f9aa2c7a5616d"
 	apiKey     = "idRiskTagV107"
 	encType    = 2 // name/idCard 走 MD5 摘要
-
-	queryName   = "陈韫"
-	queryIDCard = "440303200002163115"
 )
 
 func md5Hex(s string) string {
@@ -158,6 +156,11 @@ func main() {
 	fmt.Printf("url=%s\n", enolURL)
 	fmt.Printf("appId=%s\n", enolAppID)
 	fmt.Printf("appSecret=%s...%s\n", enolSecret[:6], enolSecret[len(enolSecret)-4:])
+	queryName, queryIDCard := os.Getenv("PROBE_NAME"), os.Getenv("PROBE_IDCARD")
+	if queryName == "" || queryIDCard == "" {
+		fmt.Println("缺少环境变量 PROBE_NAME / PROBE_IDCARD")
+		os.Exit(2)
+	}
 	fmt.Printf("name=%s idCard=%s\n", queryName, queryIDCard)
 
 	call(enolURL, enolAppID, enolSecret, apiKey, encType, queryName, queryIDCard, "主查")

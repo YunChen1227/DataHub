@@ -24,9 +24,14 @@ func main() {
 	os.Setenv("RELAY_BASE_URL", baseURL)
 	version := "grsb"
 
+	name, idCard := os.Getenv("PROBE_NAME"), os.Getenv("PROBE_IDCARD")
+	if name == "" || idCard == "" {
+		fmt.Println("缺少环境变量 PROBE_NAME / PROBE_IDCARD")
+		os.Exit(2)
+	}
 	base := map[string]string{
-		"idCard": "440303200002163115",
-		"name":   "陈韫",
+		"idCard": idCard,
+		"name":   name,
 	}
 
 	fmt.Println("== grsb 阿里云全链路探测 ==")
@@ -60,7 +65,7 @@ func main() {
 	fmt.Println(r.Raw)
 	fmt.Println()
 
-	nf := map[string]string{"idCard": notFoundIDCard, "name": "陈韫"}
+	nf := map[string]string{"idCard": notFoundIDCard, "name": name}
 	r2 := harness.Query(version, appKey, secret, nf, nil)
 	fmt.Printf("[查无] HTTP=%d errorCode=%s bodyCode=%s\n", r2.HTTPStatus, r2.ErrorCode, r2.BodyCode)
 	fmt.Println(r2.Raw)

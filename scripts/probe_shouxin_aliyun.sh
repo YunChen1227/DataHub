@@ -16,7 +16,7 @@
 #   ./scripts/probe_shouxin_aliyun.sh
 #   CONFIG_FILE=/path/to/config.yaml ./scripts/probe_shouxin_aliyun.sh
 #
-# 覆盖探测三要素（默认：陈韫 / 440303200002163115 / 13670010670）：
+# 探测三要素必须由环境变量提供（个人信息不写进仓库）：
 #   PROBE_NAME=... PROBE_IDCARD=... PROBE_MOBILE=... ./scripts/probe_shouxin_aliyun.sh
 #
 # 【凭证还没拿到时】只验证网络可达与出口 IP 是否已加白（不做业务调用）：
@@ -34,10 +34,12 @@ CONFIG_FILE="${CONFIG_FILE:-config.aliyun.prod.yaml}"
 export CONFIG_FILE
 export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
 
-# 默认联调样本（可用环境变量覆盖）
-export PROBE_NAME="${PROBE_NAME:-陈韫}"
-export PROBE_IDCARD="${PROBE_IDCARD:-440303200002163115}"
-export PROBE_MOBILE="${PROBE_MOBILE:-13670010670}"
+if [ "${PROBE_NET_ONLY:-}" != "1" ]; then
+  : "${PROBE_NAME:?缺少环境变量 PROBE_NAME}"
+  : "${PROBE_IDCARD:?缺少环境变量 PROBE_IDCARD}"
+  : "${PROBE_MOBILE:?缺少环境变量 PROBE_MOBILE}"
+  export PROBE_NAME PROBE_IDCARD PROBE_MOBILE
+fi
 
 COMMON="./scripts/probe_shouxin_common.go"
 

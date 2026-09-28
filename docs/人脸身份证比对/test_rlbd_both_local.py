@@ -7,7 +7,7 @@
   export RLBD1_APP_KEY=... RLBD1_APP_SECRET=...
   export RLBD2_APP_KEY=... RLBD2_APP_SECRET=...
   python test_rlbd_both_local.py \\
-    --name 陈韫 --id-card 440303200002163115 \\
+    --name <姓名> --id-card <身份证号> \\
     --photo ../../test/rl.jpg --repeat 3 --interval 0.5
 
 依赖: 同目录 test_rlbd_latency.py（仅 Python 3 标准库）

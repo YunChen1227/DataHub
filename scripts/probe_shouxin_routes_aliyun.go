@@ -45,18 +45,9 @@ func main() {
 		{"dtly", "DTLY 多头履约", envOrFail("DTLY_APP_KEY"), envOrFail("DTLY_APP_SECRET")},
 	}
 
-	name := os.Getenv("PROBE_NAME")
-	if name == "" {
-		name = "陈韫"
-	}
-	idCard := os.Getenv("PROBE_IDCARD")
-	if idCard == "" {
-		idCard = "440303200002163115"
-	}
-	mobile := os.Getenv("PROBE_MOBILE")
-	if mobile == "" {
-		mobile = "13670010670"
-	}
+	name := envOrFail("PROBE_NAME")
+	idCard := envOrFail("PROBE_IDCARD")
+	mobile := envOrFail("PROBE_MOBILE")
 	body := map[string]string{"name": name, "idCard": idCard, "mobile": mobile}
 
 	fmt.Println("== 守信三条路由 · 阿里云 relay 全链路 ==")

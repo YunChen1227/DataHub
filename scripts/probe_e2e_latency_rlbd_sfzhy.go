@@ -203,8 +203,12 @@ func main() {
 		fmt.Println("WARN: 未找到 sfzhy 测试照片，sfzhy 将跳过")
 	}
 
-	name := env("E2E_NAME", "陈韫")
-	idCard := env("E2E_ID_CARD", "440303200002163115")
+	name := env("E2E_NAME", "")
+	idCard := env("E2E_ID_CARD", "")
+	if name == "" || idCard == "" {
+		fmt.Println("缺少环境变量 E2E_NAME / E2E_ID_CARD")
+		os.Exit(2)
+	}
 
 	rlbd1Key := env("RLBD1_APP_KEY", "ubijqg8k6698")
 	rlbd1Secret := env("RLBD1_APP_SECRET", "624e149ffe7571e69bb8a20387cedb76")

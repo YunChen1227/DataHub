@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/aes"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -174,7 +175,7 @@ func runShouxinProbe(route, title string) int {
 		fmt.Println("  (可通过环境变量 PROBE_NAME / PROBE_IDCARD / PROBE_MOBILE 覆盖)")
 	}
 
-	httpClient := &http.Client{Timeout: 45 * time.Second, Transport: rawDumpTransport{base: http.DefaultTransport}}
+	httpClient := &http.Client{Timeout: 45 * time.Second, Transport: rawDumpTransport{base: http.DefaultTransport, key: probeAESKey(u.AESKey)}}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
@@ -278,6 +279,47 @@ func padAESKey(raw []byte) []byte {
 	return raw[:32]
 }
 
+// probeAESKey 复刻客户端的密钥解读顺序（原始字节 → hex → Base64，取第一个 16/24/32 字节的），
+// 都不合法时按 padAESKey 补齐——与 probeWithPaddedKey 实际加密用的密钥一致。
+func probeAESKey(s string) []byte {
+	valid := func(n int) bool { return n == 16 || n == 24 || n == 32 }
+	raw := []byte(s)
+	if valid(len(raw)) {
+		return raw
+	}
+	if b, err := hex.DecodeString(s); err == nil && valid(len(b)) {
+		return b
+	}
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil && valid(len(b)) {
+		return b
+	}
+	return padAESKey(raw)
+}
+
+func aesECBPKCS5DecryptBase64(cipherText string, key []byte) (string, error) {
+	ct, err := base64.StdEncoding.DecodeString(cipherText)
+	if err != nil {
+		return "", fmt.Errorf("密文不是 Base64: %w", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	bs := block.BlockSize()
+	if len(ct) == 0 || len(ct)%bs != 0 {
+		return "", fmt.Errorf("密文长度 %d 不是 %d 的整数倍", len(ct), bs)
+	}
+	out := make([]byte, len(ct))
+	for i := 0; i < len(ct); i += bs {
+		block.Decrypt(out[i:i+bs], ct[i:i+bs])
+	}
+	pad := int(out[len(out)-1])
+	if pad == 0 || pad > bs || pad > len(out) {
+		return "", fmt.Errorf("PKCS5 填充非法")
+	}
+	return string(out[:len(out)-pad]), nil
+}
+
 func aesECBPKCS5Base64(plain, key []byte) (string, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -369,7 +411,7 @@ func probeWithPaddedKey(u shouxinUpstream, route, licenseURL, name, idCard, mobi
 		fmt.Println("== 结论: PASS（上游接受了补齐后的密钥）→ 正式服务需同样补齐才能用，先别上线，回来改代码 ==")
 		return 0
 	default:
-		fmt.Println("== 结论: FAIL（上游未接受；SW0034 解密失败即说明密钥本身不对/缺字符，找上游核对）==")
+		fmt.Println("== 结论: FAIL（上游未接受；SW9999 AES解密错误即说明密钥本身不对/缺字符，找上游核对）==")
 		return 1
 	}
 }
@@ -419,11 +461,32 @@ func sendRawForm(u shouxinUpstream, bizData string) bool {
 	return true
 }
 
-// rawDumpTransport 原样打印上游 HTTP 返回（状态码 + 完整 body，不截断不解析），
-// 便于与上游逐字段核对。body 读出后放回，客户端的归一化逻辑照常执行。
-type rawDumpTransport struct{ base http.RoundTripper }
+// rawDumpTransport 原样打印发给上游的请求与上游 HTTP 返回，便于与上游逐字段核对。
+// 请求侧：表单字段原文 + 用 key 把 biz_data 密文解密回来的明文（即实际发出的业务数据）；
+// 返回侧：状态码 + 完整 body，不截断不解析。body 读出后放回，客户端逻辑照常执行。
+type rawDumpTransport struct {
+	base http.RoundTripper
+	key  []byte
+}
 
 func (t rawDumpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		reqBody, _ := io.ReadAll(req.Body)
+		req.Body.Close()
+		req.Body = io.NopCloser(bytes.NewReader(reqBody))
+		fmt.Printf("  [请求] %s %s\n", req.Method, req.URL)
+		if form, err := url.ParseQuery(string(reqBody)); err == nil {
+			fmt.Printf("  [请求] institution_id=%s\n", form.Get("institution_id"))
+			fmt.Printf("  [请求] biz_data(密文)=%s\n", form.Get("biz_data"))
+			if plain, err := aesECBPKCS5DecryptBase64(form.Get("biz_data"), t.key); err == nil {
+				fmt.Printf("  [请求] biz_data(明文)=%s\n", plain)
+			} else {
+				fmt.Printf("  [请求] biz_data 无法解密回明文: %v\n", err)
+			}
+		} else {
+			fmt.Printf("  [请求] body=%s\n", reqBody)
+		}
+	}
 	start := time.Now()
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {

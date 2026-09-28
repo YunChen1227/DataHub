@@ -15,7 +15,7 @@ description: 逐条核对 DataHub 某个上游数据源（含多源路由的某�
 | 文档 | `docs/` 下该源的 PDF/DOCX/MD/XLSX。用户给了就用用户给的 |
 | 客户端 | `internal/infrastructure/upstream/<kind>.go` |
 | 装配 | `cmd/relay/main.go` 的 `buildClient` case + `labelFor` |
-| 配置 | `config.example.yaml` **和**实际部署的 `config.aliyun.prod.yaml` 等 |
+| 配置 | `config.example.yaml` **和**实际部署的 `config.aliyun.prod.yaml` 等（后者**只读核对**：受保护文件，见 [.cursor/rules/prod-config-protected.mdc](.cursor/rules/prod-config-protected.mdc)） |
 | 契约映射 | 多源路由才有（若有下游契约整理层，单独文件） |
 
 `.docx` 用 PowerShell 解 zip 读 `word/document.xml`（正文段落 + 表格都要取，字段表

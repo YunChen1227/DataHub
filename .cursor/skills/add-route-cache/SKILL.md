@@ -152,8 +152,11 @@ go test ./internal/domain/billing/ -run TestTableFor_PerRouteChargeScope -v
      该路由只需写 `enabled` / `pepper` / `ttlJitter`。
    - 更新文件头部注释里的缓存白名单枚举（搜 `cacheableRoutes`）。
 
-5. **提醒用户**：真实配置（`config.aliyun.prod.yaml`、`config.aliyun.e2e.yaml`）已被
-   .gitignore，需用户自己在服务器上补同样的块并填真 pepper。**更换 pepper 等于全量缓存
+5. **提醒用户**（⛔ 不是自己去改）：真实配置（`config.aliyun.prod.yaml`、
+   `config.aliyun.e2e.yaml`）是**受保护文件**，未经用户当次明确指令禁止写入，
+   获准写入也必须先备份——见
+   [.cursor/rules/prod-config-protected.mdc](.cursor/rules/prod-config-protected.mdc)。
+   需用户自己在服务器上补同样的块并填真 pepper。**更换 pepper 等于全量缓存
    作废**（key 指纹全变），只在泄露时更换。pepper 生成：`openssl rand -hex 32`。
 
 6. **运维前提（开启前必须确认，否则会出事）**：

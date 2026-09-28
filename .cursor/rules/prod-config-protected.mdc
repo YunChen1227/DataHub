@@ -1,0 +1,42 @@
+---
+description: 真实凭证配置（config.aliyun.prod.yaml 等）是受保护文件：未经用户当次明确指令绝对禁止写入；获准写入前必须先落一份备份
+alwaysApply: true
+---
+
+# 受保护文件：装着真实密钥的配置
+
+受保护清单 = `.gitignore` 里那几行真实配置，逐个点名：
+`config.aliyun.prod.yaml`、`config.aliyun.e2e.yaml`、`config.yaml`、
+`config.local*.yaml`、`config.e2e.yaml`、`config.gama.real.yaml`。
+
+## 铁律一：用户没明确说要改 → 绝对不许动
+
+**读**（Read / Grep / 解析校验装配）随时可以；**写**永远需要用户当次的明确授权。
+
+以下全部算违规，无论动机多正当：顺手补新路由块、与 `config.example.yaml` 对齐、
+修缩进、格式化、批量改行尾、"不补上线就跑不通所以我先加了"。
+
+新增上游 / 新增缓存路由的正确做法：只改 `config.example.yaml`，然后在交付说明里
+**提醒用户自己往生产配置补同样的块**。不替用户动手，一个字都不写。
+
+> 踩过的坑：接入 dtjd / snhmd 时擅自往 `config.aliyun.prod.yaml` 追加了路由块。
+> 该文件被 .gitignore 忽略、没有任何提交历史，用户因此无法自证，误以为既有 zlf
+> 生产凭证被删，花了整整一轮去翻本机 History 快照做取证。纯追加也一样有害。
+
+## 铁律二：获准改动 → 第一步是备份，不是编辑
+
+拿到授权后先落备份，确认备份文件存在且大小非 0，**之后**才能编辑；改完在回复里
+报出备份路径。
+
+```powershell
+New-Item -ItemType Directory -Force .config-backups | Out-Null
+Copy-Item config.aliyun.prod.yaml ".config-backups/config.aliyun.prod.yaml.$(Get-Date -Format yyyyMMdd-HHmmss).bak"
+```
+
+备份目录 `.config-backups/` 已进 .gitignore——备份里有真实密钥，绝不能进 git。
+备份只留在本机，不要往 `docs/`、`test_res/` 等会提交的目录里放。
+
+## 铁律三：密钥不经过聊天
+
+不要把密钥值写进回复、终端 echo 或日志。搬运凭证走文件到文件；校验输出只允许
+字段名、字节长度、以及"是否仍是 `REPLACE_WITH_…`"这类布尔判断。

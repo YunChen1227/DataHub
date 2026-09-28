@@ -133,7 +133,9 @@ config/main/mock/测试/文档 19 条照走），本文件只讲轮询特有的�
      的哪一节**；
    - **交付前逐源过四层**：源N 的文档 → 源N 的 client → 源N 在真实配置里的
      `upstreams` 条目（凭证是真值而非 `REPLACE_WITH_…`）→ 源N 在归一映射层里的映射。
-     四层齐了才算完，缺一层就是线上"调不通"。
+     四层齐了才算完，缺一层就是线上"调不通"。⛔ 第三层**只读核对**：真实凭证配置
+     （`config.aliyun.prod.yaml` 等）是受保护文件，缺块只能写进交付说明请用户自己补，
+     不许代写；详见 [.cursor/rules/prod-config-protected.mdc](.cursor/rules/prod-config-protected.mdc)。
    - **警惕"看似冗余的双重编码"**：部分上游 demo 会对同一字段做两次 URLEncode（业务
      参数 JSON 手动 encode 一次 + 表单库整体再 encode 一次）——这不是 bug，是协议约定
      的一部分，必须原样复刻，不要"优化掉"。反过来也要小心不要叠加：若某个值（如签名

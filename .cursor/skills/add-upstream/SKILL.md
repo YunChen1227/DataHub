@@ -205,8 +205,12 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
      `redis.db:` 取下一个未用的逻辑库编号（看文件里既有各路由的 `db:` 值顺延；
      启动防呆校验不允许复用）；
    - 更新文件头部注释里的路由枚举。
-   - 提醒用户：真实配置文件（`config.aliyun.prod.yaml`、`config.aliyun.e2e.yaml`
-     等）已被 .gitignore，需要用户自己在本机/服务器上补同样的块并填真实凭证。
+   - ⛔ **只改 `config.example.yaml` 这一个文件**。真实凭证配置
+     （`config.aliyun.prod.yaml`、`config.aliyun.e2e.yaml` 等，见 .gitignore）
+     是**受保护文件**：未经用户当次明确指令**绝对禁止写入**，"顺手追加新路由块"
+     也不行。正确做法是在交付说明里**提醒用户自己补**同样的块并填真实凭证。
+     获准改动时必须先落备份再编辑——完整规则见
+     [.cursor/rules/prod-config-protected.mdc](.cursor/rules/prod-config-protected.mdc)。
 
 ### C. 管理平台（路由 license 管理）
 
@@ -276,6 +280,9 @@ description: DataHub 新增上游接入（新增一条对外路由 + 对接一�
 4. **真实配置文件必须确认该源已装配**：`go build` 通过 ≠ 线上调得通。交付前打开
    实际部署用的配置（`config.aliyun.prod.yaml` 等），确认新源**确实出现在**
    `versions.<route>.upstreams` 列表里且凭证是真值而非 `REPLACE_WITH_…`。
+   ⛔ 这一步**只读核对**：发现缺块或仍是占位符，**写进交付说明让用户自己补**，
+   不许自己动手写该文件（受保护文件，见 `.cursor/rules/prod-config-protected.mdc`）。
+   核对输出只打印字段名/长度/是否占位，不要 echo 密钥值。
    *踩过的坑*：源5 代码写完了，但生产配置还停在废弃的单块 `upstream:` +
    `products:` 写法上——`products` 早已不被 `loadConfig` 解析，于是只装配出
    一个 product 为空的子源：其余子源全废，线上表现就是"调不通"。

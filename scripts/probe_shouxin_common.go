@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -150,11 +151,11 @@ func runShouxinProbe(route, title string) int {
 		return 1
 	}
 
-	// 上游口径（2026-09-28 回复，原文未载）：测试环境不传授权书。原文 §2.5 标 licenseUrl
-	// 必传，故生产必须配 licenseFile + oss；这里只在未配 licenseFile 时放行空 licenseUrl。
+	// 上游口径（2026-09-28 书面回复，原文未载）：测试/生产环境均不传 licenseUrl / licenseType。
+	// 未配 licenseFile 时不上传授权书，客户端会从 biz_data 中整体省略这两个字段。
 	licenseURL := ""
 	if placeholder(u.LicenseFile) {
-		fmt.Println("  licenseFile 未配置 → 不上传授权书，licenseUrl 送空串（仅测试环境可用）")
+		fmt.Println("  licenseFile 未配置 → 不上传授权书，biz_data 不带 licenseUrl / licenseType")
 	} else {
 		licenseURL, err = uploadLicense(u)
 		if err != nil {
@@ -170,7 +171,7 @@ func runShouxinProbe(route, title string) int {
 		fmt.Println("  (可通过环境变量 PROBE_NAME / PROBE_IDCARD / PROBE_MOBILE 覆盖)")
 	}
 
-	httpClient := &http.Client{Timeout: 45 * time.Second}
+	httpClient := &http.Client{Timeout: 45 * time.Second, Transport: rawDumpTransport{base: http.DefaultTransport}}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
@@ -271,9 +272,32 @@ func runNetProbe(u shouxinUpstream) int {
 	body, _ := io.ReadAll(resp.Body)
 
 	fmt.Printf("  HTTP=%d 耗时=%.1fs\n", resp.StatusCode, time.Since(start).Seconds())
-	fmt.Printf("  响应=%s\n", trunc(strings.TrimSpace(string(body)), 300))
+	fmt.Printf("  [原始返回] body=%s\n", body)
 	fmt.Println("== 结论: PASS（网络可达、上游已应答；凭证是否有效需填真值后再测）==")
 	return 0
+}
+
+// rawDumpTransport 原样打印上游 HTTP 返回（状态码 + 完整 body，不截断不解析），
+// 便于与上游逐字段核对。body 读出后放回，客户端的归一化逻辑照常执行。
+type rawDumpTransport struct{ base http.RoundTripper }
+
+func (t rawDumpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := time.Now()
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		fmt.Printf("  [原始返回] 无 HTTP 响应 (%.1fs): %v\n", time.Since(start).Seconds(), err)
+		return nil, err
+	}
+	body, rerr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	fmt.Printf("  [原始返回] HTTP %d  耗时 %.1fs  Content-Type=%s\n",
+		resp.StatusCode, time.Since(start).Seconds(), resp.Header.Get("Content-Type"))
+	fmt.Printf("  [原始返回] body=%s\n", body)
+	if rerr != nil {
+		fmt.Printf("  [原始返回] 读取 body 中途出错: %v\n", rerr)
+	}
+	return resp, nil
 }
 
 func printHints(err error) {

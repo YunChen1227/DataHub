@@ -167,6 +167,40 @@ func TestManyOverdueRequestContract(t *testing.T) {
 	}
 }
 
+// 上游 2026-09-28 书面答复：测试/生产环境均不传 licenseUrl / licenseType。未配授权书时
+// 这两个字段必须整体不出现在 biz_data 里——送 "" / 0 不等于"不传"。配了 LicenseType
+// 但没有 LicenseURL 时同样省略, 不能单独漏出一个 licenseType。
+func TestManyOverdueOmitsLicenseFieldsWhenNotConfigured(t *testing.T) {
+	var bizCipher string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		bizCipher = r.PostForm.Get("biz_data")
+		_, _ = w.Write([]byte(`{"resp_code":"SW0002","resp_msg":"查询无记录","resp_order":"lgt2"}`))
+	}))
+	defer srv.Close()
+
+	c := NewManyOverdue(ManyOverdueConfig{BaseURL: srv.URL, InstitutionID: "inst-1", AESKey: manyOverdueTestKey, LicenseType: 1}, srv.Client())
+	if _, err := c.Query(context.Background(), manyOverdueReq()); err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	plain, err := aesECBDecryptBase64(bizCipher, []byte(manyOverdueTestKey))
+	if err != nil {
+		t.Fatalf("解密 biz_data: %v", err)
+	}
+	var biz map[string]any
+	if err := json.Unmarshal(plain, &biz); err != nil {
+		t.Fatalf("biz_data 明文不是 JSON: %v (%s)", err, plain)
+	}
+	for _, k := range []string{"licenseUrl", "licenseType"} {
+		if _, ok := biz[k]; ok {
+			t.Fatalf("未配授权书时 biz_data 不应出现 %q, 实际 %s", k, plain)
+		}
+	}
+	if len(biz) != 5 {
+		t.Fatalf("未配授权书时 biz_data 应只剩 5 个字段, 实际 %s", plain)
+	}
+}
+
 // 归一化口径逐条对齐文档 §4「响应状态码对照表」整表 19 个码。
 // 这张表是计费正确性的唯一防线, 改动前先回上游文档核对 (billing-scope skill)。
 func TestManyOverdueNormalization(t *testing.T) {

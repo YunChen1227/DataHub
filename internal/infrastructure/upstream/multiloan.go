@@ -134,16 +134,18 @@ func multiLoanAESKey(key string) ([]byte, error) {
 func validAESKeyLen(n int) bool { return n == 16 || n == 24 || n == 32 }
 
 // multiLoanBizData is the 明文业务数据 (文档 §2.5), JSON 化后做 AES 加密。
-// 七个字段上游**全部标必传**，一个都不能少；字段名逐字照抄——ident_number 是下划线、
-// licenseUrl/licenseType 是小驼峰，上游原样混用，不许"纠正"成统一风格。
+// 原文七个字段全标必传；但上游 2026-09-28 书面答复测试/生产环境均不传 licenseUrl /
+// licenseType，故未配授权书 (LicenseURL 为空) 时这两个字段**整体省略**，而不是送空串/0。
+// 字段名逐字照抄——ident_number 是下划线、licenseUrl/licenseType 是小驼峰，上游原样
+// 混用，不许"纠正"成统一风格。
 type multiLoanBizData struct {
 	Name        string `json:"name"`
 	IdentNumber string `json:"ident_number"`
 	Phone       string `json:"phone"`
 	Service     string `json:"service"`
 	Mode        string `json:"mode"`
-	LicenseURL  string `json:"licenseUrl"`
-	LicenseType int    `json:"licenseType"`
+	LicenseURL  string `json:"licenseUrl,omitempty"`
+	LicenseType *int   `json:"licenseType,omitempty"`
 }
 
 // multiLoanResponse is the 上游响应外层结构 (文档 §3.2.1)。resp_data 在字段表里标注为
@@ -170,7 +172,10 @@ func (c *MultiLoanClient) Query(ctx context.Context, req *model.UpstreamRequest)
 		Service:     c.cfg.Service,
 		Mode:        c.cfg.Mode,
 		LicenseURL:  c.cfg.LicenseURL,
-		LicenseType: c.cfg.LicenseType,
+	}
+	if c.cfg.LicenseURL != "" {
+		lt := c.cfg.LicenseType
+		biz.LicenseType = &lt
 	}
 	plain, err := json.Marshal(biz)
 	if err != nil {

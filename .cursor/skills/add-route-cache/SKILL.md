@@ -98,7 +98,7 @@ description: DataHub 为一条**已有路由**新增「自然月结果缓存」�
 
 **硬性排除：「查无也计费」的路由不得开缓存。** 命中路径按
 [cache.Entry.Found()](internal/domain/cache/cache.go) 记账，**只认 `001`**；而
-`billing.billNotFoundRoutes` 里的路由（当前 `blk`）连 `999` 也该收费。给这种路由开缓存，
+`billing.billNotFoundRoutes` 里的路由（当前 `blk` / `sffx` / `dtjd` / `snhmd` / `dtly`）连 `999` 也该收费。给这种路由开缓存，
 该收的查无会被重放成不收费，**账目随命中率漂移**——命中率越高亏得越多，且症状是慢性的，
 对账时很难定位。
 

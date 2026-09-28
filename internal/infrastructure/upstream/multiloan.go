@@ -23,11 +23,13 @@ const (
 	multiLoanDefaultMode    = "mode_loan_intent_v1"
 )
 
-// 多头借贷行为响应状态码 (文档 §4「响应状态码对照表」整表逐码落地，含「是否收费」列)：
+// 多头借贷行为响应状态码 (文档 §4「响应状态码对照表」整表逐码落地；中间列是**上游**
+// 对我方的收费标注，右侧是归一码。我方对下游按「查询计费」：001/999 都计费，error 不计费，
+// 见 billing.billNotFoundRoutes)：
 //
-//	SW0000 认证成功         收费    → 001 查得，计费
-//	SW0001 认证失败         收费    → 999 查无，**不向下游计费** (见下 ★)
-//	SW0002 查询无记录       不收费  → 999 查无，不计费
+//	SW0000 认证成功         收费    → 001 查得
+//	SW0001 认证失败         收费    → 999 查无 (见下 ★)
+//	SW0002 查询无记录       不收费  → 999 查无
 //	SW0003 通道超时或异常   不收费  → error
 //	SW0017 biz_data参数错误 不收费  → error
 //	SW0018 参数错误         不收费  → error
@@ -48,19 +50,15 @@ const (
 // 另：SW0000 但 resp_data 空/无法解析 → error (拿不到数据不得计费)；文档未列的新码
 // (开放式约定) → error。
 //
-// ★ **SW0001「认证失败」上游标【收费】，我方仍按「下游查无 + 不向下游计费」处理。**
-// 难点：SW0001 (上游收费) 与 SW0002 (上游不收费) 都只能归一到 999 查无，而
-// billing.billNotFoundRoutes 是「整条路由的 999 一刀切计费」的开关——把 dtjd 加进去会
-// 让 SW0002 也被计费，变成对下游多收钱。故刻意选择保守口径：宁可我方吃掉这笔上游成本，
-// 也不对客户多收钱；上游侧成本靠下面的 slog.Warn + 审计里的 resp_order 人工对账。
-// 对照兄弟产品：zlf 租赁分同一张码表里 SW0001 标的是**不收费**——同供应商同端点，
-// 口径相反，这正是「逐产品看文档，禁止复用兄弟路由的结论」。
-// **待上游书面确认 SW0001 的实际扣费场景后回来更新**；若确认确实该计费，正解是让台账
-// 存上游原始码后按码表判 Returned (billing/quota 的结构性改动)，**不是**把 SW0001 改成
-// 001、也**不是**把本路由塞进 billNotFoundRoutes。详见 billing-scope skill 第三节之二。
+// ★ **SW0001「认证失败」上游标【收费】，归一为 999 查无。** 本路由按「查询计费」进了
+// billing.billNotFoundRoutes，999 对下游计费，故上游这笔收费与我方计费对得上。
+// 注意 SW0001 (上游收费) 与 SW0002 (上游不收费) 对下游都是 999 计费——这是业务定价，
+// 不是照抄上游收费列。下面的 slog.Warn 保留，便于按 resp_order 核对上游账单里的认证失败。
+// 对照兄弟产品：snhmd/dtly 的 SW0001 标【不收费】、按上游侧错误返回，同码不同处理，
+// 这正是「逐产品看文档，禁止复用兄弟路由的结论」。
 const (
 	multiLoanCodeSuccess  = "SW0000" // 认证成功 (收费)
-	multiLoanCodeAuthFail = "SW0001" // 认证失败 (上游标收费, 我方按查无且不计费, 见上 ★)
+	multiLoanCodeAuthFail = "SW0001" // 认证失败 (上游标收费, 归一为 999 查无, 见上 ★)
 	multiLoanCodeNotFound = "SW0002" // 查询无记录 (不收费)
 )
 
@@ -243,9 +241,9 @@ func (c *MultiLoanClient) Query(ctx context.Context, req *model.UpstreamRequest)
 			Range: rng,
 		}, nil
 	case multiLoanCodeAuthFail:
-		// ★ 上游标【收费】但我方按查无且不向下游计费 (见文件头常量块的说明)。
-		// 这条 warn 是上游侧成本的唯一线索, 带上 resp_order 供人工对账, 不要删。
-		slog.Warn("multiloan 上游返回 SW0001 认证失败(上游文档标【收费】), 我方按查无且不计费返回, 请人工对账",
+		// ★ 上游标【收费】, 归一为 999 查无 (见文件头常量块的说明)。
+		// 带上 resp_order 便于核对上游账单里的认证失败, 不要删。
+		slog.Warn("multiloan 上游返回 SW0001 认证失败(上游文档标【收费】), 按查无返回, 请核对上游账单",
 			"respOrder", mr.RespOrder,
 			"respMsg", mr.RespMsg,
 			"reqid", req.Reqid,

@@ -218,11 +218,10 @@ func TestMultiLoanNormalization(t *testing.T) {
 			body:     `{"resp_code":"SW0000","resp_msg":"查询成功","resp_order":"lgt-0","resp_data":` + foundData + `}`,
 			wantCode: "001",
 		},
-		// ★ SW0001 上游标【收费】, 但与 SW0002 (不收费) 都只能归一到 999, 故按保守口径
-		// 「下游查无 + 我方不计费」处理。改这条前先读 multiloan.go 文件头常量块的说明,
-		// 并同步 docs/上游对接_多头借贷行为_守信_钉钉文档整理.md §4 ★。
+		// ★ SW0001 上游标【收费】, 与 SW0002 一样归一到 999 (本路由查询计费, 999 计费)。
+		// 改这条前先读 multiloan.go 文件头常量块的说明。
 		{
-			name:     "SW0001 认证失败(上游标收费) → 999 查无, 我方不向下游计费",
+			name:     "SW0001 认证失败(上游标收费) → 999 查无",
 			body:     `{"resp_code":"SW0001","resp_msg":"认证失败","resp_order":"lgt-1"}`,
 			wantCode: "999",
 		},

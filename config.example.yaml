@@ -33,8 +33,8 @@
 # grsb 转接背景评估 BJPG-01：JSON POST {data} + data 走 AES/CBC/PKCS5+base64 加密（密钥=encryptKey 的 hex 解码值，IV 固定 16 个 ASCII 字符 "0000000000000000"），请求头带 accountId/prodId；入参仅 idCard+name 两项均必填（**无 mobile**）；响应 data 为同一套 AES 密文，解密得 {xm,sfz,jfdw,grsf,jfjs,cbjfzt,jfsj} 全字段经 result.range 透出；code 200 查得计费 / 2-404 与 3-404 查无 / 其余(2-5xx、3-5xx)上游侧错误不计费。
 # sfsm 转接身份证实名核验 (数脉 id_card/check，与 rlbd1/rlbd2 同服务商同签名)：form POST + sign=md5(appid&timestamp&app_security)，入参仅 name+idCard 两项均必填（**无 mobile**）；响应 data 的 {result,desc,sex,birthday,address} 经 result.range 透出、order_no 只落审计；result 0 一致 / 1 不一致 均为收费结论(001) / 2 无记录查无(999) / code≠200 上游侧错误不计费。
 # sffx 转接身份风险V107 (应诺尔 enol，与 x1/gama、blk/blacklist 同端点同信封)：apiKey=idRiskTagV107、encryptionType=2 (PII 走 MD5)，入参仅 name+idCard 两项均必填（**无 mobile**）；响应 result 富对象 {detail:[风险类型码A~P+周期码0~6]} 经 result.range 透出；busiCode 10 查得 / 1000 未查得 **均计费**（与同供应商 x1 伽马的 1000 不计费口径相反）。
-# dtjd 转接多头借贷行为 (守信 shouxin168，与 zlf/rental 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service=financial_rent_service、mode=mode_loan_intent_v1，入参 name+idCard+mobile 三要素均必填；响应 resp_data 为约 700 个 als_* 多头因子 + Rule_* 决策字段的富对象，整体序列化经 result.range 透出；SW0000 查得计费 / SW0002 查无不计费 / **SW0001 认证失败上游标【收费】但我方按查无且不向下游计费**(落 warn 人工对账)。
-# snhmd 转接司南黑名单 (守信 shouxin168，与 zlf/dtjd 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service 同为 financial_rent_service、**mode=mode_compass_black**（同端点区分产品的唯一位），入参 name+idCard+mobile 三要素均必填；响应 resp_data 为 black_list + black_tag04..black_tag12 共 10 个 "0"/"1" 标签的对象，整体序列化经 result.range 透出（black_list=0 未命中黑名单亦属**查得结论**，计费）；SW0000 查得计费 / SW0002 查无不计费 / **SW0001 认证失败本产品标【不收费】→ 按上游侧错误处理**（与兄弟产品 dtjd 的同码口径相反，禁止互相套用）。
+# dtjd 转接多头借贷行为 (守信 shouxin168，与 zlf/rental 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service=financial_rent_service、mode=mode_loan_intent_v1，入参 name+idCard+mobile 三要素均必填；响应 resp_data 为约 700 个 als_* 多头因子 + Rule_* 决策字段的富对象，整体序列化经 result.range 透出；SW0000 → 001 / SW0001 认证失败与 SW0002 查询无记录 → 999；**查询计费：001 与 999 都向下游计费**（billing.billNotFoundRoutes 登记 dtjd）。
+# snhmd 转接司南黑名单 (守信 shouxin168，与 zlf/dtjd 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service 同为 financial_rent_service、**mode=mode_compass_black**（同端点区分产品的唯一位），入参 name+idCard+mobile 三要素均必填；响应 resp_data 为 black_list + black_tag04..black_tag12 共 10 个 "0"/"1" 标签的对象，整体序列化经 result.range 透出（black_list=0 未命中黑名单亦属**查得结论**）；SW0000 → 001 / SW0002 → 999，**查询计费：001 与 999 都向下游计费**；**SW0001 认证失败本产品标【不收费】→ 按上游侧错误处理不计费**（与兄弟产品 dtjd 的同码处理相反，禁止互相套用）。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
 #   - 单源路由：列表长度 1（当前所有路由均为单源）。
@@ -412,10 +412,9 @@ versions:
   # Rule_final_weight 评分、Rule_name_*/Rule_weight_* 命中规则）的富对象，
   # 整体序列化经 result.range 透出（与 blk/sffx 同口径）；resp_order 是唯一上游标识，
   # 成功/查无/失败三条路径都落审计（uid=logId）。
-  # ★ 计费：SW0000 认证成功【上游收费】→ 001 查得计费；SW0002 查询无记录 不收费 → 999；
-  #   **SW0001 认证失败上游标【收费】，但我方按「下游查无 + 不计费」处理**（落 warn
-  #   人工对账）——SW0001 与 SW0002 都归一到 999 而计费口径相反，无法用
-  #   billing.billNotFoundRoutes（整条路由 999 一刀切）区分，故 dtjd **不在**该表里。
+  # ★ 计费：**查询计费**（2026-09-28 业务方确认）——001 查得与 999 查无都向下游计费，
+  #   billing.billNotFoundRoutes 登记 dtjd。SW0000 认证成功 → 001；SW0001 认证失败
+  #   （上游标收费）与 SW0002 查询无记录（上游不收费）→ 999，两者对下游都计费。
   #   其余 SW0003 通道超时 / SW0017 biz_data参数错误 / SW0018 参数错误 / SW003x 验签解密
   #   / SW0040 产品未开通 / SW0041 调用量上限 / SW0042 余额不足 / SW10xx 格式有误
   #   / SW9999 系统错误 均为上游侧错误，不计费。
@@ -460,12 +459,12 @@ versions:
   # 失败、tag10 短期新机构频繁还款失败、tag11 当前逾期较严重、tag12 高风险客户），
   # 整体序列化经 result.range 透出（与 blk/sffx/dtjd 同口径）；resp_order 是唯一上游
   # 标识，成功/查无/失败三条路径都落审计（uid=logId）。
-  # ★ 计费：SW0000 认证成功【上游收费】→ 001 查得计费（**black_list=0 未命中黑名单同样
-  #   是有效结论，属查得，照常计费**，不得因为标签全 0 就改判 999）；SW0002 查询无记录
-  #   不收费 → 999；**SW0001 认证失败本产品文档标【不收费】→ 按上游侧错误返回不计费**。
-  #   ⚠️ 兄弟产品 dtjd 的同一个 SW0001 标的是【收费】、被迫归一成 999——两份文档口径
-  #   相反，**禁止互相套用**。因本路由的 999 只来自 SW0002，故与 dtjd 一样都**不在**
-  #   billing.billNotFoundRoutes 里，但理由不同。
+  # ★ 计费：**查询计费**（2026-09-28 业务方确认）——001 查得与 999 查无都向下游计费，
+  #   billing.billNotFoundRoutes 登记 snhmd。SW0000 认证成功 → 001（**black_list=0
+  #   未命中黑名单同样是有效结论，属查得**，不得因为标签全 0 就改判 999）；SW0002 查询
+  #   无记录 → 999；**SW0001 认证失败本产品文档标【不收费】→ 按上游侧错误返回不计费**。
+  #   ⚠️ 兄弟产品 dtjd 的同一个 SW0001 标的是【收费】、归一成 999——两份文档口径
+  #   相反，**禁止互相套用**。
   #   其余 SW0003 通道超时 / SW0017 biz_data参数错误 / SW0018 参数错误 / SW003x 验签解密
   #   / SW0040 产品未开通 / SW0041 调用量上限 / SW0042 余额不足 / SW10xx 格式有误
   #   / SW9999 系统错误 均为上游侧错误，不计费。
@@ -505,13 +504,13 @@ versions:
   # -1=负数，逐字段阈值见 docs/上游对接_多头履约行为_守信_钉钉文档整理.md 附录 A），
   # 网关不解释语义、整体序列化经 result.range 透出（与 blk/sffx/dtjd/snhmd 同口径）；
   # resp_order 是唯一上游标识，成功/查无/失败三条路径都落审计（uid=logId）。
-  # ★ 计费：SW0000 认证成功【上游收费】→ 001 查得计费（**示例里因子大多为空串、模型分
-  #   为 -1 未命中，同样是有效结论，属查得，照常计费**；仅 resp_data 整体缺失/null/空
-  #   对象才按拿不到数据的上游侧错误处理、不计费）；SW0002 查询无记录 不收费 → 999；
+  # ★ 计费：**查询计费**（2026-09-28 业务方确认）——001 查得与 999 查无都向下游计费，
+  #   billing.billNotFoundRoutes 登记 dtly。SW0000 认证成功 → 001（**示例里因子大多为
+  #   空串、模型分为 -1 未命中，同样是有效结论，属查得**；仅 resp_data 整体缺失/null/空
+  #   对象才按拿不到数据的上游侧错误处理、不计费）；SW0002 查询无记录 → 999；
   #   **SW0001 认证失败本产品文档标【不收费】→ 按上游侧错误返回不计费**（同 snhmd）。
-  #   ⚠️ 兄弟产品 dtjd 的同一个 SW0001 标的是【收费】、被迫归一成 999——两份文档口径
-  #   相反，**禁止互相套用**。因本路由的 999 只来自 SW0002，故**不在**
-  #   billing.billNotFoundRoutes 里。
+  #   ⚠️ 兄弟产品 dtjd 的同一个 SW0001 标的是【收费】、归一成 999——两份文档口径
+  #   相反，**禁止互相套用**。
   #   其余 SW0003 通道超时 / SW0017 biz_data参数错误 / SW0018 参数错误 / SW003x 验签解密
   #   / SW0040 产品未开通 / SW0041 调用量上限 / SW0042 余额不足 / SW10xx 格式有误
   #   / SW9999 系统错误 均为上游侧错误，不计费。

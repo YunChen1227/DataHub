@@ -150,12 +150,19 @@ func runShouxinProbe(route, title string) int {
 		return 1
 	}
 
-	licenseURL, err := uploadLicense(u)
-	if err != nil {
-		fmt.Println("FAIL: 授权书 OSS:", err)
-		return 1
+	// 上游口径（2026-09-28 回复，原文未载）：测试环境不传授权书。原文 §2.5 标 licenseUrl
+	// 必传，故生产必须配 licenseFile + oss；这里只在未配 licenseFile 时放行空 licenseUrl。
+	licenseURL := ""
+	if placeholder(u.LicenseFile) {
+		fmt.Println("  licenseFile 未配置 → 不上传授权书，licenseUrl 送空串（仅测试环境可用）")
+	} else {
+		licenseURL, err = uploadLicense(u)
+		if err != nil {
+			fmt.Println("FAIL: 授权书 OSS:", err)
+			return 1
+		}
+		fmt.Printf("  licenseUrl=%s\n", trunc(licenseURL, 72))
 	}
-	fmt.Printf("  licenseUrl=%s\n", trunc(licenseURL, 72))
 
 	name, idCard, mobile := probePerson()
 	fmt.Printf("  探测三要素: name=%s idCard=%s mobile=%s\n", name, maskID(idCard), maskMobile(mobile))

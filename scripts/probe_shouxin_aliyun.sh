@@ -6,10 +6,10 @@
 #
 # 前置条件（在仓库根目录执行）：
 #   - 已安装 Go（与部署 relay 相同环境即可）
-#   - config.aliyun.prod.yaml 中三条路由已填真实 institutionId、aesKey、licenseFile
-#   - OSS 块已配置（dtjd/snhmd/dtly 共用一套即可）
-#   - 本机出口 IP 已加入守信白名单
-#   - 授权书本地文件路径在 ECS 上真实存在（licenseFile）
+#   - config.aliyun.prod.yaml 中三条路由已填 institutionId、aesKey
+#   - 本机出口 IP 已加入守信白名单（测试环境同样要求）
+#   - 测试环境：不配 licenseFile/oss 即不传授权书（上游口径，licenseUrl 送空串）
+#   - 生产环境：必须配 licenseFile + oss（原文 licenseUrl 必传），授权书文件在 ECS 上真实存在
 #
 # 用法：
 #   chmod +x scripts/probe_shouxin_aliyun.sh

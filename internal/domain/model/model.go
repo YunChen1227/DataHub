@@ -289,15 +289,29 @@ type RangeResult struct {
 // high/mid/low 三个星耀Pro 评分，范围 [350,950]、未命中 -1) 的扁平富对象，整体序列化经
 // result.range 透出；SW0000 → 001 / SW0002 → 999，**查询计费**：001 与 999 都向下游
 // 计费；**SW0001 认证失败本产品标【不收费】→ 按上游侧错误处理** (同 snhmd，与 dtjd
-// 相反)，见 upstream/manyoverdue.go)。
+// 相反)，见 upstream/manyoverdue.go)；
+// jdyx 转接借贷申请意向V22【TD】(loanintent 上游，应诺尔 enol，与 x1/blk/sffx 同端点
+// 同 MD5 加签：JSON POST + apiKey=loanRiskTagV22，**信封无 encryptionType 字段**、PII
+// 明文，入参 name+idCard+mobile 三要素均必填；响应 result 为 TC_* 多头申请变量富对象，
+// 整体序列化经 result.range 透出；busiCode 10 查得计费 / 1000 未查得不计费，见
+// upstream/loanintent.go)；
+// fxbl 转接风险变量V11 (riskvar 上游，应诺尔 enol，同端点同信封：apiKey=loanRiskTagV11、
+// encryptionType=1 明文，入参三要素均必填；响应 result 为 als_* 申请因子 + Rule_* 决策
+// 字段富对象经 result.range 透出；busiCode 10 查得 / 1000 数据未查得**均计费**，见
+// upstream/riskvar.go 与 billing.billNotFoundRoutes)；
+// xyqj 转接信用全景V21 (creditpano 上游，应诺尔 enol，同端点同信封：apiKey=loanRiskTagV21、
+// encryptionType=1 明文，入参三要素均必填；响应 result 为 xyp_* 信用因子 + 星耀Pro 评分
+// + fee_status 富对象经 result.range 透出；**以 result.fee_status 为计费唯一判据**：
+// busiCode 10 且 fee_status=1 → 001 计费、fee_status=0 → 999 不计费，1000 → 999 不计费，
+// 见 upstream/creditpano.go)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly", "jdyx", "fxbl", "xyqj"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly", "jdyx", "fxbl", "xyqj"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -349,6 +363,12 @@ func DemoAppKey(route string) string {
 		return "y89snhmd"
 	case "dtly":
 		return "y890dtly"
+	case "jdyx":
+		return "y890jdyx"
+	case "fxbl":
+		return "y890fxbl"
+	case "xyqj":
+		return "y890xyqj"
 	default:
 		return "demo-" + route
 	}

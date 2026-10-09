@@ -20,4 +20,7 @@ const (
 	ProviderMultiLoan    = "multiloan"    // dtjd: 多头借贷行为 (守信 shouxin168，同 rental 端点同信封)
 	ProviderCompassBlack = "compassblack" // snhmd: 司南黑名单 (守信 shouxin168，同 rental 端点同信封，mode_compass_black)
 	ProviderManyOverdue  = "manyoverdue"  // dtly: 多头履约行为 (守信 shouxin168，同 rental 端点同信封，mode_many_overdue_behavior)
+	ProviderLoanIntent   = "loanintent"   // jdyx: 借贷申请意向V22【TD】(应诺尔 enol，同 gama/blacklist 端点，apiKey=loanRiskTagV22)
+	ProviderRiskVar      = "riskvar"      // fxbl: 风险变量V11 (应诺尔 enol，同端点，apiKey=loanRiskTagV11)
+	ProviderCreditPano   = "creditpano"   // xyqj: 信用全景V21 (应诺尔 enol，同端点，apiKey=loanRiskTagV21)
 )

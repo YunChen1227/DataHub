@@ -357,6 +357,11 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// **不含 mobile**——虽与兄弟路由 blk 同端点同信封，入参集合却不同，
 		// 不能沿用 blk 的三要素口径，用专属 ParseIDRisk。
 		orch.WithParser(parse.ParseIDRisk)
+	case upstream.ProviderLoanIntent, upstream.ProviderRiskVar, upstream.ProviderCreditPano:
+		// jdyx 借贷申请意向V22【TD】/ fxbl 风险变量V11 / xyqj 信用全景V21 (应诺尔 enol)：
+		// 三份文档 §2.2 body 参数表 name/idCard/mobile 均标必填 (tradeNo 选填)，
+		// 三要素齐全才放行——与兄弟路由 sffx 的 name+idCard 口径不同，逐产品看文档。
+		orch.WithParser(parse.ParseWithName)
 	}
 	// 自然月结果缓存（默认关闭）：同一人在同一自然月内的重复查询直接回放本月首查
 	// 结果，跨月才回源。读在关键路径上（1 次 Redis GET），写由 Bookkeeper 在响应
@@ -604,6 +609,34 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			Secret:         uc.appSecret,
 			APIKey:         uc.apiKey,
 			EncryptionType: uc.encryptionType,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderLoanIntent:
+		// jdyx 借贷申请意向V22【TD】(应诺尔 enol)：appID=appId、appSecret=secret、apiKey
+		// 缺省 loanRiskTagV22。文档请求结构无 encryptionType，配置里的该字段被忽略。
+		client := upstream.NewLoanIntent(upstream.LoanIntentConfig{
+			BaseURL: uc.baseURL,
+			AppID:   uc.appID,
+			Secret:  uc.appSecret,
+			APIKey:  uc.apiKey,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderRiskVar:
+		// fxbl 风险变量V11 (应诺尔 enol)：apiKey 缺省 loanRiskTagV11，encryptionType 固定 1 明文。
+		client := upstream.NewRiskVar(upstream.RiskVarConfig{
+			BaseURL: uc.baseURL,
+			AppID:   uc.appID,
+			Secret:  uc.appSecret,
+			APIKey:  uc.apiKey,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderCreditPano:
+		// xyqj 信用全景V21 (应诺尔 enol)：apiKey 缺省 loanRiskTagV21，encryptionType 固定 1 明文。
+		client := upstream.NewCreditPano(upstream.CreditPanoConfig{
+			BaseURL: uc.baseURL,
+			AppID:   uc.appID,
+			Secret:  uc.appSecret,
+			APIKey:  uc.apiKey,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderFaceCompare:

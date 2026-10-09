@@ -61,6 +61,22 @@ func TestBillingScopeDecoupledFromWireCode(t *testing.T) {
 			route: "dtly", upstreamCode: "999", wantBodyCode: "999", wantUsed: 1,
 			why: "多头履约 查询计费：查无同样计费，但下游仍应看到 999",
 		},
+		{
+			route: "fxbl", upstreamCode: "001", wantBodyCode: "001", wantUsed: 1,
+			why: "风险变量V11 10 查询成功【计费】",
+		},
+		{
+			route: "fxbl", upstreamCode: "999", wantBodyCode: "999", wantUsed: 1,
+			why: "风险变量V11 1000 数据未查得【计费】——查无照样收费，但下游仍应看到 999",
+		},
+		{
+			route: "jdyx", upstreamCode: "999", wantBodyCode: "999", wantUsed: 0,
+			why: "借贷申请意向V22【TD】 1000 未查得，文档未标计费",
+		},
+		{
+			route: "xyqj", upstreamCode: "999", wantBodyCode: "999", wantUsed: 0,
+			why: "信用全景V21 1000 数据未查得 / fee_status=0，均不计费",
+		},
 	}
 
 	for _, tc := range cases {

@@ -56,12 +56,17 @@ func DefaultTable() *DecisionTable {
 //     计费，001 查得与 999 查无都计一次；参数非法与服务异常（error）仍不计费。
 //     这是我方对下游的定价，与上游码表的「是否收费」列无关：上游对 SW0002 不收费、
 //     dtjd 的 SW0001 收费，都不改变本口径。
+//   - fxbl 风险变量V11（风险变量V11.pdf §1.6 busiCode 返回码表）：
+//     「10 查询成功【计费】/ 1000 数据未查得【计费】」——两个码都带【计费】。
+//     同供应商同端点的 jdyx 借贷申请意向V22【TD】（「1000 未查得」）与 xyqj
+//     信用全景V21（「1000 数据未查得」）的 1000 **不带**计费标注，故不登记。
 var billNotFoundRoutes = map[string]bool{
 	"blk":   true,
 	"sffx":  true,
 	"dtjd":  true,
 	"snhmd": true,
 	"dtly":  true,
+	"fxbl":  true,
 }
 
 // TableFor 返回某条路由的计费码表。默认只有 001 查得计费；billNotFoundRoutes 里的

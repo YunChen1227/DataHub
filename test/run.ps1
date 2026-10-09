@@ -1,7 +1,7 @@
 # DataHub fixed test-suite entrypoint (Windows / PowerShell).
 #
 # Flow: make result dir test_res/<date> -> build + start mock gama(:9112) +
-# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_facecompare(:9117) + mock_idverify(:9118) + mock_consumetxn(:9119) + mock_complaint(:9120) + mock_lxscore(:9122) + mock_incomeag(:9123) + mock_bgjj(:9125) + mock_bgpg(:9126) + mock_idcheck(:9127) + mock_idrisk(:9128) + relay(:8080,
+# mock_income(:9113) + mock_rental(:9114) + mock_blacklist(:9115) + mock_facecompare(:9117) + mock_idverify(:9118) + mock_consumetxn(:9119) + mock_complaint(:9120) + mock_lxscore(:9122) + mock_incomeag(:9123) + mock_bgjj(:9125) + mock_bgpg(:9126) + mock_idcheck(:9127) + mock_idrisk(:9128) + mock_loanintent(:9129) + mock_riskvar(:9130) + mock_creditpano(:9131) + relay(:8080,
 # live Aliyun PG+Redis) -> wait /healthz -> (optional) start real-gama relay(:8090)
 # -> run test/cases/*.go in order -> aggregate REPORT.md -> stop services.
 #
@@ -66,6 +66,9 @@ try {
     $bgpgExe      = Join-Path $resultDir "mock_bgpg.exe"
     $idcheckExe   = Join-Path $resultDir "mock_idcheck.exe"
     $idriskExe    = Join-Path $resultDir "mock_idrisk.exe"
+    $loanintentExe= Join-Path $resultDir "mock_loanintent.exe"
+    $riskvarExe   = Join-Path $resultDir "mock_riskvar.exe"
+    $creditpanoExe= Join-Path $resultDir "mock_creditpano.exe"
     $relayExe     = Join-Path $resultDir "relay.exe"
     Write-Host "building mocks + relay ..."
     go build -o $mockExe ./scripts/mock_gama.go
@@ -96,6 +99,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build mock_idcheck failed" }
     go build -o $idriskExe ./scripts/mock_idrisk.go
     if ($LASTEXITCODE -ne 0) { throw "go build mock_idrisk failed" }
+    go build -o $loanintentExe ./scripts/mock_loanintent.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_loanintent failed" }
+    go build -o $riskvarExe ./scripts/mock_riskvar.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_riskvar failed" }
+    go build -o $creditpanoExe ./scripts/mock_creditpano.go
+    if ($LASTEXITCODE -ne 0) { throw "go build mock_creditpano failed" }
     go build -o $relayExe ./cmd/relay
     if ($LASTEXITCODE -ne 0) { throw "go build relay failed" }
 
@@ -152,6 +161,15 @@ try {
 
     $idrisk = Start-Process -FilePath $idriskExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_idrisk.log") -RedirectStandardError (Join-Path $resultDir "mock_idrisk.err.log")
     [void]$procs.Add($idrisk)
+
+    $loanintent = Start-Process -FilePath $loanintentExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_loanintent.log") -RedirectStandardError (Join-Path $resultDir "mock_loanintent.err.log")
+    [void]$procs.Add($loanintent)
+
+    $riskvar = Start-Process -FilePath $riskvarExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_riskvar.log") -RedirectStandardError (Join-Path $resultDir "mock_riskvar.err.log")
+    [void]$procs.Add($riskvar)
+
+    $creditpano = Start-Process -FilePath $creditpanoExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "mock_creditpano.log") -RedirectStandardError (Join-Path $resultDir "mock_creditpano.err.log")
+    [void]$procs.Add($creditpano)
 
     $relay = Start-Process -FilePath $relayExe -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $resultDir "relay.log") -RedirectStandardError (Join-Path $resultDir "relay.err.log")
     [void]$procs.Add($relay)

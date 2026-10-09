@@ -15,12 +15,14 @@ import (
 // rental(租赁分V2-D, zlf) | blacklist(黑名单因子V35, blk) | facecompare | idverify |
 // consumetxn | complaint | lxscore | incomeag | bgjj | bgpg | idcheck | idrisk |
 // multiloan(多头借贷行为, dtjd) | compassblack(司南黑名单, snhmd) |
-// manyoverdue(多头履约行为, dtly)。
+// manyoverdue(多头履约行为, dtly) | loanintent(借贷申请意向V22【TD】, jdyx) |
+// riskvar(风险变量V11, fxbl) | creditpano(信用全景V21, xyqj)。
 type upstreamConfig struct {
-	kind    string // gama | income | rental | blacklist | facecompare | idverify | consumetxn | complaint | lxscore | incomeag | bgjj | bgpg | idcheck | idrisk | multiloan | compassblack | manyoverdue
+	kind    string // gama | income | rental | blacklist | facecompare | idverify | consumetxn | complaint | lxscore | incomeag | bgjj | bgpg | idcheck | idrisk | multiloan | compassblack | manyoverdue | loanintent | riskvar | creditpano
 	baseURL string
-	// gama (伽马) / blacklist (黑名单因子V35) / idrisk (身份风险V107) 凭证
-	// ——三者同为应诺尔 enol 端点，共用 appID/appSecret/apiKey/encryptionType。
+	// gama (伽马) / blacklist (黑名单因子V35) / idrisk (身份风险V107) /
+	// loanintent / riskvar / creditpano 凭证——同为应诺尔 enol 端点，共用
+	// appID/appSecret/apiKey (encryptionType 仅 blacklist/idrisk 可配)。
 	// lxscore (灵犀分) 复用这三个字段：appID=customerId、apiKey=customerProdId、
 	// appSecret=encryptKey (DES 密钥，兼作 sign 加密与 data 解密)。
 	appID          string
@@ -418,7 +420,7 @@ func toUpstreamConfig(fu fileUpstream, version string) upstreamConfig {
 // blk→blacklist, rlbd1/rlbd2→facecompare, sfzhy→idverify, xfjy→consumetxn,
 // tsfx→complaint, lxf→lxscore, grgjj→incomeag, grsb→bgpg, sfsm→idcheck,
 // sffx→idrisk, dtjd→multiloan, snhmd→compassblack, dtly→manyoverdue,
-// others→income.
+// jdyx→loanintent, fxbl→riskvar, xyqj→creditpano, others→income.
 func defaultKind(version string) string {
 	switch version {
 	case "x1":
@@ -451,6 +453,12 @@ func defaultKind(version string) string {
 		return "compassblack"
 	case "dtly":
 		return "manyoverdue"
+	case "jdyx":
+		return "loanintent"
+	case "fxbl":
+		return "riskvar"
+	case "xyqj":
+		return "creditpano"
 	default:
 		return "income"
 	}

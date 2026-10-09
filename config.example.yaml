@@ -7,12 +7,12 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd/dtly) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD | ...DTLY
-#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD | ...DTLY
-# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb / sfsm / sffx / dtjd / snhmd / dtly 各域独占一套 DB + Redis 逻辑库。
+# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd/dtly/jdyx/fxbl/xyqj) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD | ...DTLY | ...JDYX | ...FXBL | ...XYQJ
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD | ...DTLY | ...JDYX | ...FXBL | ...XYQJ
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb / sfsm / sffx / dtjd / snhmd / dtly / jdyx / fxbl / xyqj 各域独占一套 DB + Redis 逻辑库。
 # ★ Redis 逻辑库：本示例文件里 db0~db15 **已全部占满**（dtjd 取 db2、snhmd 取 db5，
-#   为最后两个空位），dtly 起只能用 db16+。标准 Redis 只有 0~15 共 16 个库，
+#   为最后两个空位），dtly 起只能用 db16+（jdyx/fxbl/xyqj 依次取 db17/18/19）。标准 Redis 只有 0~15 共 16 个库，
 #   **新增路由前必须先把实例的 databases 调到 ≥17 或换实例**，
 #   不要复用已占用的编号（启动防呆校验会直接拒绝）。
 #   真实部署配置的编号分配与本示例不同（config.aliyun.prod.yaml 已用到 db18），
@@ -35,6 +35,7 @@
 # sffx 转接身份风险V107 (应诺尔 enol，与 x1/gama、blk/blacklist 同端点同信封)：apiKey=idRiskTagV107、encryptionType=2 (PII 走 MD5)，入参仅 name+idCard 两项均必填（**无 mobile**）；响应 result 富对象 {detail:[风险类型码A~P+周期码0~6]} 经 result.range 透出；busiCode 10 查得 / 1000 未查得 **均计费**（与同供应商 x1 伽马的 1000 不计费口径相反）。
 # dtjd 转接多头借贷行为 (守信 shouxin168，与 zlf/rental 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service=financial_rent_service、mode=mode_loan_intent_v1，入参 name+idCard+mobile 三要素均必填；响应 resp_data 为约 700 个 als_* 多头因子 + Rule_* 决策字段的富对象，整体序列化经 result.range 透出；SW0000 → 001 / SW0001 认证失败与 SW0002 查询无记录 → 999；**查询计费：001 与 999 都向下游计费**（billing.billNotFoundRoutes 登记 dtjd）。
 # snhmd 转接司南黑名单 (守信 shouxin168，与 zlf/dtjd 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service 同为 financial_rent_service、**mode=mode_compass_black**（同端点区分产品的唯一位），入参 name+idCard+mobile 三要素均必填；响应 resp_data 为 black_list + black_tag04..black_tag12 共 10 个 "0"/"1" 标签的对象，整体序列化经 result.range 透出（black_list=0 未命中黑名单亦属**查得结论**）；SW0000 → 001 / SW0002 → 999，**查询计费：001 与 999 都向下游计费**；**SW0001 认证失败本产品标【不收费】→ 按上游侧错误处理不计费**（与兄弟产品 dtjd 的同码处理相反，禁止互相套用）。
+# jdyx / fxbl / xyqj 转接应诺尔 enol 的借贷申请意向V22【TD】/ 风险变量V11 / 信用全景V21（与 x1/blk/sffx 同端点同 MD5 加签）：apiKey 分别为 loanRiskTagV22 / loanRiskTagV11 / loanRiskTagV21，入参 name+idCard+mobile 三要素均必填，响应 result 富对象整体经 result.range 透出；jdyx 信封不带 encryptionType，fxbl/xyqj 固定 encryptionType=1 明文。计费逐产品不同：jdyx 1000 不计费；fxbl 1000 **也计费**；xyqj 以 result.fee_status 为准。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
 #   - 单源路由：列表长度 1（当前所有路由均为单源）。
@@ -536,3 +537,78 @@ versions:
       # **标准 Redis 默认只有 0~15**，用这个编号前必须先把实例的 `databases` 调到 ≥17
       # （或换实例），否则连库即失败。真实部署配置另有编号分配，别照抄这里的 16。
       db: 16
+  # jdyx 对接「借贷申请意向V22【TD】」(应诺尔 enol「多头申请变量 TD 版」)：与 x1/blk/sffx
+  # 同端点 (POST /enol/api/v1/doCheck) 同 MD5 加签，apiKey=loanRiskTagV22。
+  # ★ 本产品文档 §1.4 请求结构**没有 encryptionType 字段**——客户端不发送该键、PII 明文，
+  #   本块也不配 encryptionType（配了也会被忽略）。
+  # 入参 name + idCard + mobile 三要素**均必填**（§2.2），tradeNo 选填不注入。
+  # 响应 result 为 TC_* 多头申请变量富对象，整体序列化经 result.range 透出；
+  # seqNo 是唯一上游标识，成功/查无/失败三条路径都落审计（uid=logId）。
+  # ★ 计费（§1.6）：busiCode 10 查得结果【计费】→ 001；1000 未查得（**无**计费标注）
+  #   → 999 不计费。1001~1009 与全局 code=-1 均为上游侧错误，不计费。
+  # 独立成域（库 datahub_jdyx_db / redis db17 / 独立 license 与统计）。
+  # ★ 接入前需把部署机出口 IP 报给上游加白（文档 §1.2 合作公司须知）。
+  jdyx:
+    upstreams:
+      - kind: "loanintent"
+        # 生产域名 api.enolfax.com；测试域名 testenol.cn（测试账号仅返回挡板数据）。
+        baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"
+        appId: "REPLACE_WITH_JDYX_UPSTREAM_APP_ID"
+        appSecret: "REPLACE_WITH_JDYX_UPSTREAM_APP_SECRET"
+        apiKey: "loanRiskTagV22"   # 借贷申请意向V22【TD】固定产品码
+    database:
+      <<: *pg_base
+      name: "datahub_jdyx_db"
+    redis:
+      <<: *redis_base
+      db: 17
+  # fxbl 对接「风险变量V11」(应诺尔 enol)：同端点同信封，apiKey=loanRiskTagV11、
+  # encryptionType=1 明文（文档只定义 1，客户端固定发 1）。
+  # 入参 name + idCard + mobile 三要素**均必填**（§2.2），tradeNo 选填不注入。
+  # 响应 result 为 als_* 多头申请因子 + Rule_final_decision(Accept/Reject/Review) /
+  # Rule_final_weight / Rule_name_* / Rule_weight_* 决策字段富对象，整体经 result.range 透出。
+  # ★ 计费（§1.6）：busiCode 10 查询成功【计费】→ 001；**1000 数据未查得【计费】→ 999
+  #   且查无也计费**（billing.billNotFoundRoutes 登记 fxbl）。注意同供应商的 jdyx/xyqj
+  #   的 1000 **不**计费，口径相反，勿混用。1001~1009 与 code=-1 为上游侧错误，不计费。
+  # 独立成域（库 datahub_fxbl_db / redis db18 / 独立 license 与统计）。
+  # ★ 接入前需把部署机出口 IP 报给上游加白（文档 §1.2）。
+  fxbl:
+    upstreams:
+      - kind: "riskvar"
+        # 生产域名 **enol.com.cn**（与 jdyx/xyqj 的 api.enolfax.com 不同，以本产品文档 §2.1 为准）；
+        # 测试域名 testenol.cn。
+        baseURL: "https://enol.com.cn/enol/api/v1/doCheck"
+        appId: "REPLACE_WITH_FXBL_UPSTREAM_APP_ID"
+        appSecret: "REPLACE_WITH_FXBL_UPSTREAM_APP_SECRET"
+        apiKey: "loanRiskTagV11"   # 风险变量V11 固定产品码
+    database:
+      <<: *pg_base
+      name: "datahub_fxbl_db"
+    redis:
+      <<: *redis_base
+      db: 18
+  # xyqj 对接「信用全景V21」(应诺尔 enol)：同端点同信封，apiKey=loanRiskTagV21
+  # （文档请求示例写成 " loanRiskTagV21" 带前导空格，以 §1.4 参数表的无空格值为准）、
+  # encryptionType=1 明文。入参 name + idCard + mobile 三要素**均必填**，tradeNo 选填不注入。
+  # 响应 result 为 xyp_* 信用/履约因子 + 星耀Pro 三个评分 + fee_status 扁平富对象，
+  # 整体经 result.range 透出。
+  # ★ 计费：**以 result.fee_status（1-收费 / 0-不收费）为唯一判据**——busiCode 10 且
+  #   fee_status=1 → 001 计费；fee_status=0 → 999 不计费（落 warn）；fee_status 缺失按
+  #   10 查询成功【计费】→ 001（落 warn）；1000 数据未查得（无计费标注）→ 999 不计费。
+  #   1001~1009 与 code=-1 为上游侧错误，不计费。
+  # 独立成域（库 datahub_xyqj_db / redis db19 / 独立 license 与统计）。
+  # ★ 接入前需把部署机出口 IP 报给上游加白（文档 §1.2）。
+  xyqj:
+    upstreams:
+      - kind: "creditpano"
+        # 生产域名 api.enolfax.com；测试域名 testenol.cn。
+        baseURL: "https://api.enolfax.com/enol/api/v1/doCheck"
+        appId: "REPLACE_WITH_XYQJ_UPSTREAM_APP_ID"
+        appSecret: "REPLACE_WITH_XYQJ_UPSTREAM_APP_SECRET"
+        apiKey: "loanRiskTagV21"   # 信用全景V21 固定产品码
+    database:
+      <<: *pg_base
+      name: "datahub_xyqj_db"
+    redis:
+      <<: *redis_base
+      db: 19

@@ -70,6 +70,13 @@ func TestTableFor_PerRouteChargeScope(t *testing.T) {
 		{"snhmd", "999", true, "司南黑名单 查询计费：查无同样计费"},
 		{"dtly", "001", true, "多头履约 查询计费：查得计费（因子大多为空/模型分 -1 亦属查得）"},
 		{"dtly", "999", true, "多头履约 查询计费：查无同样计费"},
+		// 应诺尔 enol 三条新路由：逐产品看文档，1000 的计费标注各不相同。
+		{"fxbl", "001", true, "风险变量V11 10 查询成功【计费】"},
+		{"fxbl", "999", true, "风险变量V11 1000 数据未查得【计费】"},
+		{"jdyx", "001", true, "借贷申请意向V22【TD】 10 查得结果【计费】"},
+		{"jdyx", "999", false, "借贷申请意向V22【TD】 1000 未查得，文档未标计费"},
+		{"xyqj", "001", true, "信用全景V21 10 + fee_status=1 收费"},
+		{"xyqj", "999", false, "信用全景V21 1000 数据未查得 / fee_status=0 不收费"},
 	}
 
 	for _, c := range cases {

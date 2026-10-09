@@ -184,6 +184,39 @@ $routeMap = @{
         encryptionType: 2
 '@
     }
+    "jdyx" = @{
+        mocks = @(@{ name = "mock_loanintent"; port = 9129 })
+        # 应诺尔 enol 同一套信封。借贷申请意向V22【TD】：信封不带 encryptionType（客户端固定不发）。
+        yaml  = @'
+      - kind: "loanintent"
+        baseURL: "http://127.0.0.1:9129/enol/api/v1/doCheck"
+        appId: "demo-jdyx-appid"
+        appSecret: "demo-jdyx-secret"
+        apiKey: "loanRiskTagV22"
+'@
+    }
+    "fxbl" = @{
+        mocks = @(@{ name = "mock_riskvar"; port = 9130 })
+        # 应诺尔 enol 同一套信封。风险变量V11：encryptionType 固定 1（客户端写死，配置不提供）。
+        yaml  = @'
+      - kind: "riskvar"
+        baseURL: "http://127.0.0.1:9130/enol/api/v1/doCheck"
+        appId: "demo-fxbl-appid"
+        appSecret: "demo-fxbl-secret"
+        apiKey: "loanRiskTagV11"
+'@
+    }
+    "xyqj" = @{
+        mocks = @(@{ name = "mock_creditpano"; port = 9131 })
+        # 应诺尔 enol 同一套信封。信用全景V21：encryptionType 固定 1；mock 手机号 13800000010 驱动 fee_status=0。
+        yaml  = @'
+      - kind: "creditpano"
+        baseURL: "http://127.0.0.1:9131/enol/api/v1/doCheck"
+        appId: "demo-xyqj-appid"
+        appSecret: "demo-xyqj-secret"
+        apiKey: "loanRiskTagV21"
+'@
+    }
 }
 
 $Route = $Route.Trim().ToLower()

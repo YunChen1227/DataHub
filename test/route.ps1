@@ -217,6 +217,18 @@ $routeMap = @{
         apiKey: "loanRiskTagV21"
 '@
     }
+    "fxry" = @{
+        mocks = @(@{ name = "mock_riskperson"; port = 9132 })
+        # 应诺尔 enol 同一套信封。风险人员V108：入参仅 name+idCard，encryptionType 缺省 1 明文。
+        yaml  = @'
+      - kind: "riskperson"
+        baseURL: "http://127.0.0.1:9132/enol/api/v1/doCheck"
+        appId: "demo-fxry-appid"
+        appSecret: "demo-fxry-secret"
+        apiKey: "idRiskTagV108"
+        encryptionType: 1
+'@
+    }
 }
 
 $Route = $Route.Trim().ToLower()

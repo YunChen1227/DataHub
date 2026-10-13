@@ -1,6 +1,6 @@
 ---
 name: test-route
-description: DataHub 单条路由的定向测试：只启动被测路由所需的 mock 与 relay（memory 存储，不碰线上 PG/Redis），只跑该路由自己的用例，测试执行统一交给 Composer 2.5。Use when 用户要测试、回归、验证某一条 DataHub 路由（x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/jdyx/fxbl/xyqj），或刚接入完一个上游要验证对应路由，或提到「只测某个路由」「单路由测试」「别把不相干的服务都起起来」。
+description: DataHub 单条路由的定向测试：只启动被测路由所需的 mock 与 relay（memory 存储，不碰线上 PG/Redis），只跑该路由自己的用例，测试执行统一交给 Composer 2.5。Use when 用户要测试、回归、验证某一条 DataHub 路由（x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/jdyx/fxbl/xyqj/fxry），或刚接入完一个上游要验证对应路由，或提到「只测某个路由」「单路由测试」「别把不相干的服务都起起来」。
 ---
 
 # DataHub 单路由定向测试
@@ -82,6 +82,7 @@ description: DataHub 单条路由的定向测试：只启动被测路由所需�
 | jdyx | loanintent | mock_loanintent :9129 | 25 |
 | fxbl | riskvar | mock_riskvar :9130 | 26 |
 | xyqj | creditpano | mock_creditpano :9131 | 27 |
+| fxry | riskperson | mock_riskperson :9132 | 28 |
 
 ## 脚本行为
 

@@ -23,4 +23,5 @@ const (
 	ProviderLoanIntent   = "loanintent"   // jdyx: 借贷申请意向V22【TD】(应诺尔 enol，同 gama/blacklist 端点，apiKey=loanRiskTagV22)
 	ProviderRiskVar      = "riskvar"      // fxbl: 风险变量V11 (应诺尔 enol，同端点，apiKey=loanRiskTagV11)
 	ProviderCreditPano   = "creditpano"   // xyqj: 信用全景V21 (应诺尔 enol，同端点，apiKey=loanRiskTagV21)
+	ProviderRiskPerson   = "riskperson"   // fxry: 风险人员V108 (应诺尔 enol，同端点，apiKey=idRiskTagV108)
 )

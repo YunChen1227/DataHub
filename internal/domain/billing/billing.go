@@ -60,6 +60,9 @@ func DefaultTable() *DecisionTable {
 //     「10 查询成功【计费】/ 1000 数据未查得【计费】」——两个码都带【计费】。
 //     同供应商同端点的 jdyx 借贷申请意向V22【TD】（「1000 未查得」）与 xyqj
 //     信用全景V21（「1000 数据未查得」）的 1000 **不带**计费标注，故不登记。
+//   - fxry 风险人员V108（docs/风险人员V108.pdf §1.6 busiCode 返回码表）：
+//     「10 查询成功【计费】/ 1000 数据未查得【计费】」——两个码都带【计费】，
+//     §1.5 响应结构的 busiCode 行也写明「10:查得数据，计费标识」。
 var billNotFoundRoutes = map[string]bool{
 	"blk":   true,
 	"sffx":  true,
@@ -67,6 +70,7 @@ var billNotFoundRoutes = map[string]bool{
 	"snhmd": true,
 	"dtly":  true,
 	"fxbl":  true,
+	"fxry":  true,
 }
 
 // TableFor 返回某条路由的计费码表。默认只有 001 查得计费；billNotFoundRoutes 里的

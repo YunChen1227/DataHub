@@ -357,6 +357,10 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// **不含 mobile**——虽与兄弟路由 blk 同端点同信封，入参集合却不同，
 		// 不能沿用 blk 的三要素口径，用专属 ParseIDRisk。
 		orch.WithParser(parse.ParseIDRisk)
+	case upstream.ProviderRiskPerson:
+		// fxry 风险人员V108：§2.2 body 参数表同 sffx——name+idCard 必填、tradeNo 选填、
+		// **不含 mobile**，与 sffx 同口径用 ParseIDRisk。
+		orch.WithParser(parse.ParseIDRisk)
 	case upstream.ProviderLoanIntent, upstream.ProviderRiskVar, upstream.ProviderCreditPano:
 		// jdyx 借贷申请意向V22【TD】/ fxbl 风险变量V11 / xyqj 信用全景V21 (应诺尔 enol)：
 		// 三份文档 §2.2 body 参数表 name/idCard/mobile 均标必填 (tradeNo 选填)，
@@ -637,6 +641,17 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			AppID:   uc.appID,
 			Secret:  uc.appSecret,
 			APIKey:  uc.apiKey,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderRiskPerson:
+		// fxry 风险人员V108 (应诺尔 enol)：apiKey 缺省 idRiskTagV108，
+		// encryptionType 缺省 1 明文 (§1.4【默认】)，可配 2 走 MD5 摘要。
+		client := upstream.NewRiskPerson(upstream.RiskPersonConfig{
+			BaseURL:        uc.baseURL,
+			AppID:          uc.appID,
+			Secret:         uc.appSecret,
+			APIKey:         uc.apiKey,
+			EncryptionType: uc.encryptionType,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderFaceCompare:

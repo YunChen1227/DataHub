@@ -120,6 +120,10 @@ description: DataHub 计费口径（哪些响应计费、哪些不计费）与�
 | | | `busiCode 10` 且 `fee_status` 缺失 → 001 | ✅ | 按 §1.6「10 查询成功【计费】」兜底（落 warn） |
 | | | `busiCode 1000` → 999 | ❌ | §1.6「1000 数据未查得」——**无**【计费】标注 |
 | | | 1001~1009 / `code≠0` / 未知码 → error | ❌ | |
+| **fxry** | riskperson 风险人员V108 | `busiCode 10` → 001 | ✅ | `docs/风险人员V108.pdf` §1.6「10 查询成功【计费】」 |
+| | | **`busiCode 1000` → 999** | **✅** | 同上「**1000 数据未查得【计费】**」——**查无也收费**，登记 `billNotFoundRoutes` |
+| | | `busiCode 10` 但 resultCode 缺失/非 0/1 → error | ❌ | 拿不到结论不得计费（第四节第 5 条） |
+| | | 1001~1009 / `code≠0` / 未知码 → error | ❌ | |
 | 多源路由 | aggregate / sourcing | `002` 部分成功 / 未取得数据 | ❌ | 数据不完整不向下游计费（成本侧另按各子源实际调用与上游结算） |
 | | | 全部子源查无 → 999 | 按主源口径 | |
 
@@ -132,7 +136,7 @@ description: DataHub 计费口径（哪些响应计费、哪些不计费）与�
 
 | 供应商 | 同端点兄弟路由 | 同一个码 | 口径 |
 |---|---|---|---|
-| 应诺尔 enol | x1 伽马 / jdyx TD / xyqj 信用全景 vs blk 黑名单 / sffx 身份风险 / fxbl 风险变量 | `busiCode 1000` 未查得 | x1/jdyx/xyqj **不**计费，blk/sffx/fxbl **计费** |
+| 应诺尔 enol | x1 伽马 / jdyx TD / xyqj 信用全景 vs blk 黑名单 / sffx 身份风险 / fxbl 风险变量 / fxry 风险人员 | `busiCode 1000` 未查得 | x1/jdyx/xyqj **不**计费，blk/sffx/fxbl/fxry **计费** |
 | 守信 shouxin168 | zlf 租赁分 vs dtjd 多头借贷 vs snhmd 司南黑名单 vs dtly 多头履约 | `SW0001` 认证失败 | zlf **不收费**、dtjd **收费**、snhmd/dtly **不收费**——同一家的四条路由，四份文档，同一个码两种标注 |
 
 守信这一家尤其要小心：三条路由**同一个 endpoint、同一套信封、同一张 19 行 SW 码表**，
@@ -158,6 +162,7 @@ var billNotFoundRoutes = map[string]bool{
 	"snhmd": true,
 	"dtly":  true,
 	"fxbl":  true,
+	"fxry":  true,
 }
 ```
 
@@ -213,7 +218,7 @@ var billNotFoundRoutes = map[string]bool{
 
 ```powershell
 # 某路由某段时间内「计费条数」与「查得条数」的差额；只有 billNotFoundRoutes 里的路由
-# （blk / sffx / dtjd / snhmd / dtly / fxbl）应该 > 0
+# （blk / sffx / dtjd / snhmd / dtly / fxbl / fxry）应该 > 0
 psql -d datahub_<route>_db -c "
   SELECT upstream_code, count(*), sum(counted_service::int) AS billed
   FROM billing_ledger
@@ -223,7 +228,7 @@ psql -d datahub_<route>_db -c "
 
 - 不在 `billNotFoundRoutes` 里的路由出现 `upstream_code='999' AND billed>0` → 多计费，
   立刻查 `billNotFoundRoutes` 是否被误加。
-- blk / sffx / dtjd / snhmd / dtly / fxbl 出现 `upstream_code='999' AND billed=0` → 漏计费，
+- blk / sffx / dtjd / snhmd / dtly / fxbl / fxry 出现 `upstream_code='999' AND billed=0` → 漏计费，
   查计费码表是否被 revert。
 - 任何路由出现 `upstream_code=''` 且 `state='BILLED'` → 结算没落上游码，
   查 `quota.Settle` 是否绕过了 `model.LedgerSettlement`。

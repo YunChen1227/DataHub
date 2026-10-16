@@ -158,7 +158,7 @@ func TestLoanIntentRequestOmitsEncryptionType(t *testing.T) {
 	}
 }
 
-// 归一化口径逐条对齐 借贷申请意向V22【TD】.pdf §1.6：10 查得【计费】→001；1000 未查得
+// 归一化口径逐条对齐 docs/借贷申请意向V22【TD】.pdf §1.6：10 查得【计费】→001；1000 未查得
 // (无计费标注)→999；1001~1009 / code=-1 / 未知码 → 上游侧错误。
 func TestLoanIntentNormalization(t *testing.T) {
 	cases := append([]enolNormCase{

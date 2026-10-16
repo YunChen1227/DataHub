@@ -42,7 +42,8 @@ type RiskPersonConfig struct {
 // 同 enol 信封 + signGama MD5 加签 (PDF §3.1)。业务参数 (§2.2 body 参数表)：
 // name/idCard 必填、tradeNo 选填——**没有 mobile**，与兄弟产品 sffx 身份风险V107
 // 同口径。tradeNo 不注入：下游 x1 契约无业务单号字段可透传，sign 只覆盖实发参数。
-// 响应 result 为 {"resultCode":"<25 位 0/1>"}，整体经下游 result.range 透出。
+// 响应 result 为 {"resultCode":"<25 位 0/1>"} (线上实为 riskCode，见 normalizeRiskPersonResult)，
+// 整体经下游 result.range 透出。
 // 本产品文档只定义了一个业务接口 (§2.1 doCheck)，已全部实现。
 type RiskPersonClient struct {
 	cfg  RiskPersonConfig
@@ -63,8 +64,40 @@ func NewRiskPerson(cfg RiskPersonConfig, httpClient *http.Client) *RiskPersonCli
 	return &RiskPersonClient{cfg: cfg, http: httpClient}
 }
 
-type riskPersonResult struct {
-	ResultCode string `json:"resultCode"`
+// 文档与线上不一致：PDF §2.3 响应示例与 result 参数表的键是 resultCode，而 2026-10-16
+// 生产实测返回 {"riskCode":"0000000000000000000000001"}。两种都认；对外 range 统一输出
+// resultCode (对外手册 3.1.5 的契约)，其余字段原样透出。
+const (
+	riskPersonCodeKey       = "resultCode"
+	riskPersonCodeKeyOnWire = "riskCode"
+)
+
+// normalizeRiskPersonResult 取出命中码并返回对外透出的 result：键已是 resultCode 时原样
+// 返回 raw (保字段顺序)；只有 riskCode 时改名为 resultCode 后重新序列化。
+func normalizeRiskPersonResult(raw json.RawMessage) (string, json.RawMessage, bool) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return "", nil, false
+	}
+	out := raw
+	v, ok := m[riskPersonCodeKey]
+	if !ok {
+		if v, ok = m[riskPersonCodeKeyOnWire]; !ok {
+			return "", nil, false
+		}
+		delete(m, riskPersonCodeKeyOnWire)
+		m[riskPersonCodeKey] = v
+		renamed, err := json.Marshal(m)
+		if err != nil {
+			return "", nil, false
+		}
+		out = renamed
+	}
+	var code string
+	if err := json.Unmarshal(v, &code); err != nil || !validRiskPersonCode(code) {
+		return "", nil, false
+	}
+	return code, out, true
 }
 
 // Query normalizes per PDF §1.6 busiCode 表：
@@ -90,13 +123,13 @@ func (c *RiskPersonClient) Query(ctx context.Context, req *model.UpstreamRequest
 	}
 	switch er.Data.BusiCode {
 	case enolBusiSuccess:
-		var r riskPersonResult
-		if err := json.Unmarshal(er.Data.Result, &r); err != nil || !validRiskPersonCode(r.ResultCode) {
-			return nil, busiErrf(er.Data.BusiCode, "resultCode 缺失或非法: "+string(er.Data.Result), er.SeqNo, er.SeqNo)
+		code, result, ok := normalizeRiskPersonResult(er.Data.Result)
+		if !ok {
+			return nil, busiErrf(er.Data.BusiCode, "resultCode/riskCode 缺失或非法: "+string(er.Data.Result), er.SeqNo, er.SeqNo)
 		}
-		if len(r.ResultCode) != riskPersonCodeLen {
+		if len(code) != riskPersonCodeLen {
 			slog.Warn("riskperson resultCode 位数与文档不符",
-				"len", len(r.ResultCode), "want", riskPersonCodeLen, "seqNo", er.SeqNo)
+				"len", len(code), "want", riskPersonCodeLen, "seqNo", er.SeqNo)
 		}
 		return &model.UpstreamResult{
 			Code:  "001",
@@ -104,7 +137,7 @@ func (c *RiskPersonClient) Query(ctx context.Context, req *model.UpstreamRequest
 			UID:   er.SeqNo,
 			Reqid: req.Reqid,
 			LogID: er.SeqNo, // 只有 seqNo(交易流水号)一个上游标识，UID/LogID 同填供后台对账
-			Range: sanitizeRange(er.Data.Result),
+			Range: sanitizeRange(result),
 		}, nil
 	case enolBusiNotFound:
 		return &model.UpstreamResult{

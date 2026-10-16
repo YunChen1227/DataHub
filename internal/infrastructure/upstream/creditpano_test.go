@@ -26,7 +26,7 @@ func TestCreditPanoRequestIsPlaintextSignedJSONPost(t *testing.T) {
 	}
 }
 
-// 归一化口径对齐 信用全景V21.pdf §1.6 busiCode 表 + result.fee_status「1-收费；0-不收费」。
+// 归一化口径对齐 docs/信用全景V21.pdf §1.6 busiCode 表 + result.fee_status「1-收费；0-不收费」。
 // fee_status 是上游逐笔下发的计费标志，为计费唯一判据（billing-scope 铁律 3）。
 func TestCreditPanoNormalization(t *testing.T) {
 	cases := append([]enolNormCase{

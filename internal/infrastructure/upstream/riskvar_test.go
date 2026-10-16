@@ -25,7 +25,7 @@ func TestRiskVarRequestIsPlaintextSignedJSONPost(t *testing.T) {
 	}
 }
 
-// 归一化口径逐条对齐 风险变量V11.pdf §1.6：10 查询成功【计费】→001；
+// 归一化口径逐条对齐 docs/风险变量V11.pdf §1.6：10 查询成功【计费】→001；
 // 1000 数据未查得【计费】→999（**本路由查无也计费**，由 billing.TableFor("fxbl") 决定）；
 // 1001~1009 / code=-1 / 未知码 → 上游侧错误。
 func TestRiskVarNormalization(t *testing.T) {

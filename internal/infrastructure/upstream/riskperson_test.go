@@ -64,7 +64,7 @@ func TestRiskPersonMD5ModeHashesPII(t *testing.T) {
 	}
 }
 
-// 归一化口径逐条对齐 风险人员V108.pdf §1.6：10 查询成功【计费】→001；
+// 归一化口径逐条对齐 docs/风险人员V108.pdf §1.6：10 查询成功【计费】→001；
 // 1000 数据未查得【计费】→999（**本路由查无也计费**，由 billing.TableFor("fxry") 决定）；
 // 1001~1009 / code=-1 / 未知码 → 上游侧错误；10 但 resultCode 缺失/非法 → 上游侧错误。
 func TestRiskPersonNormalization(t *testing.T) {
@@ -73,6 +73,16 @@ func TestRiskPersonNormalization(t *testing.T) {
 			name:     "busiCode 10 查询成功 → 001 计费",
 			body:     `{"code":0,"msg":"请求成功","seqNo":"48u8tgsvwd60","data":{"busiCode":10,"busiMsg":"success","result":{"resultCode":"0000000000000000000000001"}}}`,
 			wantCode: "001", wantUID: "48u8tgsvwd60",
+		},
+		{
+			name:     "busiCode 10 + 线上实际键 riskCode → 001 计费",
+			body:     `{"code":0,"msg":"请求成功","seqNo":"4g8tvhg4e9eg","data":{"busiCode":10,"busiMsg":"success","result":{"riskCode":"0000000000000000000000001"}}}`,
+			wantCode: "001", wantUID: "4g8tvhg4e9eg",
+		},
+		{
+			name:    "busiCode 10 但 riskCode 含非 0/1 字符 → 上游侧错误",
+			body:    `{"code":0,"seqNo":"S-BAD2","data":{"busiCode":10,"busiMsg":"success","result":{"riskCode":"00000000000000000000000x1"}}}`,
+			wantUID: "S-BAD2",
 		},
 		{
 			name:     "busiCode 1000 数据未查得 → 999（本路由仍计费）",
@@ -111,6 +121,24 @@ func TestRiskPersonRangePassThrough(t *testing.T) {
 		t.Fatalf("range = %s, 期望 %s", res.Range, want)
 	}
 	assertRangeOmits(t, res.Range, "seqNo", "48u8tgsvwd60")
+}
+
+// 线上返回 riskCode：对外 range 必须改名为对外手册约定的 resultCode，其余字段原样保留。
+func TestRiskPersonRangeRenamesRiskCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"msg":"请求成功","seqNo":"4g8tvhg4e9eg","data":{"busiCode":10,"busiMsg":"success","result":{"riskCode":"0000000000000000000000001","extra":12.50}}}`))
+	}))
+	defer srv.Close()
+
+	res, err := NewRiskPerson(RiskPersonConfig{BaseURL: srv.URL, AppID: "ap1", Secret: "sec1"}, srv.Client()).
+		Query(context.Background(), riskPersonReq)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if want := `{"extra":12.50,"resultCode":"0000000000000000000000001"}`; res.Range != want {
+		t.Fatalf("range = %s, 期望 %s", res.Range, want)
+	}
+	assertRangeOmits(t, res.Range, "seqNo", "4g8tvhg4e9eg", "riskCode")
 }
 
 func TestRiskPersonRequeryNotReachable(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"github.com/datahub/relay/internal/domain/model"
 )
 
-// 依据文档：借贷申请意向V22【TD】.pdf (应诺尔产品接口文档「多头申请变量 TD 版」)。
+// 依据文档：docs/借贷申请意向V22【TD】.pdf (应诺尔产品接口文档「多头申请变量 TD 版」)。
 
 // LoanIntentAPIKey is the fixed product code (PDF §1.4 apiKey「固定：loanRiskTagV22」)。
 const LoanIntentAPIKey = "loanRiskTagV22"

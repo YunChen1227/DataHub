@@ -7,7 +7,7 @@ import (
 	"github.com/datahub/relay/internal/domain/model"
 )
 
-// 依据文档：风险变量V11.pdf (应诺尔产品接口文档「风险变量 V11」)。
+// 依据文档：docs/风险变量V11.pdf (应诺尔产品接口文档「风险变量 V11」)。
 
 // RiskVarAPIKey is the fixed product code (PDF §1.4 apiKey「固定：loanRiskTagV11」)。
 const RiskVarAPIKey = "loanRiskTagV11"

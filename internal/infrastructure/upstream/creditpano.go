@@ -10,7 +10,7 @@ import (
 	"github.com/datahub/relay/internal/domain/model"
 )
 
-// 依据文档：信用全景V21.pdf (应诺尔产品接口文档「信用全景 V21」)。
+// 依据文档：docs/信用全景V21.pdf (应诺尔产品接口文档「信用全景 V21」)。
 
 // CreditPanoAPIKey is the fixed product code (PDF §1.4 apiKey「固定：loanRiskTagV21」)。
 // 文档自相矛盾：§2.2 请求示例写成 " loanRiskTagV21" (带前导空格)，以 §1.4 参数表

@@ -85,6 +85,10 @@ func TestBillingScopeDecoupledFromWireCode(t *testing.T) {
 			route: "fxry", upstreamCode: "999", wantBodyCode: "999", wantUsed: 1,
 			why: "风险人员V108 1000 数据未查得【计费】——查无照样收费，但下游仍应看到 999",
 		},
+		{
+			route: "fqz", upstreamCode: "999", wantBodyCode: "999", wantUsed: 1,
+			why: "申请反欺诈-定制模型 score=-1 仍为 Code=200【计费】——查无照样收费，但下游仍应看到 999",
+		},
 	}
 
 	for _, tc := range cases {

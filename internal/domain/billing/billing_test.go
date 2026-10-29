@@ -79,6 +79,8 @@ func TestTableFor_PerRouteChargeScope(t *testing.T) {
 		{"xyqj", "999", false, "信用全景V21 1000 数据未查得 / fee_status=0 不收费"},
 		{"fxry", "001", true, "风险人员V108 10 查询成功【计费】"},
 		{"fxry", "999", true, "风险人员V108 1000 数据未查得【计费】"},
+		{"fqz", "001", true, "申请反欺诈-定制模型 Code=200 计费"},
+		{"fqz", "999", true, "申请反欺诈-定制模型 score=-1 仍是 Code=200，计费"},
 	}
 
 	for _, c := range cases {

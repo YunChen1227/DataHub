@@ -229,6 +229,18 @@ $routeMap = @{
         encryptionType: 1
 '@
     }
+    "fqz" = @{
+        mocks = @(@{ name = "mock_antifraud"; port = 9133 })
+        # 阿里云 SAF ExecuteRequest：POP RPC HMAC-SHA1 签名，mode=scene，service 缺省 anti_fraud_customed。
+        yaml  = @'
+      - kind: "antifraud"
+        baseURL: "http://127.0.0.1:9133/"
+        appId: "demo-fqz-ak"
+        appSecret: "demo-fqz-secret"
+        service: "anti_fraud_customed"
+        mode: "gc_cust_202610"
+'@
+    }
 }
 
 $Route = $Route.Trim().ToLower()

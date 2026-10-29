@@ -307,15 +307,19 @@ type RangeResult struct {
 // fxry 转接风险人员V108 (riskperson 上游，应诺尔 enol，与 sffx 同端点同信封：apiKey=
 // idRiskTagV108、encryptionType=1 明文，入参仅 name+idCard 两项均必填 (无 mobile)；
 // 响应 result 为 {resultCode: 25 位 0/1 命中码} 序列化经 result.range 透出；busiCode
-// 10 查得 / 1000 数据未查得**均计费**，见 upstream/riskperson.go 与 billing.billNotFoundRoutes)。
+// 10 查得 / 1000 数据未查得**均计费**，见 upstream/riskperson.go 与 billing.billNotFoundRoutes)；
+// fqz 转接申请反欺诈-定制模型 (antifraud 上游，阿里云风险识别 SAF，冠辰科技定制：POP RPC
+// HMAC-SHA1 签名 + Action=ExecuteRequest + Service=anti_fraud_customed，入参仅 mobile 必填
+// (scene 为配置侧固定值)；响应 Data {score} 序列化经 result.range 透出；Code=200 且 score≠-1
+// 查得 / score=-1 未查得**均计费**，见 upstream/antifraud.go 与 billing.billNotFoundRoutes)。
 // 注：Versions 是「路由」维度；存储/license 按「域」(Domains) 聚合——v8/v9 同属
 // v8v9 域共用一套 license，其余路由各自独立成域 (见 RouteDomain)。跨域使用 license
 // 一律鉴权失败 (505004 账户信息不存在)。
-var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly", "jdyx", "fxbl", "xyqj", "fxry"}
+var Versions = []string{"x1", "v9", "v8", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly", "jdyx", "fxbl", "xyqj", "fxry", "fqz"}
 
 // Domains is the canonical ordered list of license 域 (存储边界)。每个域独占一套
 // DB + Redis + license 表；v8/v9 合并为 v8v9 域共用同一 license，其余域名即路由名。
-var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly", "jdyx", "fxbl", "xyqj", "fxry"}
+var Domains = []string{"x1", "v8v9", "zlf", "blk", "rlbd1", "rlbd2", "sfzhy", "xfjy", "tsfx", "lxf", "grgjj", "grsb", "sfsm", "sffx", "dtjd", "snhmd", "dtly", "jdyx", "fxbl", "xyqj", "fxry", "fqz"}
 
 // RouteDomain maps a route (version) to its license 域。v8/v9 → v8v9 (共用 license)，
 // 其余路由各自独立成域。域决定连哪套存储；路由决定上游与统计/日志的 route 作用域。
@@ -375,6 +379,8 @@ func DemoAppKey(route string) string {
 		return "y890xyqj"
 	case "fxry":
 		return "y890fxry"
+	case "fqz":
+		return "y8909fqz"
 	default:
 		return "demo-" + route
 	}

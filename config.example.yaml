@@ -7,12 +7,12 @@
 #
 # 也可用环境变量 CONFIG_FILE 指定其它路径：CONFIG_FILE=/etc/datahub/config.yaml
 #
-# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd/dtly/jdyx/fxbl/xyqj/fxry) 对外接口完全一致，仅靠路由名区分：
-#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD | ...DTLY | ...JDYX | ...FXBL | ...XYQJ | ...FXRY
-#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD | ...DTLY | ...JDYX | ...FXBL | ...XYQJ | ...FXRY
-# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb / sfsm / sffx / dtjd / snhmd / dtly / jdyx / fxbl / xyqj / fxry 各域独占一套 DB + Redis 逻辑库。
+# 各版本 (x1/v9/v8/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd/dtly/jdyx/fxbl/xyqj/fxry/fqz) 对外接口完全一致，仅靠路由名区分：
+#   POST /v1/openapi/zlx/querySrmxX1 | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD | ...DTLY | ...JDYX | ...FXBL | ...XYQJ | ...FXRY | ...FQZ
+#   GET  /v1/openapi/zlx/quotaX1     | ...V9 | ...V8 | ...ZLF | ...BLK | ...RLBD1 | ...RLBD2 | ...SFZHY | ...XFJY | ...TSFX | ...LXF | ...GRGJJ | ...GRSB | ...SFSM | ...SFFX | ...DTJD | ...SNHMD | ...DTLY | ...JDYX | ...FXBL | ...XYQJ | ...FXRY | ...FQZ
+# 存储按「域」划分：x1 / v8v9 / zlf / blk / rlbd1 / rlbd2 / sfzhy / xfjy / tsfx / lxf / grgjj / grsb / sfsm / sffx / dtjd / snhmd / dtly / jdyx / fxbl / xyqj / fxry / fqz 各域独占一套 DB + Redis 逻辑库。
 # ★ Redis 逻辑库：本示例文件里 db0~db15 **已全部占满**（dtjd 取 db2、snhmd 取 db5，
-#   为最后两个空位），dtly 起只能用 db16+（jdyx/fxbl/xyqj/fxry 依次取 db17/18/19/20）。标准 Redis 只有 0~15 共 16 个库，
+#   为最后两个空位），dtly 起只能用 db16+（jdyx/fxbl/xyqj/fxry/fqz 依次取 db17/18/19/20/21）。标准 Redis 只有 0~15 共 16 个库，
 #   **新增路由前必须先把实例的 databases 调到 ≥17 或换实例**，
 #   不要复用已占用的编号（启动防呆校验会直接拒绝）。
 #   真实部署配置的编号分配与本示例不同（config.aliyun.prod.yaml 已用到 db18），
@@ -37,6 +37,7 @@
 # snhmd 转接司南黑名单 (守信 shouxin168，与 zlf/dtjd 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service 同为 financial_rent_service、**mode=mode_compass_black**（同端点区分产品的唯一位），入参 name+idCard+mobile 三要素均必填；响应 resp_data 为 black_list + black_tag04..black_tag12 共 10 个 "0"/"1" 标签的对象，整体序列化经 result.range 透出（black_list=0 未命中黑名单亦属**查得结论**）；SW0000 → 001 / SW0002 → 999，**查询计费：001 与 999 都向下游计费**；**SW0001 认证失败本产品标【不收费】→ 按上游侧错误处理不计费**（与兄弟产品 dtjd 的同码处理相反，禁止互相套用）。
 # jdyx / fxbl / xyqj 转接应诺尔 enol 的借贷申请意向V22【TD】/ 风险变量V11 / 信用全景V21（与 x1/blk/sffx 同端点同 MD5 加签）：apiKey 分别为 loanRiskTagV22 / loanRiskTagV11 / loanRiskTagV21，入参 name+idCard+mobile 三要素均必填，响应 result 富对象整体经 result.range 透出；jdyx 信封不带 encryptionType，fxbl/xyqj 固定 encryptionType=1 明文。计费逐产品不同：jdyx 1000 不计费；fxbl 1000 **也计费**；xyqj 以 result.fee_status 为准。
 # fxry 转接风险人员V108 (应诺尔 enol，与 sffx 同端点同信封)：apiKey=idRiskTagV108、encryptionType=1 明文（可配 2 走 MD5），入参仅 name+idCard 两项均必填（**无 mobile**）；响应 result {resultCode:25 位 0/1 命中码} 经 result.range 透出；busiCode 10 查得 / 1000 数据未查得 **均计费**。
+# fqz 转接申请反欺诈-定制模型 (阿里云风险识别 SAF，冠辰科技定制)：POP RPC 风格 form POST + HMAC-SHA1 签名，Action=ExecuteRequest、Service=anti_fraud_customed，ServiceParameters={mobile,scene}；入参仅 mobile 必填（scene 为配置固定值）；响应 Data {score} 经 result.range 透出；Code=200 且 score≠-1 → 001 / score=-1 → 999，**均计费**（文档「200 请求正常，返回该状态时计费」）。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
 #   - 单源路由：列表长度 1（当前所有路由均为单源）。
@@ -643,3 +644,35 @@ versions:
     redis:
       <<: *redis_base
       db: 20
+  # fqz 对接「申请反欺诈-定制模型」(阿里云风险识别 SAF，冠辰科技定制，
+  # docs/申请反欺诈定制模型_冠辰科技_202610.pdf)：阿里云 POP RPC 风格——公共参数 +
+  # Action=ExecuteRequest + Service=anti_fraud_customed + ServiceParameters(JSON)，
+  # HMAC-SHA1 签名 (key = AccessKeySecret + "&")，form POST。
+  # 凭证复用既有字段：appId=AccessKeyId、appSecret=AccessKeySecret（建议 RAM 子账号，
+  # 授予 AliyunYundunSAFFullAccess，见文档 §1）；service=Service；mode=scene；
+  # apiKey=Version（缺省 2019-05-21；文档 §3.1 请求示例写 2020-07-06，与 §2.3 参数表/
+  # §2.4 Demo 不一致，以参数表为准，联调不通再改）。
+  # 入参：上游 mobile/mobileMd5/mobileSha256 三选一 + scene 必传；本网关下游只收明文
+  # mobile（必填，网关前置拦截），scene 为配置固定值。
+  # 响应 Data 为 {"score":"258"}，整体序列化经 result.range 透出；RequestId 是唯一上游
+  # 标识，三条路径都落审计（uid=logId）。
+  # ★ 计费（§3.3）：「200 请求正常，返回该状态时计费」——score≠-1 → 001；**score=-1
+  #   未查得 → 999 且查无也计费**（billing.billNotFoundRoutes 登记 fqz）。400/402/403/
+  #   404/500 与 POP 网关签名错误为上游侧错误，不计费。
+  # 独立成域（库 datahub_fqz_db / redis db21 / 独立 license 与统计）。
+  fqz:
+    upstreams:
+      - kind: "antifraud"
+        # 文档 §2.1 只给了这一个地址（无测试环境）。
+        baseURL: "https://saf.cn-shanghai.aliyuncs.com/"
+        appId: "REPLACE_WITH_FQZ_ALIYUN_ACCESS_KEY_ID"
+        appSecret: "REPLACE_WITH_FQZ_ALIYUN_ACCESS_KEY_SECRET"
+        service: "anti_fraud_customed"
+        mode: "gc_cust_202610"     # scene
+        apiKey: "2019-05-21"       # Version
+    database:
+      <<: *pg_base
+      name: "datahub_fqz_db"
+    redis:
+      <<: *redis_base
+      db: 21

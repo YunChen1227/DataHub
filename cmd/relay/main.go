@@ -361,6 +361,11 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		// fxry 风险人员V108：§2.2 body 参数表同 sffx——name+idCard 必填、tradeNo 选填、
 		// **不含 mobile**，与 sffx 同口径用 ParseIDRisk。
 		orch.WithParser(parse.ParseIDRisk)
+	case upstream.ProviderAntiFraud:
+		// fqz 申请反欺诈-定制模型：§3.2 入参 mobile/mobileMd5/mobileSha256 三选一 + scene
+		// 必传；按接入约定下游只传明文 mobile (必填)，scene 为配置侧固定值——与 tsfx 同为
+		// 仅 mobile 口径，用 ParseComplaint。
+		orch.WithParser(parse.ParseComplaint)
 	case upstream.ProviderLoanIntent, upstream.ProviderRiskVar, upstream.ProviderCreditPano:
 		// jdyx 借贷申请意向V22【TD】/ fxbl 风险变量V11 / xyqj 信用全景V21 (应诺尔 enol)：
 		// 三份文档 §2.2 body 参数表 name/idCard/mobile 均标必填 (tradeNo 选填)，
@@ -652,6 +657,19 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			Secret:         uc.appSecret,
 			APIKey:         uc.apiKey,
 			EncryptionType: uc.encryptionType,
+		}, httpClient)
+		return client, nil
+	case upstream.ProviderAntiFraud:
+		// fqz 申请反欺诈-定制模型 (阿里云 SAF)：appID=AccessKeyId、appSecret=AccessKeySecret、
+		// service 缺省 anti_fraud_customed、mode=scene 缺省 gc_cust_202610、apiKey=Version
+		// 缺省 2019-05-21；baseURL 缺省 https://saf.cn-shanghai.aliyuncs.com/。
+		client := upstream.NewAntiFraud(upstream.AntiFraudConfig{
+			BaseURL:         uc.baseURL,
+			AccessKeyID:     uc.appID,
+			AccessKeySecret: uc.appSecret,
+			Service:         uc.service,
+			Scene:           uc.mode,
+			Version:         uc.apiKey,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderFaceCompare:

@@ -124,6 +124,10 @@ description: DataHub 计费口径（哪些响应计费、哪些不计费）与�
 | | | **`busiCode 1000` → 999** | **✅** | 同上「**1000 数据未查得【计费】**」——**查无也收费**，登记 `billNotFoundRoutes` |
 | | | `busiCode 10` 但 resultCode 缺失/非 0/1 → error | ❌ | 拿不到结论不得计费（第四节第 5 条） |
 | | | 1001~1009 / `code≠0` / 未知码 → error | ❌ | |
+| **fqz** | antifraud 申请反欺诈-定制模型（阿里云 SAF） | `Code=200` 且 score≠-1 → 001 | ✅ | `docs/申请反欺诈定制模型_冠辰科技_202610.pdf` §3.3「200 请求正常，返回该状态时计费」 |
+| | | **`Code=200` 且 score=-1 → 999** | **✅** | 同上——§3.4 score=-1「无法判断风险 or 未查得」也以 Code=200 返回，**查无也收费**；我方对下游同为**查询计费**（2026-10-28 业务方确认），登记 `billNotFoundRoutes` |
+| | | `Code=200` 但 Data/score 缺失或非数值 → error | ❌ | 拿不到结论不得计费（第四节第 5 条） |
+| | | 400/402/403/404/500 / POP 网关错误 → error | ❌ | §3.3 其余码均无计费标注 |
 | 多源路由 | aggregate / sourcing | `002` 部分成功 / 未取得数据 | ❌ | 数据不完整不向下游计费（成本侧另按各子源实际调用与上游结算） |
 | | | 全部子源查无 → 999 | 按主源口径 | |
 
@@ -163,6 +167,7 @@ var billNotFoundRoutes = map[string]bool{
 	"dtly":  true,
 	"fxbl":  true,
 	"fxry":  true,
+	"fqz":   true,
 }
 ```
 
@@ -218,7 +223,7 @@ var billNotFoundRoutes = map[string]bool{
 
 ```powershell
 # 某路由某段时间内「计费条数」与「查得条数」的差额；只有 billNotFoundRoutes 里的路由
-# （blk / sffx / dtjd / snhmd / dtly / fxbl / fxry）应该 > 0
+# （blk / sffx / dtjd / snhmd / dtly / fxbl / fxry / fqz）应该 > 0
 psql -d datahub_<route>_db -c "
   SELECT upstream_code, count(*), sum(counted_service::int) AS billed
   FROM billing_ledger
@@ -228,7 +233,7 @@ psql -d datahub_<route>_db -c "
 
 - 不在 `billNotFoundRoutes` 里的路由出现 `upstream_code='999' AND billed>0` → 多计费，
   立刻查 `billNotFoundRoutes` 是否被误加。
-- blk / sffx / dtjd / snhmd / dtly / fxbl / fxry 出现 `upstream_code='999' AND billed=0` → 漏计费，
+- blk / sffx / dtjd / snhmd / dtly / fxbl / fxry / fqz 出现 `upstream_code='999' AND billed=0` → 漏计费，
   查计费码表是否被 revert。
 - 任何路由出现 `upstream_code=''` 且 `state='BILLED'` → 结算没落上游码，
   查 `quota.Settle` 是否绕过了 `model.LedgerSettlement`。

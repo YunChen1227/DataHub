@@ -22,14 +22,15 @@
 - **对外（下游，fxbl=风险变量）**：`POST /v1/openapi/zlx/querySrmxFXBL`，对外契约与 x1 **完全一致**；入参 `name`+`idCard`+`mobile`（三项**均必填**）；规则决策（`Rule_final_decision` Accept/Reject/Review、`Rule_final_weight`、`Rule_name_QJF07x`）+ `als_*` 申请行为变量（全部字符串值）整体 **JSON 序列化为字符串**经 `result.range` 透出。⚠️ **本路由「查得」`001` 与「查无」`999` 均计费**（上游码表 `1000 数据未查得` 标【计费】）。详见 [`docs/API_接口文档与使用手册_fxbl.pdf`](docs/API_接口文档与使用手册_fxbl.pdf)。
 - **对外（下游，xyqj=信用全景）**：`POST /v1/openapi/zlx/querySrmxXYQJ`，对外契约与 x1 **完全一致**；入参 `name`+`idCard`+`mobile`（三项**均必填**）；`xyp_*` 信用评分/借贷履约/交易统计因子（字符串值、大多区间化编码）整体 **JSON 序列化为字符串**经 `result.range` 透出。计费：`001` 计费、`999` 不计费；⚠️ **上游逐笔下发 `fee_status`，查得但 `fee_status=0`（上游不收费）归一 `999` 不计费**，缺失 `fee_status` 按 `001` 计费并告警。详见 [`docs/API_接口文档与使用手册_xyqj.pdf`](docs/API_接口文档与使用手册_xyqj.pdf)。
 - **对外（下游，fxry=风险人员）**：`POST /v1/openapi/zlx/querySrmxFXRY`，对外契约与 x1 **完全一致**；入参**仅** `name`+`idCard`（两项均必填，**本路由不需要手机号**）；上游 `result` 对象 `{"resultCode":"<25 位 0/1>"}`（从左到右第 1~25 位依次为 涉刑 / 近5年各类涉刑案 / 涉案 / 涉毒 / 吸毒 / 在逃 / 重点人员 / 交通类案件 / 是否正常，1=命中）整体 **JSON 序列化为字符串**经 `result.range` 透出。⚠️ **本路由「查得」`001` 与「查无」`999` 均计费**（上游码表 `1000 数据未查得` 标【计费】）。详见 [`docs/API_接口文档与使用手册_fxry.pdf`](docs/API_接口文档与使用手册_fxry.pdf)。
+- **对外（下游，fqz=申请反欺诈评分）**：`POST /v1/openapi/zlx/querySrmxFQZ`，对外契约与 x1 **完全一致**；入参**仅** `mobile`（必填，**本路由不需要姓名身份证**）；上游 `Data` 对象 `{"score":"258"}`（200~800，越大风险越高）整体 **JSON 序列化为字符串**经 `result.range` 透出。⚠️ **本路由「查得」`001` 与「查无」`999` 均计费**（上游文档「Code 200 请求正常，返回该状态时计费」，score=-1 未查得同为 200）。详见 [`docs/API_接口文档与使用手册_fqz.pdf`](docs/API_接口文档与使用手册_fqz.pdf)。
 
 > **额度策略（v0.6+）**：已**取消额度限制**——不限制客户调用次数；系统仅**统计每个用户累计成功查得数据的次数**（上游 001 → busiCode 10）。维度②（上游配额/调用计数/对账作业）已在 v0.7 **彻底移除**。
 >
-> **计费口径按路由取（v1.0）**：计入成功查得数的上游码由 `billing.TableFor(route)` 决定，**不是全仓一律「仅 001」**——上游对查无也收费的路由（当前为 `blk`、`sffx`、`fxbl`、`fxry`）须同步向下游计费，否则上游账单与我方统计长期对不平。计费口径与下游报文形态是两件事：`blk` 的查无照旧回 `body.code=999`，只是内部计费。反向的例外也存在：`dtjd` 的「认证失败」码被上游标为收费，但我方刻意**不**向下游计费（宁可自己吃成本，不可向客户多收）。逐路由口径与上游文档出处见 `billing-scope` skill，改动前先读它。
+> **计费口径按路由取（v1.0）**：计入成功查得数的上游码由 `billing.TableFor(route)` 决定，**不是全仓一律「仅 001」**——上游对查无也收费的路由（当前为 `blk`、`sffx`、`fxbl`、`fxry`、`fqz`）须同步向下游计费，否则上游账单与我方统计长期对不平。计费口径与下游报文形态是两件事：`blk` 的查无照旧回 `body.code=999`，只是内部计费。反向的例外也存在：`dtjd` 的「认证失败」码被上游标为收费，但我方刻意**不**向下游计费（宁可自己吃成本，不可向客户多收）。逐路由口径与上游文档出处见 `billing-scope` skill，改动前先读它。
 
 > **IP 准入（v0.7）**：网关**不再**做全局/每用户 IP 白名单校验；来源 IP 仅写入审计日志。生产环境由**阿里云 ECS 安全组**等网络层控制访问。
 
-> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` / `tsfx` / `lxf` / `grgjj` / `grsb` / `sfsm` / `sffx` / `dtjd` / `snhmd` / `dtly` / `jdyx` / `fxbl` / `xyqj` / `fxry` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
+> **按域隔离 + demo 治理（v0.9）**：存储按「域」划分——`x1` / `v8v9` / `zlf` / `blk` / `rlbd1` / `rlbd2` / `sfzhy` / `xfjy` / `tsfx` / `lxf` / `grgjj` / `grsb` / `sfsm` / `sffx` / `dtjd` / `snhmd` / `dtly` / `jdyx` / `fxbl` / `xyqj` / `fxry` / `fqz` 各域独立，各域独占一套 **PostgreSQL 库 + Redis 逻辑库 + license/appKey/secret + 记录**；**v8 与 v9 同属 `v8v9` 域，共用同一套 license**（调用次数/成功查得数/操作日志仍按路由独立统计），其余路由完全独立。跨域使用 license 一律鉴权失败（`505004` 账户信息不存在）。历史上被播种进**每个库**的同一个 demo license（`y89098io`，"一个 token 可访问所有路由"的根因）**随迁移 `0004` 自动清除**，生产启动不再播种 demo；开发态各域播种互不相同的 demo appKey。启动时另有防呆校验：两个不同的域若配置了同一个数据库或同一个 Redis 逻辑库，服务直接拒绝启动。管理后台为统一管理员登录，按路由标签页管理（v8/v9 标签展示同一份用户，统计/日志各自独立）。
 
 > **`result.range` 不透出上游标识（v0.9+ 铁律）**：`range` 只承载**业务数据**。上游订单号/流水号/交易号、请求号/日志号/追踪号、上游侧凭证与签名、上游账户/产品/场景编号一律**不进响应体**——它们经 `UpstreamResult.UID`/`LogID` 落进审计（管理后台「上游uid / 上游logId」两列）供运营向上游对账，并打进服务端日志供排障，但下游看不到。实现是所有「序列化透出」路由共用的 [`internal/infrastructure/upstream/sanitize.go`](internal/infrastructure/upstream/sanitize.go) 的 `sanitizeRange`：按字段名（忽略大小写与 `_`/`-`）**递归**剥离标识类字段，保留字段顺序与数字字面量，非法 JSON 则 fail closed 置空。聚合路由（`aggregate.go`）的失败段同理只给中性 `status:"error"`，不带上游 code/msg/单号；段名由装配层给中性的 `source1/source2…`，不暴露上游 kind。新增上游若响应带了新的标识字段，在 `upstreamOnlyKeys` 补一条即可全局生效。回归见 `upstream/sanitize_test.go`。
 
@@ -55,6 +56,7 @@
   - `fxbl` → **风险变量V11 / 应诺尔 enol**（`riskvar`，同端点同信封，`apiKey` 固定 `loanRiskTagV11`、`encryptionType=1` 明文；`busiCode=10` → `001`、`1000 数据未查得【计费】` → `999` **且计费**（已登记 `billing.billNotFoundRoutes`）；⚠️ **生产域名是 `enol.com.cn`**，与 jdyx/xyqj 的 `api.enolfax.com` 不同）。
   - `xyqj` → **信用全景V21 / 应诺尔 enol**（`creditpano`，同端点同信封，`apiKey` 固定 `loanRiskTagV21`（文档示例带前导空格，按 1.4 表去空格）、`encryptionType=1` 明文；`busiCode=10` 时按 `result.fee_status` 判定：`1` → `001` 计费、`0` → `999` 不计费 + warn、缺失 → `001` + warn；`1000 数据未查得`（未标计费）→ `999`；生产域名 `api.enolfax.com`）。
   - `fxry` → **风险人员V108 / 应诺尔 enol**（`riskperson`，与 `sffx` 同端点同信封，`apiKey` 固定 `idRiskTagV108`、`encryptionType` 缺省 `1` 明文（可配 `2` 走 MD5 摘要）；入参仅 `name`+`idCard`（**无 mobile**，`parse.ParseIDRisk`）；`busiCode=10` → `001`（`resultCode` 缺失或非 0/1 → 上游侧错误不计费）、`1000 数据未查得【计费】` → `999` **且计费**（已登记 `billing.billNotFoundRoutes`）；其余 `1001`~`1009` 与 `code=-1` 归一上游侧错误不计费；生产域名 `enol.com.cn`）。
+  - `fqz` → **申请反欺诈-定制模型 / 阿里云风险识别 SAF（冠辰科技定制）**（`antifraud`，`POST https://saf.cn-shanghai.aliyuncs.com/` **form** 提交，阿里云 POP RPC 公共参数 + `Action=ExecuteRequest` + `Service=anti_fraud_customed` + `ServiceParameters={mobile,scene}`，HMAC-SHA1 签名；凭证 `appId`=AccessKeyId、`appSecret`=AccessKeySecret，`mode`=scene（缺省 `gc_cust_202610`）、`apiKey`=Version（缺省 `2019-05-21`）；入参仅 `mobile`（`parse.ParseComplaint`）；`Code=200` 且 score≠-1 → `001`、score=-1 → `999` **且计费**（已登记 `billing.billNotFoundRoutes`）；400/402/403/404/500 与 POP 网关错误归一上游侧错误不计费；`RequestId` 为唯一上游标识，uid=logId）。
   保留 `upstream.Router` 抽象，每版本一个单 provider 路由。
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，架构图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
@@ -194,7 +196,7 @@ storage:
   driver: "postgres"             # 生产必须为 postgres
   migrationsDir: "migrations"    # 相对 relay 工作目录；启动时自动跑 DDL
 
-# 存储按域独立：x1/v8v9/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd/dtly/jdyx/fxbl/xyqj/fxry 各一套 PG 库 + Redis 逻辑库。
+# 存储按域独立：x1/v8v9/zlf/blk/rlbd1/rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd/dtly/jdyx/fxbl/xyqj/fxry/fqz 各一套 PG 库 + Redis 逻辑库。
 # 注意 Redis 逻辑库编号已接近用满（标准 Redis 仅 0~15），再加路由需先扩容 databases 或换实例。
 # 上游按 upstreams 列表配置：单源路由列表长度 1；多源路由长度 N，每个子源自带完整凭证。
 # 多源有两种装配（自动判定）：
@@ -252,7 +254,7 @@ versions:
         appSecret: "<上游 app_security>"
     database: { host: "<RDS>", name: "datahub_rlbd1_db", ... }
     redis:    { db: 8, ... }
-  # 其余路由 (rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd/dtly/jdyx/fxbl/xyqj/fxry) 见 config.example.yaml
+  # 其余路由 (rlbd2/sfzhy/xfjy/tsfx/lxf/grgjj/grsb/sfsm/sffx/dtjd/snhmd/dtly/jdyx/fxbl/xyqj/fxry/fqz) 见 config.example.yaml
 
 admin:
   bootstrapUser: "admin"

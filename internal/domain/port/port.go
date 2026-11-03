@@ -104,7 +104,12 @@ type UserAdminRepository interface {
 type AuditRepository interface {
 	AppendAudit(ctx context.Context, rec *model.AuditRecord) error
 	ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.AuditRecord, error)
+	// CountAudits 返回匹配 filter 的审计行总数 (忽略 Limit/Offset)，供审计页分页。
+	CountAudits(ctx context.Context, f model.AuditFilter) (int, error)
 	// UsageStats aggregates request/success counts per (user, 时间桶) for the
 	// admin 「按年/月/日」统计面板 (§16.4)。时间桶按北京时间 (+08:00) 归档。
 	UsageStats(ctx context.Context, f model.StatsFilter) ([]*model.UsageStat, error)
+	// BillingSummary 按 app_key 聚合区间内的 调用/查得/计费 次数，供出账导出 (§16.6)。
+	// 只读 audit_log；Name 不在此回填 (由上层反查 license)。
+	BillingSummary(ctx context.Context, f model.AuditFilter) ([]*model.BillingAgg, error)
 }

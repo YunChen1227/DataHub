@@ -235,6 +235,28 @@ func (s *Service) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model
 	return s.audits.ListAudits(ctx, f)
 }
 
+// CountAudits 返回匹配 filter 的审计行总数 (注入路由作用域)，供审计页分页显示。
+func (s *Service) CountAudits(ctx context.Context, f model.AuditFilter) (int, error) {
+	f.Version = s.route
+	return s.audits.CountAudits(ctx, f)
+}
+
+// Route 暴露本后台服务的路由作用域 (供出账/对账导出标注上游/口径)。
+func (s *Service) Route() string { return s.route }
+
+// BillingSummary 聚合本路由区间内按 app_key 的 调用/查得/计费 次数 (§16.6，仅计数)。
+// appKeys 非空时只统计这些客户 (下游账单按客户导出时先把名称解析成 appKey 集合)。
+func (s *Service) BillingSummary(ctx context.Context, appKeys []string, from, to time.Time) ([]*model.BillingAgg, error) {
+	return s.audits.BillingSummary(ctx, model.AuditFilter{Version: s.route, AppKeys: appKeys, From: from, To: to})
+}
+
+// ReportAudits 返回本路由区间内的审计明细 (注入路由作用域，不做 500 行上限钳制，
+// 由调用方用 f.Limit 设定导出上限)，供下游账单/上游对账的明细 sheet。
+func (s *Service) ReportAudits(ctx context.Context, f model.AuditFilter) ([]*model.AuditRecord, error) {
+	f.Version = s.route
+	return s.audits.ListAudits(ctx, f)
+}
+
 // --- §16.4 usage stats (按年/月/日 请求次数与成功次数) ---
 
 // UsageStats 返回本路由作用域下、按 (用户, 时间桶) 聚合的请求/成功次数趋势。

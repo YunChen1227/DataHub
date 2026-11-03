@@ -177,6 +177,42 @@ func (s *Store) AppendAudit(_ context.Context, rec *model.AuditRecord) error {
 	return nil
 }
 
+// auditMatches 判断审计行是否命中 filter (不含 Limit/Offset)，供 ListAudits /
+// CountAudits / BillingSummary 共用，与 Postgres 侧 buildAuditWhere 口径一致。
+func auditMatches(f model.AuditFilter, a *model.AuditRecord) bool {
+	if f.Version != "" && a.Version != f.Version {
+		return false
+	}
+	if f.AppKey != "" && a.AppKey != f.AppKey {
+		return false
+	}
+	if len(f.AppKeys) > 0 && !containsStr(f.AppKeys, a.AppKey) {
+		return false
+	}
+	if f.BusiCode != nil && a.BusiCode != *f.BusiCode {
+		return false
+	}
+	if f.Reqid != "" && a.Reqid != f.Reqid && a.RequestID != f.Reqid {
+		return false
+	}
+	if !f.From.IsZero() && a.CreatedAt.Before(f.From) {
+		return false
+	}
+	if !f.To.IsZero() && !a.CreatedAt.Before(f.To) {
+		return false
+	}
+	if f.Success != nil && a.FoundData != *f.Success {
+		return false
+	}
+	if f.CalledUpstream != nil && a.CalledUpstream != *f.CalledUpstream {
+		return false
+	}
+	if f.ExcludeCache && a.FromCache {
+		return false
+	}
+	return true
+}
+
 func (s *Store) ListAudits(_ context.Context, f model.AuditFilter) ([]*model.AuditRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -185,25 +221,7 @@ func (s *Store) ListAudits(_ context.Context, f model.AuditFilter) ([]*model.Aud
 	// newest first.
 	for i := len(s.audits) - 1; i >= 0; i-- {
 		a := s.audits[i]
-		if f.Version != "" && a.Version != f.Version {
-			continue
-		}
-		if f.AppKey != "" && a.AppKey != f.AppKey {
-			continue
-		}
-		if len(f.AppKeys) > 0 && !containsStr(f.AppKeys, a.AppKey) {
-			continue
-		}
-		if f.BusiCode != nil && a.BusiCode != *f.BusiCode {
-			continue
-		}
-		if !f.From.IsZero() && a.CreatedAt.Before(f.From) {
-			continue
-		}
-		if !f.To.IsZero() && !a.CreatedAt.Before(f.To) {
-			continue
-		}
-		if f.Success != nil && a.FoundData != *f.Success {
+		if !auditMatches(f, a) {
 			continue
 		}
 		if skipped < f.Offset {
@@ -216,6 +234,49 @@ func (s *Store) ListAudits(_ context.Context, f model.AuditFilter) ([]*model.Aud
 			break
 		}
 	}
+	return out, nil
+}
+
+// CountAudits 统计匹配 filter 的审计行总数 (忽略 Limit/Offset)。
+func (s *Store) CountAudits(_ context.Context, f model.AuditFilter) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := 0
+	for _, a := range s.audits {
+		if auditMatches(f, a) {
+			c++
+		}
+	}
+	return c, nil
+}
+
+// BillingSummary 按 app_key 聚合 调用/查得/计费 次数 (§16.6，仅计数)；name 留空。
+func (s *Store) BillingSummary(_ context.Context, f model.AuditFilter) ([]*model.BillingAgg, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	agg := map[string]*model.BillingAgg{}
+	for _, a := range s.audits {
+		if !auditMatches(f, a) {
+			continue
+		}
+		g := agg[a.AppKey]
+		if g == nil {
+			g = &model.BillingAgg{AppKey: a.AppKey}
+			agg[a.AppKey] = g
+		}
+		g.Calls++
+		if a.FoundData {
+			g.Found++
+		}
+		if a.Billed {
+			g.Billed++
+		}
+	}
+	out := make([]*model.BillingAgg, 0, len(agg))
+	for _, g := range agg {
+		out = append(out, g)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AppKey < out[j].AppKey })
 	return out, nil
 }
 

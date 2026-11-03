@@ -66,6 +66,8 @@ type AuditFilter struct {
 	AppKey   string
 	AppKeys  []string
 	BusiCode *int
+	// Reqid 精确匹配上游幂等键 reqid 或全链路追踪 requestId (任一命中)。供审计页检索。
+	Reqid string
 	// From/To 是可选的时间区间过滤 [From, To) (按年/月/日查看明细时由前端算好边界)。
 	// 零值表示不限。created_at 为 timestamptz，比较时天然按绝对时刻，与展示时区无关。
 	From time.Time
@@ -73,8 +75,25 @@ type AuditFilter struct {
 	// Success 是可选的成败过滤：nil=全部，true=仅成功(查得数据 found_data)，
 	// false=仅失败(未查得，含查无与各类错误)。「成功」口径与「成功查得数」一致。
 	Success *bool
-	Limit   int
-	Offset  int
+	// CalledUpstream 可选过滤是否真正调了上游：上游对账只取 true 的行。
+	CalledUpstream *bool
+	// ExcludeCache=true 时排除「走缓存」回放的行 (from_cache)：这类行没真正调上游，
+	// 向上游对账时须排除 (见 web/admin/src/pages/Audits.jsx 的说明)。
+	ExcludeCache bool
+	Limit        int
+	Offset       int
+}
+
+// BillingAgg 是按 (app_key) 聚合的计费计数，供出账/对账导出 (§16.6，仅计数不涉金额)。
+// 口径：Calls=审计行总数(含失败)；Found=查得(found_data)；Billed=计费(billed，
+// 等同台账 counted_service——查得计费路由只对 001 计费，查询计费路由对 001+999 计费)。
+// Name 由调用方 (admin/handler) 从 license 反查后回填，仓储层不做关联。
+type BillingAgg struct {
+	AppKey string `json:"appKey"`
+	Name   string `json:"name"`
+	Calls  int64  `json:"calls"`
+	Found  int64  `json:"found"`
+	Billed int64  `json:"billed"`
 }
 
 // StatsGranularity 是用量统计的时间桶粒度 (按年/月/日)。

@@ -8,6 +8,9 @@ const BASE = '/admin/api'
 
 export const VERSIONS = ['x1', 'v9', 'v8', 'zlf', 'blk', 'rlbd1', 'rlbd2', 'sfzhy', 'xfjy', 'tsfx', 'lxf', 'grgjj', 'grsb', 'sfsm', 'sffx', 'dtjd', 'snhmd', 'dtly', 'jdyx', 'fxbl', 'xyqj', 'fxry', 'fqz']
 
+// VERSION_LABELS 路由展示名；上游对账导出的上游下拉直接复用 (每条路由=一个上游)。
+export const VERSION_LABELS = { x1: 'X1', v9: 'V9', v8: 'V8', zlf: 'ZLF', blk: 'BLK', rlbd1: 'RLBD1', rlbd2: 'RLBD2', sfzhy: 'SFZHY', xfjy: 'XFJY', tsfx: 'TSFX', lxf: 'LXF', grgjj: 'GRGJJ', grsb: 'GRSB', sfsm: 'SFSM', sffx: 'SFFX', dtjd: 'DTJD', snhmd: 'SNHMD', dtly: 'DTLY', jdyx: 'JDYX', fxbl: 'FXBL', xyqj: 'XYQJ', fxry: 'FXRY', fqz: 'FQZ' }
+
 let token = localStorage.getItem('adminToken') || ''
 let version = localStorage.getItem('adminVersion') || 'x1'
 if (!VERSIONS.includes(version)) version = 'x1'
@@ -65,6 +68,49 @@ export const api = {
   rotateSecret: (id) => req('POST', '/users/' + encodeURIComponent(id) + '/rotate-secret'),
   listAudits: (query) => req('GET', '/audits' + (query || '')),
   usageStats: (query) => req('GET', '/stats' + (query || '')),
+}
+
+// downloadReport 拉取出账/对账 Excel 并触发浏览器下载 (仅计数)。
+//   - kind='downstream'：跨所有路由，按客户出账，走非版本前缀的 /admin/api/reports/downstream。
+//   - kind='upstream'：按单条路由(=一个上游)对账，走 /admin/api/{route}/reports/upstream，
+//     route 由 params.route 指定 (默认当前版本)。
+// params 其余字段 (from/to/customer) 作为查询参数。失败时抛出带后端信息的 Error。
+export async function downloadReport(kind, params = {}) {
+  const headers = {}
+  if (token) headers['Authorization'] = 'Bearer ' + token
+  const { route, ...rest } = params
+  let path
+  if (kind === 'downstream') {
+    path = '/reports/downstream'
+  } else {
+    path = '/' + (route || version) + '/reports/upstream'
+  }
+  const qs = new URLSearchParams(rest).toString()
+  const res = await fetch(BASE + path + (qs ? '?' + qs : ''), { headers })
+  if (!res.ok) {
+    const text = await res.text()
+    let msg = 'HTTP ' + res.status
+    try {
+      msg = JSON.parse(text).error || msg
+    } catch {
+      // 非 JSON 错误体：保留状态码
+    }
+    const err = new Error(msg)
+    err.status = res.status
+    throw err
+  }
+  const blob = await res.blob()
+  const cd = res.headers.get('Content-Disposition') || ''
+  const m = cd.match(/filename\*=UTF-8''([^;]+)/i)
+  const filename = m ? decodeURIComponent(m[1]) : kind + '.xlsx'
+  const dlUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = dlUrl
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(dlUrl)
 }
 
 // timeRange 把「粒度 + 选中周期值」换算成 [from, to) 的 RFC3339 边界 (北京时间

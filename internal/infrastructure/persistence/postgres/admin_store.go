@@ -170,14 +170,11 @@ func (s *Store) AppendAudit(ctx context.Context, rec *model.AuditRecord) error {
 	).Scan(&rec.ID, &rec.CreatedAt)
 }
 
-func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.AuditRecord, error) {
-	q := `SELECT id, request_id, COALESCE(version,''), app_key, COALESCE(trade_no,''), COALESCE(reqid,''),
-		COALESCE(client_ip,''), called_upstream, found_data, COALESCE(busi_code,0),
-		COALESCE(busi_msg,''), COALESCE(upstream_code,''), COALESCE(upstream_uid,''),
-		COALESCE(upstream_logid,''), billed, from_cache, COALESCE(latency_ms,0),
-		COALESCE(name_mask,''), COALESCE(id_card_mask,''), COALESCE(mobile_mask,''),
-		COALESCE(err_msg,''), created_at
-		FROM audit_log WHERE 1=1`
+// buildAuditWhere 把 AuditFilter 翻成 " WHERE ..." 子句与参数 (占位符 $1..)。
+// Reqid 复用同一占位符匹配 reqid 或 request_id。不含 ORDER/LIMIT/OFFSET，供
+// ListAudits / CountAudits / BillingSummary 共用，保证口径一致。
+func buildAuditWhere(f model.AuditFilter) (string, []any) {
+	q := " WHERE 1=1"
 	args := []any{}
 	n := 0
 	if f.Version != "" {
@@ -200,6 +197,11 @@ func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.A
 		q += " AND busi_code=$" + itoa(n)
 		args = append(args, *f.BusiCode)
 	}
+	if f.Reqid != "" {
+		n++
+		q += " AND (reqid=$" + itoa(n) + " OR request_id=$" + itoa(n) + ")"
+		args = append(args, f.Reqid)
+	}
 	if !f.From.IsZero() {
 		n++
 		q += " AND created_at >= $" + itoa(n)
@@ -215,7 +217,28 @@ func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.A
 		q += " AND found_data=$" + itoa(n)
 		args = append(args, *f.Success)
 	}
-	q += " ORDER BY id DESC"
+	if f.CalledUpstream != nil {
+		n++
+		q += " AND called_upstream=$" + itoa(n)
+		args = append(args, *f.CalledUpstream)
+	}
+	if f.ExcludeCache {
+		q += " AND from_cache = false"
+	}
+	return q, args
+}
+
+func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.AuditRecord, error) {
+	q := `SELECT id, request_id, COALESCE(version,''), app_key, COALESCE(trade_no,''), COALESCE(reqid,''),
+		COALESCE(client_ip,''), called_upstream, found_data, COALESCE(busi_code,0),
+		COALESCE(busi_msg,''), COALESCE(upstream_code,''), COALESCE(upstream_uid,''),
+		COALESCE(upstream_logid,''), billed, from_cache, COALESCE(latency_ms,0),
+		COALESCE(name_mask,''), COALESCE(id_card_mask,''), COALESCE(mobile_mask,''),
+		COALESCE(err_msg,''), created_at
+		FROM audit_log`
+	where, args := buildAuditWhere(f)
+	q += where + " ORDER BY id DESC"
+	n := len(args)
 	if f.Limit > 0 {
 		n++
 		q += " LIMIT $" + itoa(n)
@@ -241,6 +264,42 @@ func (s *Store) ListAudits(ctx context.Context, f model.AuditFilter) ([]*model.A
 			return nil, err
 		}
 		out = append(out, &r)
+	}
+	return out, rows.Err()
+}
+
+// CountAudits 统计匹配 filter 的审计行总数 (忽略 Limit/Offset)，供审计页分页。
+func (s *Store) CountAudits(ctx context.Context, f model.AuditFilter) (int, error) {
+	where, args := buildAuditWhere(f)
+	var c int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log`+where, args...).Scan(&c); err != nil {
+		return 0, err
+	}
+	return c, nil
+}
+
+// BillingSummary 按 app_key 聚合区间内 调用/查得/计费 次数 (§16.6，仅计数)。
+// billed 列已等同台账 counted_service (见 orchestrator)，故查询计费路由的查无(999)
+// 也计入 billed。name 不在此关联 (app_key 在 license/audit 两表同名会歧义)，留空。
+func (s *Store) BillingSummary(ctx context.Context, f model.AuditFilter) ([]*model.BillingAgg, error) {
+	where, args := buildAuditWhere(f)
+	q := `SELECT app_key,
+		count(*) AS calls,
+		count(*) FILTER (WHERE found_data) AS found,
+		count(*) FILTER (WHERE billed) AS billed
+		FROM audit_log` + where + ` GROUP BY app_key ORDER BY app_key`
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*model.BillingAgg
+	for rows.Next() {
+		var a model.BillingAgg
+		if err := rows.Scan(&a.AppKey, &a.Calls, &a.Found, &a.Billed); err != nil {
+			return nil, err
+		}
+		out = append(out, &a)
 	}
 	return out, rows.Err()
 }

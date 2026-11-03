@@ -3,14 +3,17 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/datahub/relay/internal/common/xlsx"
 	"github.com/datahub/relay/internal/domain/admin"
 	"github.com/datahub/relay/internal/domain/model"
+	"github.com/datahub/relay/internal/domain/report"
 )
 
 // registerAdminRoutes mounts the admin console API + the SPA static files (§16).
@@ -31,6 +34,11 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /admin/api/{ver}/audits", s.requireAdmin(s.adminListAudits))
 	mux.HandleFunc("GET /admin/api/{ver}/stats", s.requireAdmin(s.adminUsageStats))
+
+	// 出账/对账导出 (§16.6，仅计数)：下游账单跨所有路由 (Server 级)，上游对账按
+	// 单条路由 (=一个上游)。两者都只读 audit_log，不落任何原始返回。
+	mux.HandleFunc("GET /admin/api/reports/downstream", s.requireAdmin(s.adminReportDownstream))
+	mux.HandleFunc("GET /admin/api/{ver}/reports/upstream", s.requireAdmin(s.adminReportUpstream))
 
 	if s.spaDir != "" {
 		mux.HandleFunc("GET /admin/", s.serveSPA)
@@ -188,6 +196,7 @@ func (s *Server) adminListAudits(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := model.AuditFilter{
 		AppKey: q.Get("appKey"),
+		Reqid:  strings.TrimSpace(q.Get("reqid")),
 		Limit:  atoiDefault(q.Get("limit"), 100),
 		Offset: atoiDefault(q.Get("offset"), 0),
 	}
@@ -221,17 +230,23 @@ func (s *Server) adminListAudits(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(appKeys) == 0 {
 			// 无匹配用户：直接返回空结果，避免退化为全量查询。
-			writeAdminJSON(w, http.StatusOK, map[string]any{"audits": []*model.AuditRecord{}})
+			writeAdminJSON(w, http.StatusOK, map[string]any{"audits": []*model.AuditRecord{}, "total": 0})
 			return
 		}
 		f.AppKeys = appKeys
+	}
+	// total 用于前端分页 (CountAudits 忽略 Limit/Offset，与 ListAudits 口径一致)。
+	total, err := svc.CountAudits(r.Context(), f)
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	audits, err := svc.ListAudits(r.Context(), f)
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeAdminJSON(w, http.StatusOK, map[string]any{"audits": audits})
+	writeAdminJSON(w, http.StatusOK, map[string]any{"audits": audits, "total": total})
 }
 
 // --- §16.4 usage stats (按年/月/日 请求次数与成功次数) ---
@@ -271,6 +286,128 @@ func (s *Server) adminUsageStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAdminJSON(w, http.StatusOK, map[string]any{"stats": stats})
+}
+
+// --- §16.6 出账/对账导出 (仅计数，Excel) ---
+
+// reportBeijing 是导出文件名时间戳用的北京时区。
+var reportBeijing = time.FixedZone("CST", 8*3600)
+
+// adminReportDownstream 跨所有路由出下游账单：按 客户 × 路由 统计调用/查得/查询/
+// 计费次数。customer 空=全部客户。遍历每个版本独立的 admin 服务 (各连独立库)。
+func (s *Server) adminReportDownstream(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	from, to, err := report.ParseRange(q.Get("from"), q.Get("to"))
+	if err != nil {
+		writeAdminError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	customer := strings.TrimSpace(q.Get("customer"))
+	names := map[string]string{}
+	var routes []report.RouteData
+	detailBudget := report.MaxRows + 1
+	for _, ver := range model.Versions {
+		st := s.stacks[ver]
+		if st == nil || st.Admin == nil {
+			continue
+		}
+		var appKeys []string
+		if customer != "" {
+			matched, err := st.Admin.SearchUsers(r.Context(), customer)
+			if err != nil {
+				writeAdminError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			for _, u := range matched {
+				if u.Name != customer { // SearchUsers 为子串匹配；下游账单按精确客户名
+					continue
+				}
+				appKeys = append(appKeys, u.AppKey)
+				names[u.AppKey] = u.Name
+			}
+			if len(appKeys) == 0 {
+				continue // 该路由下没有此客户
+			}
+		} else {
+			users, err := st.Admin.ListUsers(r.Context())
+			if err != nil {
+				writeAdminError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			for _, u := range users {
+				names[u.AppKey] = u.Name
+			}
+		}
+		aggs, err := st.Admin.BillingSummary(r.Context(), appKeys, from, to)
+		if err != nil {
+			writeAdminError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if len(aggs) == 0 {
+			continue
+		}
+		for _, a := range aggs {
+			if a.Name == "" {
+				a.Name = names[a.AppKey]
+			}
+		}
+		var details []*model.AuditRecord
+		if detailBudget > 0 {
+			details, err = st.Admin.ReportAudits(r.Context(), model.AuditFilter{AppKeys: appKeys, From: from, To: to, Limit: detailBudget})
+			if err != nil {
+				writeAdminError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			detailBudget -= len(details)
+		}
+		routes = append(routes, report.RouteData{Route: ver, Label: strings.ToUpper(ver), Aggs: aggs, Details: details})
+	}
+	wb := report.BuildDownstream(routes, names, customer, from, to, time.Now())
+	writeWorkbook(w, "下游账单", wb)
+}
+
+// adminReportUpstream 按单条路由 (=一个上游) 出对账单：只统计真正调上游且非走缓存
+// 的行，给出调用/查得/计费/查无汇总与逐条明细。
+func (s *Server) adminReportUpstream(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.adminFor(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	from, to, err := report.ParseRange(q.Get("from"), q.Get("to"))
+	if err != nil {
+		writeAdminError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	called := true
+	audits, err := svc.ReportAudits(r.Context(), model.AuditFilter{
+		CalledUpstream: &called,
+		ExcludeCache:   true,
+		From:           from,
+		To:             to,
+		Limit:          report.MaxRows + 1,
+	})
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	names := map[string]string{}
+	if users, err := svc.ListUsers(r.Context()); err == nil {
+		for _, u := range users {
+			names[u.AppKey] = u.Name
+		}
+	}
+	route := svc.Route()
+	wb := report.BuildUpstream(route, strings.ToUpper(route), audits, names, from, to, time.Now())
+	writeWorkbook(w, "上游对账-"+route, wb)
+}
+
+// writeWorkbook 以 attachment 形式回写 xlsx (文件名带北京时间戳)。
+func writeWorkbook(w http.ResponseWriter, base string, wb *xlsx.Workbook) {
+	fname := base + "-" + time.Now().In(reportBeijing).Format("20060102-150405") + ".xlsx"
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(fname))
+	_ = wb.Write(w)
 }
 
 // parseTimeParam 解析 RFC3339 时间参数，非法/空返回零值 (表示不限)。

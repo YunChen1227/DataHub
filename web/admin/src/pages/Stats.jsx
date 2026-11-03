@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { api, timeRange } from '../api.js'
+import { api, downloadReport, timeRange, VERSIONS, VERSION_LABELS } from '../api.js'
 
 // 粒度选项：按年/月/日分桶。
 const GRANS = [
@@ -18,6 +18,126 @@ function periodInputType(gran) {
 function rate(total, success) {
   if (!total) return '-'
   return ((success / total) * 100).toFixed(1) + '%'
+}
+
+// today 返回北京时间的今天 (YYYY-MM-DD)。
+function today() {
+  return new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)
+}
+
+// firstOfMonth 返回北京时间本月 1 日。
+function firstOfMonth() {
+  return today().slice(0, 8) + '01'
+}
+
+// ReportExport 导出出账/对账 Excel（仅计数，不涉金额）：
+//   - 下游账单：按客户跨所有路由统计 调用/查得/查询/计费 次数，每条路由单独计费、
+//     标注查得计费/查询计费。
+//   - 上游对账：每条路由就是一个上游，统计该上游区间内真正调用（已排除走缓存）。
+function ReportExport({ version }) {
+  const [kind, setKind] = useState('downstream')
+  const [from, setFrom] = useState(firstOfMonth())
+  const [to, setTo] = useState(today())
+  const [customers, setCustomers] = useState([])
+  const [customer, setCustomer] = useState('')
+  const [route, setRoute] = useState(version || VERSIONS[0])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  // 下游账单的客户下拉：取当前路由的用户名（跨路由客户大多一致，够用）。
+  useEffect(() => {
+    api
+      .listUsers()
+      .then((d) => {
+        const names = [...new Set((d.users || []).map((u) => u.name).filter(Boolean))]
+        names.sort((a, b) => a.localeCompare(b, 'zh'))
+        setCustomers(names)
+      })
+      .catch((e) => setErr(e.message))
+  }, [version])
+
+  const exportExcel = async (e) => {
+    e.preventDefault()
+    setErr('')
+    setBusy(true)
+    try {
+      if (kind === 'downstream') {
+        await downloadReport('downstream', { customer, from, to })
+      } else {
+        await downloadReport('upstream', { route, from, to })
+      }
+    } catch (e2) {
+      setErr(e2.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>导出对账单（仅计数）</h2>
+      <p className="muted">
+        下游账单：所选客户在区间内的 调用/查得/查询/计费 次数，按路由拆行，每条路由标注查得计费或查询计费。
+        上游对账：每条路由就是一个上游，统计该上游区间内真正调用的请求（已自动排除走缓存回放）。
+        日期按北京时间，含截止日当天，单次最长 366 天。
+      </p>
+      <form className="toolbar" onSubmit={exportExcel}>
+        <div>
+          <label>类型</label>
+          <div className="version-switch" role="group" aria-label="导出类型">
+            <button
+              type="button"
+              className={'btn small' + (kind === 'downstream' ? '' : ' ghost')}
+              onClick={() => setKind('downstream')}
+            >
+              下游账单
+            </button>
+            <button
+              type="button"
+              className={'btn small' + (kind === 'upstream' ? '' : ' ghost')}
+              onClick={() => setKind('upstream')}
+            >
+              上游对账
+            </button>
+          </div>
+        </div>
+        <div>
+          <label>起始日期</label>
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} required />
+        </div>
+        <div>
+          <label>截止日期</label>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} required />
+        </div>
+        {kind === 'downstream' ? (
+          <div>
+            <label>客户</label>
+            <select value={customer} onChange={(e) => setCustomer(e.target.value)}>
+              <option value="">全部客户</option>
+              {customers.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div>
+            <label>上游（路由）</label>
+            <select value={route} onChange={(e) => setRoute(e.target.value)}>
+              {VERSIONS.map((v) => (
+                <option key={v} value={v}>{VERSION_LABELS[v] || v.toUpperCase()}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div>
+          <button className="btn" type="submit" disabled={busy}>
+            {busy ? '生成中…' : '导出 Excel'}
+          </button>
+        </div>
+      </form>
+      {err && <div className="error">{err}</div>}
+    </div>
+  )
 }
 
 export default function Stats({ version }) {
@@ -66,6 +186,8 @@ export default function Stats({ version }) {
   const totalOk = rows.reduce((s, r) => s + (r.success || 0), 0)
 
   return (
+    <>
+    <ReportExport version={version} />
     <div className="card">
       <h2>{ver} 用量统计（按时间）</h2>
       <p className="muted">按「年 / 月 / 日」查看本路由下每个用户的请求次数与成功次数。「请求次数」= 收到的全部请求（含鉴权/参数失败）；「成功次数」= 查得数据（与用户列表的「成功查得数」口径一致）。时间按北京时间（+08:00）分桶。</p>
@@ -142,5 +264,6 @@ export default function Stats({ version }) {
         </table>
       </div>
     </div>
+    </>
   )
 }

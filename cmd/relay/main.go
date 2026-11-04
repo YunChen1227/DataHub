@@ -663,6 +663,7 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 		// fqz 申请反欺诈-定制模型 (阿里云 SAF)：appID=AccessKeyId、appSecret=AccessKeySecret、
 		// service 缺省 anti_fraud_customed、mode=scene 缺省 gc_cust_202610、apiKey=Version
 		// 缺省 2019-05-21；baseURL 缺省 https://saf.cn-shanghai.aliyuncs.com/。
+		// encryptionType 缺省 1 明文 mobile，可配 2 走 mobileMd5 / 3 走 mobileSha256 (§3.2)。
 		client := upstream.NewAntiFraud(upstream.AntiFraudConfig{
 			BaseURL:         uc.baseURL,
 			AccessKeyID:     uc.appID,
@@ -670,6 +671,7 @@ func buildClient(version string, uc upstreamConfig, httpClient *http.Client, log
 			Service:         uc.service,
 			Scene:           uc.mode,
 			Version:         uc.apiKey,
+			EncryptionType:  uc.encryptionType,
 		}, httpClient)
 		return client, nil
 	case upstream.ProviderFaceCompare:

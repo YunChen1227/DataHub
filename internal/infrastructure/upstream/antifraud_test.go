@@ -2,6 +2,9 @@ package upstream
 
 import (
 	"context"
+	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -95,6 +98,64 @@ func TestAntiFraudRequestShape(t *testing.T) {
 	if s := signAliyunPOP(http.MethodPost, params, "sk"); got.Get("Signature") != s {
 		t.Fatalf("Signature = %q, 期望 %q", got.Get("Signature"), s)
 	}
+}
+
+// §3.2 手机号三选一：encryptionType 控制出站用 mobile / mobileMd5 / mobileSha256，
+// 摘要均为小写 hex，且仍参与 POP 签名、scene 照常随行。
+func TestAntiFraudMobileEncryption(t *testing.T) {
+	cases := []struct {
+		name     string
+		encType  int
+		wantKey  string
+		wantVal  string
+		wantPlan bool // true=期望明文 mobile
+	}{
+		{name: "默认明文 mobile", encType: 0, wantKey: "mobile", wantVal: "17325421010"},
+		{name: "1 明文 mobile", encType: AntiFraudPlain, wantKey: "mobile", wantVal: "17325421010"},
+		{name: "2 mobileMd5", encType: AntiFraudMD5, wantKey: "mobileMd5", wantVal: md5Hex("17325421010")},
+		{name: "3 mobileSha256", encType: AntiFraudSHA256, wantKey: "mobileSha256", wantVal: sha256Hex("17325421010")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got url.Values
+			srv := antiFraudServer(t, &got, `{"Message":"OK","RequestId":"RID","Data":{"score":"258"},"Code":200}`)
+			defer srv.Close()
+
+			c := NewAntiFraud(AntiFraudConfig{BaseURL: srv.URL, AccessKeyID: "ak", AccessKeySecret: "sk", EncryptionType: tc.encType}, srv.Client())
+			if _, err := c.Query(context.Background(), antiFraudReq); err != nil {
+				t.Fatalf("Query: %v", err)
+			}
+			var sp map[string]string
+			if err := json.Unmarshal([]byte(got.Get("ServiceParameters")), &sp); err != nil {
+				t.Fatalf("ServiceParameters 非 JSON: %v", err)
+			}
+			if len(sp) != 2 || sp[tc.wantKey] != tc.wantVal || sp["scene"] != "gc_cust_202610" {
+				t.Fatalf("ServiceParameters = %v, 期望 %s=%s + scene", sp, tc.wantKey, tc.wantVal)
+			}
+			// 明文模式不得出现摘要键，摘要模式不得泄露明文 mobile。
+			if tc.wantKey != "mobile" && sp["mobile"] != "" {
+				t.Fatalf("摘要模式仍发了明文 mobile: %v", sp)
+			}
+			// 摘要值仍须被 POP 签名覆盖（可复算）。
+			params := map[string]string{}
+			for k := range got {
+				params[k] = got.Get(k)
+			}
+			if s := signAliyunPOP(http.MethodPost, params, "sk"); got.Get("Signature") != s {
+				t.Fatalf("Signature 未覆盖摘要后的参数: got %q want %q", got.Get("Signature"), s)
+			}
+		})
+	}
+}
+
+func md5Hex(s string) string {
+	sum := md5.Sum([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 // 归一化口径逐条对齐 docs/申请反欺诈定制模型_冠辰科技_202610.pdf §3.3/§3.4：

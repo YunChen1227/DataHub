@@ -3,8 +3,10 @@ package upstream
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -46,6 +48,31 @@ const (
 	antiFraudScoreMax      = 800
 )
 
+// §3.2 手机号入参三选一：明文 mobile / MD5 摘要 mobileMd5 / SHA256 摘要 mobileSha256。
+// EncryptionType 口径与应诺尔 enol 对齐 (1 明文【默认】/ 2 md5 / 3 sha256)，让各上游配置
+// 的 encryptionType 语义一致。下游一律只传明文 mobile，由本网关在出站时按配置摘要，
+// 既满足"上游侧加密传输 PII"，又不改变对外契约。
+const (
+	AntiFraudPlain  = 1 // 明文 mobile（默认）
+	AntiFraudMD5    = 2 // mobileMd5：mobile 的 MD5 小写 hex
+	AntiFraudSHA256 = 3 // mobileSha256：mobile 的 SHA256 小写 hex
+)
+
+// antiFraudMobileField 依据加密类型返回上游 ServiceParameters 里的手机号键名与取值
+// (PDF §3.2)。md5/sha256 均为小写 hex，与文档 §3.2 请求示例一致。
+func antiFraudMobileField(mobile string, encType int) (string, string) {
+	switch encType {
+	case AntiFraudMD5:
+		sum := md5.Sum([]byte(mobile))
+		return "mobileMd5", hex.EncodeToString(sum[:])
+	case AntiFraudSHA256:
+		sum := sha256.Sum256([]byte(mobile))
+		return "mobileSha256", hex.EncodeToString(sum[:])
+	default:
+		return "mobile", mobile
+	}
+}
+
 // AntiFraudConfig holds the 申请反欺诈-定制模型 endpoint + 我方阿里云 RAM 子账号凭证
 // (PDF §1：AccessKeyID/AccessKeySecret，需授予 AliyunYundunSAFFullAccess)。
 //
@@ -58,6 +85,9 @@ type AntiFraudConfig struct {
 	Service         string // 默认 anti_fraud_customed
 	Scene           string // 默认 gc_cust_202610
 	Version         string // 默认 2019-05-21
+	// EncryptionType 控制 §3.2 手机号三选一入参：1 明文 mobile【默认】/ 2 mobileMd5 /
+	// 3 mobileSha256。下游始终传明文，网关按此在出站时摘要。
+	EncryptionType int
 }
 
 // AntiFraudClient implements port.UpstreamPort for 申请反欺诈-定制模型 (阿里云 SAF)。
@@ -65,7 +95,8 @@ type AntiFraudConfig struct {
 // 协议 (PDF §2.3/§2.4)：阿里云 POP RPC 风格，公共参数 + Action=ExecuteRequest +
 // Service + ServiceParameters(JSON)，HMAC-SHA1 签名 (SignatureVersion 1.0)，参数以
 // form 形式 POST。业务参数 (§3.2)：mobile / mobileMd5 / mobileSha256 三选一必传 +
-// scene 必传。按接入约定下游只传明文 mobile，网关原样以 mobile 发上游，不发另两种摘要。
+// scene 必传。下游始终只传明文 mobile，网关按 cfg.EncryptionType 决定出站用明文 mobile
+// (默认) 还是 mobileMd5 / mobileSha256 摘要，三种上游入参形态全部兼容。
 // 响应 Data 富对象 ({"score":"258"}) 整体经下游 result.range 透出。
 // 本文档只定义了一个业务接口 (ExecuteRequest + anti_fraud_customed)，已全部实现。
 type AntiFraudClient struct {
@@ -91,6 +122,9 @@ func NewAntiFraud(cfg AntiFraudConfig, httpClient *http.Client) *AntiFraudClient
 	if cfg.Version == "" {
 		cfg.Version = AntiFraudAPIVersion
 	}
+	if cfg.EncryptionType == 0 {
+		cfg.EncryptionType = AntiFraudPlain
+	}
 	return &AntiFraudClient{cfg: cfg, http: httpClient, now: time.Now}
 }
 
@@ -113,9 +147,10 @@ type antiFraudResponse struct {
 //
 // 上游只有 RequestId 一个标识，UID/LogID 同填。
 func (c *AntiFraudClient) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
+	mobileKey, mobileVal := antiFraudMobileField(req.Mobile, c.cfg.EncryptionType)
 	svcParams, err := json.Marshal(map[string]string{
-		"mobile": req.Mobile,
-		"scene":  c.cfg.Scene,
+		mobileKey: mobileVal,
+		"scene":   c.cfg.Scene,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal antifraud ServiceParameters: %w", err)
@@ -154,6 +189,8 @@ func (c *AntiFraudClient) Query(ctx context.Context, req *model.UpstreamRequest)
 		"service", c.cfg.Service,
 		"scene", c.cfg.Scene,
 		"version", c.cfg.Version,
+		"encryptionType", c.cfg.EncryptionType,
+		"mobileField", mobileKey,
 		"reqid", req.Reqid,
 	)
 

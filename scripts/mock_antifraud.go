@@ -10,12 +10,18 @@
 //   - mobile == forbiddenMobile         -> Code 403 权限不足 (上游侧错误, 不计费)
 //   - mobile == notFoundMobile          -> Code 200 + score "-1" 未查得 (**查无也计费**)
 //   - otherwise                         -> Code 200 + score "258"
+//
+// §3.2 手机号三选一 (mobile / mobileMd5 / mobileSha256) 全部接受：取到哪个用哪个，特殊号
+// 的匹配按同样的摘要口径比对，故 fqz 配 encryptionType 1/2/3 任一都能跑通全链路。
 package main
 
 import (
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -38,6 +44,20 @@ func popEncode(s string) string {
 	e = strings.ReplaceAll(e, "+", "%20")
 	e = strings.ReplaceAll(e, "*", "%2A")
 	return strings.ReplaceAll(e, "%7E", "~")
+}
+
+// encode 把明文手机号按上游入参形态 (plain/md5/sha256) 归一，供特殊号比对。
+func encode(mobile, enc string) string {
+	switch enc {
+	case "md5":
+		sum := md5.Sum([]byte(mobile))
+		return hex.EncodeToString(sum[:])
+	case "sha256":
+		sum := sha256.Sum256([]byte(mobile))
+		return hex.EncodeToString(sum[:])
+	default:
+		return mobile
+	}
 }
 
 func sign(method string, form url.Values, secret string) string {
@@ -76,18 +96,27 @@ func main() {
 
 		var sp map[string]string
 		_ = json.Unmarshal([]byte(form.Get("ServiceParameters")), &sp)
-		log.Printf("antifraud <- service=%s mobile=%s scene=%s", form.Get("Service"), sp["mobile"], sp["scene"])
+		// 三选一：取到哪个键用哪个，并记下形态以便按同口径比对特殊号。
+		mobile, enc := sp["mobile"], "plain"
+		if mobile == "" {
+			if v := sp["mobileMd5"]; v != "" {
+				mobile, enc = v, "md5"
+			} else if v := sp["mobileSha256"]; v != "" {
+				mobile, enc = v, "sha256"
+			}
+		}
+		log.Printf("antifraud <- service=%s mobileField=%s mobile=%s scene=%s", form.Get("Service"), enc, mobile, sp["scene"])
 
 		switch {
 		case r.Method != http.MethodPost || sign(r.Method, form, secret) != form.Get("Signature"):
 			reply(http.StatusBadRequest, map[string]any{"Code": "SignatureDoesNotMatch", "Message": "Specified signature is not matched with our calculation."})
 		case form.Get("Action") != "ExecuteRequest" || form.Get("Service") != "anti_fraud_customed":
 			reply(http.StatusOK, map[string]any{"Code": 404, "Message": "Service 不合法"})
-		case sp["mobile"] == "" || sp["scene"] == "":
+		case mobile == "" || sp["scene"] == "":
 			reply(http.StatusOK, map[string]any{"Code": 400, "Message": "ServiceParameters 不合法"})
-		case sp["mobile"] == forbidden:
+		case mobile == encode(forbidden, enc):
 			reply(http.StatusOK, map[string]any{"Code": 403, "Message": "权限不足"})
-		case sp["mobile"] == notFound:
+		case mobile == encode(notFound, enc):
 			reply(http.StatusOK, map[string]any{"Code": 200, "Message": "OK", "Data": map[string]any{"score": "-1"}})
 		default:
 			reply(http.StatusOK, map[string]any{"Code": 200, "Message": "OK", "Data": map[string]any{"score": "258"}})

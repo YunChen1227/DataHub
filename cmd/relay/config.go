@@ -23,7 +23,8 @@ type upstreamConfig struct {
 	baseURL string
 	// gama (伽马) / blacklist (黑名单因子V35) / idrisk (身份风险V107) /
 	// loanintent / riskvar / creditpano / riskperson 凭证——同为应诺尔 enol 端点，共用
-	// appID/appSecret/apiKey (encryptionType 仅 blacklist/idrisk/riskperson 可配)。
+	// appID/appSecret/apiKey (encryptionType 可配者：blacklist/idrisk/riskperson 的
+	// PII MD5 摘要，以及 antifraud 的 mobile→mobileMd5/mobileSha256 出站形态)。
 	// lxscore (灵犀分) 复用这三个字段：appID=customerId、apiKey=customerProdId、
 	// appSecret=encryptKey (DES 密钥，兼作 sign 加密与 data 解密)。
 	// antifraud (阿里云 SAF, fqz) 复用：appID=AccessKeyId、appSecret=AccessKeySecret、
@@ -32,7 +33,7 @@ type upstreamConfig struct {
 	appID          string
 	appSecret      string
 	apiKey         string
-	encryptionType int // blacklist: 2=MD5(默认); gama 固定明文
+	encryptionType int // blacklist/idrisk/riskperson: 1 明文/2 MD5; antifraud: 1 明文 mobile/2 mobileMd5/3 mobileSha256; gama 固定明文
 	// income (经济能力) 凭证
 	account string
 	key     string

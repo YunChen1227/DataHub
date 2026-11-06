@@ -13,6 +13,8 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -107,6 +109,45 @@ func main() {
 		strings.Contains(r.Range, "resultCode") &&
 			!strings.Contains(r.Raw, "seqNo") &&
 			!strings.Contains(r.Raw, "fxry-mock"), r.Raw)
+
+	// 信封 encryptionType=2：name/idCard 传不加盐 MD5 (大写 hex 也收)，网关原样透传，
+	// mock 在 encryptionType=2 时按 md5(明文) 匹配约定身份证号。
+	md5Enc := map[string]any{"encryptionType": 2}
+	r = harness.Query(version, appKey, harness.Secret, hashed(base()), md5Enc)
+	rec.Check("MD5 入参查得", "errorCode=0 & body.code=001 & range.resultCode 为 25 位命中码",
+		r.ErrorCode == "0" && r.BodyCode == "001" && resultCodeEquals(r.Range, "1000000000001000000000000"), r.Raw)
+
+	upper := hashed(base())
+	upper["idCard"] = strings.ToUpper(upper["idCard"])
+	r = harness.Query(version, appKey, harness.Secret, upper, md5Enc)
+	rec.Check("MD5 大写 hex 也收", "errorCode=0 & body.code=001",
+		r.ErrorCode == "0" && r.BodyCode == "001", r.Raw)
+
+	before = harness.ServiceUsed(version, appKey, harness.Secret)
+	r = harness.Query(version, appKey, harness.Secret, hashed(nf), md5Enc)
+	rec.Check("MD5 入参查无", "errorCode=0 & body.code=999", r.ErrorCode == "0" && r.BodyCode == "999", r.Raw)
+	after = harness.ServiceUsed(version, appKey, harness.Secret)
+	rec.Check("MD5 查无也计费", "serviceUsed +1", before >= 0 && after == before+1,
+		fmt.Sprintf("before=%v after=%v", before, after))
+
+	r = harness.Query(version, appKey, harness.Secret, base(), md5Enc)
+	rec.Check("encryptionType=2 却传明文", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
+
+	r = harness.Query(version, appKey, harness.Secret, hashed(base()), map[string]any{"encryptionType": 3})
+	rec.Check("encryptionType 非法", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
+}
+
+// hashed 把 body 的 name/idCard 换成不加盐 MD5 小写 hex（客户侧 encryptionType=2 的算法）。
+func hashed(body map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range body {
+		out[k] = v
+	}
+	for _, k := range []string{"name", "idCard"} {
+		sum := md5.Sum([]byte(out[k]))
+		out[k] = hex.EncodeToString(sum[:])
+	}
+	return out
 }
 
 // resultCodeEquals 断言 range 是上游 result 对象的 JSON 且 resultCode 原样透出。

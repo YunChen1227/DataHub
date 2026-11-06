@@ -83,6 +83,7 @@ func (s *Server) handleQuery(st *VersionStack) http.HandlerFunc {
 				return
 			}
 		}
+		cmd.EncryptionType = env.EncryptionType
 
 		writeJSON(w, st.Orch.Handle(r.Context(), signedFrom(&env), &cmd))
 	}

@@ -108,16 +108,25 @@ func normalizeRiskPersonResult(raw json.RawMessage) (string, json.RawMessage, bo
 //	1001~1009 / 未知码 / 全局 code=-1 → 上游侧错误，不计费
 //
 // busiCode 10 但 resultCode 缺失或含 0/1 以外字符 → 上游侧错误 (拿不到有效结论不得计费)。
+//
+// req.PIIHashed (下游传 MD5 摘要) 时信封固定 encryptionType=2、摘要原样透传，与配置的
+// EncryptionType 无关；否则按配置对明文取舍。
 func (c *RiskPersonClient) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
+	encType := c.cfg.EncryptionType
+	name, idCard := encodePII(req.Name, encType), encodePII(req.IDCard, encType)
+	if req.PIIHashed {
+		encType = 2
+		name, idCard = req.Name, req.IDCard
+	}
 	body := map[string]string{}
 	if req.Name != "" {
-		body["name"] = encodePII(req.Name, c.cfg.EncryptionType)
+		body["name"] = name
 	}
 	if req.IDCard != "" {
-		body["idCard"] = encodePII(req.IDCard, c.cfg.EncryptionType)
+		body["idCard"] = idCard
 	}
 	er, err := enolDoCheck(ctx, c.http, c.cfg.BaseURL, c.cfg.AppID, c.cfg.Secret, c.cfg.APIKey,
-		c.cfg.EncryptionType, body, req.Reqid, "riskperson")
+		encType, body, req.Reqid, "riskperson")
 	if err != nil {
 		return nil, err
 	}

@@ -64,6 +64,36 @@ func TestRiskPersonMD5ModeHashesPII(t *testing.T) {
 	}
 }
 
+// 下游已传 MD5 摘要 (PIIHashed)：不论配置的 encryptionType，信封固定 2、摘要原样透传
+// (不得二次摘要)，sign 覆盖摘要值。
+func TestRiskPersonHashedPassThrough(t *testing.T) {
+	nameMD5, idMD5 := encodePII("张三", 2), encodePII("310000199001010010", 2)
+	for _, cfgEnc := range []int{0, 1, 2} {
+		var got enolCapturedRequest
+		srv := enolCaptureServer(t, &got, `{"code":0,"seqNo":"S","data":{"busiCode":10,"busiMsg":"success","result":{"riskCode":"0000000000000000000000001"}}}`)
+
+		c := NewRiskPerson(RiskPersonConfig{BaseURL: srv.URL, AppID: "ap1", Secret: "sec1", EncryptionType: cfgEnc}, srv.Client())
+		req := &model.UpstreamRequest{Name: nameMD5, IDCard: idMD5, PIIHashed: true, Reqid: "r1"}
+		res, err := c.Query(context.Background(), req)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("cfg enc=%d Query: %v", cfgEnc, err)
+		}
+		if res.Code != "001" {
+			t.Fatalf("cfg enc=%d code = %q, 期望 001", cfgEnc, res.Code)
+		}
+		if got.env.EncryptionType != 2 {
+			t.Fatalf("cfg enc=%d encryptionType = %d, 期望 2", cfgEnc, got.env.EncryptionType)
+		}
+		if got.env.Body["name"] != nameMD5 || got.env.Body["idCard"] != idMD5 || len(got.env.Body) != 2 {
+			t.Fatalf("cfg enc=%d body 应为原样摘要: %v", cfgEnc, got.env.Body)
+		}
+		if s := signGama(got.env.Body, "sec1"); got.env.Sign != s {
+			t.Fatalf("cfg enc=%d sign = %q, 期望 %q", cfgEnc, got.env.Sign, s)
+		}
+	}
+}
+
 // 归一化口径逐条对齐 docs/风险人员V108.pdf §1.6：10 查询成功【计费】→001；
 // 1000 数据未查得【计费】→999（**本路由查无也计费**，由 billing.TableFor("fxry") 决定）；
 // 1001~1009 / code=-1 / 未知码 → 上游侧错误；10 但 resultCode 缺失/非法 → 上游侧错误。

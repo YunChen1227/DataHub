@@ -2,7 +2,6 @@ package upstream
 
 import (
 	"context"
-	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -146,11 +145,6 @@ func TestAntiFraudMobileEncryption(t *testing.T) {
 			}
 		})
 	}
-}
-
-func md5Hex(s string) string {
-	sum := md5.Sum([]byte(s))
-	return hex.EncodeToString(sum[:])
 }
 
 func sha256Hex(s string) string {

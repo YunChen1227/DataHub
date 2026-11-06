@@ -359,8 +359,9 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		orch.WithParser(parse.ParseIDRisk)
 	case upstream.ProviderRiskPerson:
 		// fxry 风险人员V108：§2.2 body 参数表同 sffx——name+idCard 必填、tradeNo 选填、
-		// **不含 mobile**，与 sffx 同口径用 ParseIDRisk。
-		orch.WithParser(parse.ParseIDRisk)
+		// **不含 mobile**；另支持下游信封 encryptionType=2 传不加盐 MD5 摘要，故用专属
+		// ParseRiskPerson。
+		orch.WithParser(parse.ParseRiskPerson)
 	case upstream.ProviderAntiFraud:
 		// fqz 申请反欺诈-定制模型：§3.2 入参 mobile/mobileMd5/mobileSha256 三选一 + scene
 		// 必传；按接入约定下游只传明文 mobile (必填)，scene 为配置侧固定值——与 tsfx 同为

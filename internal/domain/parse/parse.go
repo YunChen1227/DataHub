@@ -21,6 +21,7 @@ var (
 	idCard15Re = regexp.MustCompile(`^\d{15}$`)
 	// xfjy 授权书编号 authlet：由数字+字母组成（data-bean fk3002 字段说明）。
 	authletRe = regexp.MustCompile(`^[0-9A-Za-z]+$`)
+	md5HexRe  = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 )
 
 // Parse runs参数校验; failures return busiCode 1007 数据请求异常 (我方拦截, 不调
@@ -212,6 +213,44 @@ func ParseIDCheck(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 // 非下游入参。失败返回 busiCode 1007 数据请求异常 (我方拦截，不调上游/不计费)。
 func ParseIDRisk(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	return parseNameIDCard(cmd)
+}
+
+// ParseRiskPerson 校验 fxry (风险人员V108) 入参：name + idCard 均必填、无 mobile
+// (docs/风险人员V108.pdf §2.2)，按下游信封 encryptionType 分两种形态：
+//   - 0/1 明文：同 parseNameIDCard；
+//   - 2 MD5：name/idCard 为不加盐 MD5 的 32 位 hex，统一转小写后标 PIIHashed，
+//     由上游客户端以 encryptionType=2 原样透传 (上游 §1.4 md5 模式，2026-11-06
+//     ECS 实测查得)。摘要不可逆，无法再校验身份证格式，只校验 hex 形态。
+//
+// 其余 encryptionType 返回 1007 数据请求异常 (我方拦截，不调上游/不计费)。
+func ParseRiskPerson(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+	if cmd == nil {
+		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
+	}
+	switch cmd.EncryptionType {
+	case 0, model.EncryptionPlain:
+		return parseNameIDCard(cmd)
+	case model.EncryptionMD5:
+	default:
+		return nil, errs.New(errs.BusiDataRequestErr, "encryptionType 非法")
+	}
+	name := strings.ToLower(strings.TrimSpace(cmd.Name))
+	idCard := strings.ToLower(strings.TrimSpace(cmd.IDCard))
+	if name == "" {
+		return nil, errs.New(errs.BusiDataRequestErr, "name 不能为空")
+	}
+	if !md5HexRe.MatchString(name) {
+		return nil, errs.New(errs.BusiDataRequestErr, "name 须为 32 位 MD5")
+	}
+	if !md5HexRe.MatchString(idCard) {
+		return nil, errs.New(errs.BusiDataRequestErr, "idCard 须为 32 位 MD5")
+	}
+	return &model.UpstreamRequest{
+		Name:      name,
+		IDCard:    idCard,
+		PIIHashed: true,
+		Reqid:     NewReqid(),
+	}, nil
 }
 
 // parseNameIDCard 是「name + idCard 两项均必填、无 mobile」口径的共用实现。

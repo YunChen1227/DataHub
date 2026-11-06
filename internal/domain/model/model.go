@@ -23,7 +23,16 @@ type QueryCommand struct {
 	// 网关对每次请求固定并发查询 C1/C2/C3 三档并整合结果 (见 upstream/complaint.go)。
 	// 本字段保留仅为兼容仍携带 poly 的旧客户端，服务端一律忽略、不校验、不参与查询。
 	Poly string `json:"poly"`
+	// EncryptionType 来自请求信封 (非 body)，由 handler 填入：0/1 明文，2 表示
+	// name/idCard 已是 MD5 摘要。目前只有 fxry 的校验器 (parse.ParseRiskPerson) 读它。
+	EncryptionType int `json:"-"`
 }
+
+// 下游信封 encryptionType 取值。
+const (
+	EncryptionPlain = 1 // 明文（默认）
+	EncryptionMD5   = 2 // PII 为 MD5 小写 32 位 hex（不加盐）
+)
 
 // SignedRequest carries the request envelope material needed for MD5 signature
 // verification (接口文档-经济能力.doc 网关 appKey/appSecret / DESIGN §8.1).
@@ -63,8 +72,11 @@ type UpstreamRequest struct {
 	Authlet string
 	// tsfx (投诉分析识别名单) 用 Mobile；命中级别 C1/C2/C3 由上游客户端内部逐档
 	// 固定查询，不再来自下游 (见 upstream/complaint.go)。Poly 保留但已不填/不使用。
-	Poly  string
-	Reqid string
+	Poly string
+	// PIIHashed=true 表示 Name/IDCard 已是下游传来的 MD5 摘要，上游客户端须原样
+	// 透传、不得再摘要 (fxry)。
+	PIIHashed bool
+	Reqid     string
 }
 
 // UpstreamResult is the normalized upstream response (DESIGN §6). 唯一上游伽马把原生

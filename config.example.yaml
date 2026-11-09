@@ -37,7 +37,7 @@
 # snhmd 转接司南黑名单 (守信 shouxin168，与 zlf/dtjd 同供应商同端点同信封)：AES/ECB/PKCS5 加密 biz_data + form POST，service 同为 financial_rent_service、**mode=mode_compass_black**（同端点区分产品的唯一位），入参 name+idCard+mobile 三要素均必填；响应 resp_data 为 black_list + black_tag04..black_tag12 共 10 个 "0"/"1" 标签的对象，整体序列化经 result.range 透出（black_list=0 未命中黑名单亦属**查得结论**）；SW0000 → 001 / SW0002 → 999，**查询计费：001 与 999 都向下游计费**；**SW0001 认证失败本产品标【不收费】→ 按上游侧错误处理不计费**（与兄弟产品 dtjd 的同码处理相反，禁止互相套用）。
 # jdyx / fxbl / xyqj 转接应诺尔 enol 的借贷申请意向V22【TD】/ 风险变量V11 / 信用全景V21（与 x1/blk/sffx 同端点同 MD5 加签）：apiKey 分别为 loanRiskTagV22 / loanRiskTagV11 / loanRiskTagV21，入参 name+idCard+mobile 三要素均必填，响应 result 富对象整体经 result.range 透出；jdyx 信封不带 encryptionType，fxbl/xyqj 固定 encryptionType=1 明文。计费逐产品不同：jdyx 1000 不计费；fxbl 1000 **也计费**；xyqj 以 result.fee_status 为准。
 # fxry 转接风险人员V108 (应诺尔 enol，与 sffx 同端点同信封)：apiKey=idRiskTagV108、encryptionType=1 明文（可配 2 走 MD5），入参仅 name+idCard 两项均必填（**无 mobile**）；下游信封 encryptionType=2 时 name/idCard 为不加盐 MD5 32 位 hex，网关校验后以 encryptionType=2 原样透传（不受本配置影响）；响应 result {resultCode:25 位 0/1 命中码} 经 result.range 透出；busiCode 10 查得 / 1000 数据未查得 **均计费**。
-# fqz 转接申请反欺诈-定制模型 (阿里云风险识别 SAF，冠辰科技定制)：POP RPC 风格 form POST + HMAC-SHA1 签名，Action=ExecuteRequest、Service=anti_fraud_customed，ServiceParameters={mobile,scene}；入参仅 mobile 必填（scene 为配置固定值；上游 mobile/mobileMd5/mobileSha256 三选一由 encryptionType 1/2/3 选，下游始终传明文、网关出站时摘要）；响应 Data {score} 经 result.range 透出；Code=200 且 score≠-1 → 001 / score=-1 → 999，**均计费**（文档「200 请求正常，返回该状态时计费」）。
+# fqz 转接申请反欺诈-定制模型 (阿里云风险识别 SAF，冠辰科技定制)：POP RPC 风格 form POST + HMAC-SHA1 签名，Action=ExecuteRequest、Service=anti_fraud_customed，ServiceParameters={mobile,scene}；入参仅 mobile 必填（scene 为配置固定值；上游 mobile/mobileMd5/mobileSha256 三选一由 encryptionType 1/2/3 选；下游也可按信封 encryptionType=2/3 直接传摘要，原样透传）；响应 Data {score} 经 result.range 透出；Code=200 且 score≠-1 → 001 / score=-1 → 999，**均计费**（文档「200 请求正常，返回该状态时计费」）。
 #
 # 上游按「子源列表」配置：versions.<route>.upstreams 是一个列表。
 #   - 单源路由：列表长度 1（当前所有路由均为单源）。
@@ -653,10 +653,11 @@ versions:
   # 授予 AliyunYundunSAFFullAccess，见文档 §1）；service=Service；mode=scene；
   # apiKey=Version（缺省 2019-05-21；文档 §3.1 请求示例写 2020-07-06，与 §2.3 参数表/
   # §2.4 Demo 不一致，以参数表为准，联调不通再改）。
-  # 入参：上游 mobile/mobileMd5/mobileSha256 三选一 + scene 必传；本网关下游只收明文
-  # mobile（必填，网关前置拦截），scene 为配置固定值。出站形态由 encryptionType 决定：
-  # 1=明文 mobile【默认】、2=mobileMd5、3=mobileSha256（下游始终传明文，网关出站时摘要，
-  # 摘要值仍参与 POP 签名，详见 §3.2）。
+  # 入参：上游 mobile/mobileMd5/mobileSha256 三选一 + scene 必传；下游 mobile 必填，
+  # 按信封 encryptionType 1/2/3 传明文 / MD5 / SHA256 摘要（网关前置拦截格式），摘要
+  # 原样透传。scene 为配置固定值。下面的 encryptionType 只决定**下游传明文时**的出站
+  # 形态：1=明文 mobile【默认】、2=mobileMd5、3=mobileSha256（摘要值仍参与 POP 签名，
+  # 详见 §3.2）。
   # 响应 Data 为 {"score":"258"}，整体序列化经 result.range 透出；RequestId 是唯一上游
   # 标识，三条路径都落审计（uid=logId）。
   # ★ 计费（§3.3）：「200 请求正常，返回该状态时计费」——score≠-1 → 001；**score=-1

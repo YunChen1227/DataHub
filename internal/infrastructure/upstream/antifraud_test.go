@@ -147,6 +147,42 @@ func TestAntiFraudMobileEncryption(t *testing.T) {
 	}
 }
 
+// 下游已传摘要 (MobileHash) 时按对应字段原样透传，不受配置 encryptionType 影响、不二次摘要。
+func TestAntiFraudDownstreamHashPassthrough(t *testing.T) {
+	md5v, shav := md5Hex("17325421010"), sha256Hex("17325421010")
+	cases := []struct {
+		name    string
+		hash    int
+		val     string
+		wantKey string
+	}{
+		{name: "下游 MD5", hash: AntiFraudMD5, val: md5v, wantKey: "mobileMd5"},
+		{name: "下游 SHA256", hash: AntiFraudSHA256, val: shav, wantKey: "mobileSha256"},
+	}
+	for _, tc := range cases {
+		for _, cfgEnc := range []int{AntiFraudPlain, AntiFraudMD5, AntiFraudSHA256} {
+			t.Run(tc.name, func(t *testing.T) {
+				var got url.Values
+				srv := antiFraudServer(t, &got, `{"Message":"OK","RequestId":"RID","Data":{"score":"258"},"Code":200}`)
+				defer srv.Close()
+
+				c := NewAntiFraud(AntiFraudConfig{BaseURL: srv.URL, AccessKeyID: "ak", AccessKeySecret: "sk", EncryptionType: cfgEnc}, srv.Client())
+				req := &model.UpstreamRequest{Mobile: tc.val, MobileHash: tc.hash, Reqid: "r1"}
+				if _, err := c.Query(context.Background(), req); err != nil {
+					t.Fatalf("Query: %v", err)
+				}
+				var sp map[string]string
+				if err := json.Unmarshal([]byte(got.Get("ServiceParameters")), &sp); err != nil {
+					t.Fatalf("ServiceParameters 非 JSON: %v", err)
+				}
+				if len(sp) != 2 || sp[tc.wantKey] != tc.val || sp["scene"] != "gc_cust_202610" {
+					t.Fatalf("cfg enc=%d ServiceParameters = %v, 期望 %s=%s + scene", cfgEnc, sp, tc.wantKey, tc.val)
+				}
+			})
+		}
+	}
+}
+
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])

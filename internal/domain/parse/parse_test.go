@@ -60,3 +60,63 @@ func TestParseRiskPersonRejects(t *testing.T) {
 		t.Fatal("nil 应拦截")
 	}
 }
+
+const (
+	mobileMD5    = "043b5e7b9e2f9af9ddc61c3f4c5f51c5"                                 // md5("17325421010")
+	mobileSHA256 = "b3c902cf670a95f4f99c5e103bf177cce1b1970732b89007aa5c975004b4871e" // sha256("17325421010")
+)
+
+func TestParseAntiFraudPlain(t *testing.T) {
+	for _, enc := range []int{0, model.EncryptionPlain} {
+		up, err := ParseAntiFraud(&model.QueryCommand{Mobile: " 17325421010 ", EncryptionType: enc})
+		if err != nil {
+			t.Fatalf("enc=%d: %v", enc, err)
+		}
+		if up.Mobile != "17325421010" || up.MobileHash != 0 || up.Reqid == "" {
+			t.Fatalf("enc=%d 明文口径不对: %+v", enc, up)
+		}
+	}
+}
+
+func TestParseAntiFraudHashed(t *testing.T) {
+	cases := []struct {
+		enc  int
+		in   string
+		want string
+	}{
+		{model.EncryptionMD5, " " + strings.ToUpper(mobileMD5) + " ", mobileMD5},
+		{model.EncryptionSHA256, strings.ToUpper(mobileSHA256), mobileSHA256},
+	}
+	for _, c := range cases {
+		up, err := ParseAntiFraud(&model.QueryCommand{Mobile: c.in, EncryptionType: c.enc})
+		if err != nil {
+			t.Fatalf("enc=%d: %v", c.enc, err)
+		}
+		if up.Mobile != c.want || up.MobileHash != c.enc {
+			t.Fatalf("enc=%d 应转小写并标 MobileHash: %+v", c.enc, up)
+		}
+	}
+}
+
+func TestParseAntiFraudRejects(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  model.QueryCommand
+	}{
+		{"明文缺 mobile", model.QueryCommand{}},
+		{"明文 mobile 是摘要", model.QueryCommand{Mobile: mobileMD5, EncryptionType: model.EncryptionPlain}},
+		{"MD5 mobile 是明文", model.QueryCommand{Mobile: "17325421010", EncryptionType: model.EncryptionMD5}},
+		{"MD5 传了 SHA256", model.QueryCommand{Mobile: mobileSHA256, EncryptionType: model.EncryptionMD5}},
+		{"MD5 含非 hex", model.QueryCommand{Mobile: "z" + mobileMD5[1:], EncryptionType: model.EncryptionMD5}},
+		{"SHA256 传了 MD5", model.QueryCommand{Mobile: mobileMD5, EncryptionType: model.EncryptionSHA256}},
+		{"encryptionType=4", model.QueryCommand{Mobile: "17325421010", EncryptionType: 4}},
+	}
+	for _, c := range cases {
+		if _, err := ParseAntiFraud(&c.cmd); err == nil {
+			t.Fatalf("%s: 应拦截", c.name)
+		}
+	}
+	if _, err := ParseAntiFraud(nil); err == nil {
+		t.Fatal("nil 应拦截")
+	}
+}

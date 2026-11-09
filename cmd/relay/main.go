@@ -364,9 +364,9 @@ func buildRouteStack(cfg config, route string, ds *domainStorage, httpClient *ht
 		orch.WithParser(parse.ParseRiskPerson)
 	case upstream.ProviderAntiFraud:
 		// fqz 申请反欺诈-定制模型：§3.2 入参 mobile/mobileMd5/mobileSha256 三选一 + scene
-		// 必传；按接入约定下游只传明文 mobile (必填)，scene 为配置侧固定值——与 tsfx 同为
-		// 仅 mobile 口径，用 ParseComplaint。
-		orch.WithParser(parse.ParseComplaint)
+		// 必传；下游 mobile 必填，按信封 encryptionType 1/2/3 传明文、MD5 或 SHA256 摘要，
+		// scene 为配置侧固定值。
+		orch.WithParser(parse.ParseAntiFraud)
 	case upstream.ProviderLoanIntent, upstream.ProviderRiskVar, upstream.ProviderCreditPano:
 		// jdyx 借贷申请意向V22【TD】/ fxbl 风险变量V11 / xyqj 信用全景V21 (应诺尔 enol)：
 		// 三份文档 §2.2 body 参数表 name/idCard/mobile 均标必填 (tradeNo 选填)，

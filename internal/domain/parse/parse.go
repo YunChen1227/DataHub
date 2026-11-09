@@ -20,8 +20,9 @@ var (
 	// sfzhy 上游同时支持 15 位与 18 位身份证号 (接口文档注意事项第 8 条)。
 	idCard15Re = regexp.MustCompile(`^\d{15}$`)
 	// xfjy 授权书编号 authlet：由数字+字母组成（data-bean fk3002 字段说明）。
-	authletRe = regexp.MustCompile(`^[0-9A-Za-z]+$`)
-	md5HexRe  = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+	authletRe   = regexp.MustCompile(`^[0-9A-Za-z]+$`)
+	md5HexRe    = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+	sha256HexRe = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 )
 
 // Parse runs参数校验; failures return busiCode 1007 数据请求异常 (我方拦截, 不调
@@ -183,6 +184,40 @@ func ParseComplaint(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
 	return &model.UpstreamRequest{
 		Mobile: mobile,
 		Reqid:  NewReqid(),
+	}, nil
+}
+
+// ParseAntiFraud 校验 fqz (申请反欺诈-定制模型) 入参：仅 mobile 必填，对应上游
+// §3.2 mobile/mobileMd5/mobileSha256 三选一。按下游信封 encryptionType 分三种形态：
+//   - 0/1 明文：1 开头 11 位手机号，出站形态由配置的 encryptionType 决定；
+//   - 2 MD5：mobile 为不加盐 MD5 的 32 位 hex，转小写后以 mobileMd5 原样透传；
+//   - 3 SHA256：mobile 为不加盐 SHA256 的 64 位 hex，转小写后以 mobileSha256 原样透传。
+//
+// 上游不校验摘要内容，算错的摘要只会查无（999 计费），网关只能校验 hex 形态。
+// 其余 encryptionType 返回 1007 数据请求异常 (我方拦截，不调上游/不计费)。
+func ParseAntiFraud(cmd *model.QueryCommand) (*model.UpstreamRequest, error) {
+	if cmd == nil {
+		return nil, errs.New(errs.BusiDataRequestErr, "请求体为空")
+	}
+	var re *regexp.Regexp
+	switch cmd.EncryptionType {
+	case 0, model.EncryptionPlain:
+		return ParseComplaint(cmd)
+	case model.EncryptionMD5:
+		re = md5HexRe
+	case model.EncryptionSHA256:
+		re = sha256HexRe
+	default:
+		return nil, errs.New(errs.BusiDataRequestErr, "encryptionType 非法")
+	}
+	mobile := strings.ToLower(strings.TrimSpace(cmd.Mobile))
+	if !re.MatchString(mobile) {
+		return nil, errs.New(errs.BusiDataRequestErr, "mobile 摘要格式非法")
+	}
+	return &model.UpstreamRequest{
+		Mobile:     mobile,
+		MobileHash: cmd.EncryptionType,
+		Reqid:      NewReqid(),
 	}, nil
 }
 

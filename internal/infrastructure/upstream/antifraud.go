@@ -50,8 +50,8 @@ const (
 
 // §3.2 手机号入参三选一：明文 mobile / MD5 摘要 mobileMd5 / SHA256 摘要 mobileSha256。
 // EncryptionType 口径与应诺尔 enol 对齐 (1 明文【默认】/ 2 md5 / 3 sha256)，让各上游配置
-// 的 encryptionType 语义一致。下游一律只传明文 mobile，由本网关在出站时按配置摘要，
-// 既满足"上游侧加密传输 PII"，又不改变对外契约。
+// 的 encryptionType 语义一致。下游传明文 mobile 时由本网关在出站时按配置摘要；下游
+// 也可按信封 encryptionType 直接传摘要 (见 parse.ParseAntiFraud)。
 const (
 	AntiFraudPlain  = 1 // 明文 mobile（默认）
 	AntiFraudMD5    = 2 // mobileMd5：mobile 的 MD5 小写 hex
@@ -86,7 +86,7 @@ type AntiFraudConfig struct {
 	Scene           string // 默认 gc_cust_202610
 	Version         string // 默认 2019-05-21
 	// EncryptionType 控制 §3.2 手机号三选一入参：1 明文 mobile【默认】/ 2 mobileMd5 /
-	// 3 mobileSha256。下游始终传明文，网关按此在出站时摘要。
+	// 3 mobileSha256。仅对下游传明文的请求生效，网关按此在出站时摘要。
 	EncryptionType int
 }
 
@@ -95,8 +95,9 @@ type AntiFraudConfig struct {
 // 协议 (PDF §2.3/§2.4)：阿里云 POP RPC 风格，公共参数 + Action=ExecuteRequest +
 // Service + ServiceParameters(JSON)，HMAC-SHA1 签名 (SignatureVersion 1.0)，参数以
 // form 形式 POST。业务参数 (§3.2)：mobile / mobileMd5 / mobileSha256 三选一必传 +
-// scene 必传。下游始终只传明文 mobile，网关按 cfg.EncryptionType 决定出站用明文 mobile
-// (默认) 还是 mobileMd5 / mobileSha256 摘要，三种上游入参形态全部兼容。
+// scene 必传。下游传明文时，网关按 cfg.EncryptionType 决定出站用明文 mobile (默认)
+// 还是 mobileMd5 / mobileSha256 摘要；下游已传摘要 (req.MobileHash) 时按对应字段
+// 原样透传，与配置无关。
 // 响应 Data 富对象 ({"score":"258"}) 整体经下游 result.range 透出。
 // 本文档只定义了一个业务接口 (ExecuteRequest + anti_fraud_customed)，已全部实现。
 type AntiFraudClient struct {
@@ -148,6 +149,12 @@ type antiFraudResponse struct {
 // 上游只有 RequestId 一个标识，UID/LogID 同填。
 func (c *AntiFraudClient) Query(ctx context.Context, req *model.UpstreamRequest) (*model.UpstreamResult, error) {
 	mobileKey, mobileVal := antiFraudMobileField(req.Mobile, c.cfg.EncryptionType)
+	switch req.MobileHash {
+	case AntiFraudMD5:
+		mobileKey, mobileVal = "mobileMd5", req.Mobile
+	case AntiFraudSHA256:
+		mobileKey, mobileVal = "mobileSha256", req.Mobile
+	}
 	svcParams, err := json.Marshal(map[string]string{
 		mobileKey: mobileVal,
 		"scene":   c.cfg.Scene,

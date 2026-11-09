@@ -12,6 +12,9 @@
 package main
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -70,6 +73,32 @@ func main() {
 	r = harness.Query(version, appKey, harness.Secret, map[string]string{"mobile": "139xx"}, nil)
 	rec.Check("手机号非法", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
 
+	// 下游直接传摘要：信封 encryptionType=2/3，body.mobile 为 MD5/SHA256 小写 hex，
+	// sign 照常对摘要值计算。mock 对特殊号按同口径摘要比对。
+	enc2 := map[string]any{"encryptionType": 2}
+	enc3 := map[string]any{"encryptionType": 3}
+	r = harness.Query(version, appKey, harness.Secret, map[string]string{"mobile": md5Hex("17325421010")}, enc2)
+	rec.Check("MD5 入参查得", "errorCode=0 & body.code=001 & range.score=258",
+		r.ErrorCode == "0" && r.BodyCode == "001" && scoreEquals(r.Range, "258"), r.Raw)
+
+	r = harness.Query(version, appKey, harness.Secret, map[string]string{"mobile": strings.ToUpper(md5Hex(notFoundMobile))}, enc2)
+	rec.Check("MD5 入参(大写)查无", "errorCode=0 & body.code=999", r.ErrorCode == "0" && r.BodyCode == "999", r.Raw)
+
+	r = harness.Query(version, appKey, harness.Secret, map[string]string{"mobile": sha256Hex("17325421010")}, enc3)
+	rec.Check("SHA256 入参查得", "errorCode=0 & body.code=001", r.ErrorCode == "0" && r.BodyCode == "001", r.Raw)
+
+	r = harness.Query(version, appKey, harness.Secret, map[string]string{"mobile": sha256Hex(notFoundMobile)}, enc3)
+	rec.Check("SHA256 入参查无", "errorCode=0 & body.code=999", r.ErrorCode == "0" && r.BodyCode == "999", r.Raw)
+
+	r = harness.Query(version, appKey, harness.Secret, base(), enc2)
+	rec.Check("encryptionType=2 却传明文", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
+
+	r = harness.Query(version, appKey, harness.Secret, map[string]string{"mobile": md5Hex("17325421010")}, enc3)
+	rec.Check("encryptionType=3 却传 MD5", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
+
+	r = harness.Query(version, appKey, harness.Secret, base(), map[string]any{"encryptionType": 4})
+	rec.Check("encryptionType 非法", "errorCode=505062", r.ErrorCode == "505062", r.Raw)
+
 	// 本上游不要姓名/身份证：带上格式非法的 idCard 既不被拦截，也不影响查询。
 	extra := base()
 	extra["idCard"] = "12345"
@@ -81,6 +110,16 @@ func main() {
 	r = harness.Query(version, appKey, harness.Secret, base(), nil)
 	rec.Check("响应不含上游 RequestId", "range 含 score 且整份 raw 不含 fqz-mock",
 		strings.Contains(r.Range, "score") && !strings.Contains(r.Raw, "fqz-mock"), r.Raw)
+}
+
+func md5Hex(s string) string {
+	sum := md5.Sum([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 // scoreEquals 断言 range 是上游 Data 对象的 JSON 且 score 原样透出。
